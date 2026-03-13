@@ -16,41 +16,85 @@ NestJS REST API backed by Supabase (Auth, Database, Storage) and Prisma ORM.
 
 ---
 
-## Project Structure
+## Running with Docker Compose
 
-```
-src/
-  auth/
-    auth.guard.ts        # Validates Supabase JWT on every protected route
-    auth.module.ts
-  prisma/
-    prisma.service.ts    # PrismaClient singleton (connects on init)
-    prisma.module.ts     # Global module — no need to re-import elsewhere
-  supabase/
-    supabase.service.ts  # Supabase JS client wrapper
-    supabase.module.ts   # Global module
-  app.module.ts          # Root module — wires ConfigModule, Prisma, Supabase, Auth
-  main.ts
-prisma/
-  schema.prisma          # User model definition
-supabase/
-  config.toml            # Supabase CLI local project config
-Dockerfile
-docker-compose.yml
-.env.example
-```
+This is the primary way to run the application. Docker Compose handles migrations and starts the API automatically.
 
----
+### Prerequisites
 
-## Prerequisites
-
-- [Node.js](https://nodejs.org) 20.19+
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running)
-- Supabase CLI — installed automatically via `npx`
+- [Node.js](https://nodejs.org) 20.19+ (needed to run Supabase CLI via `npx`)
+
+### Step 1 — Start the Supabase infrastructure
+
+Supabase CLI runs the entire local backend stack (Postgres, Auth, Storage, API gateway) as Docker containers and creates the Docker network that the API containers join.
+
+```bash
+npx supabase start
+```
+
+Wait until the command finishes. It prints a summary like this:
+
+```
+API URL:         http://127.0.0.1:54321
+DB URL:          postgresql://postgres:postgres@127.0.0.1:54322/postgres
+Studio URL:      http://127.0.0.1:54323
+anon key:        eyJhbGciOi...
+service_role key: eyJhbGciOi...   <-- copy this
+```
+
+> **Why this must run first:** `docker-compose.yml` declares the network
+> `supabase_network_gym-tracker` as `external: true`. This network is created
+> by `npx supabase start`. If Supabase is not running, Docker Compose will
+> fail with a "network not found" error.
+
+### Step 2 — Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and paste the **service_role key** from the Supabase output as `SUPABASE_KEY`:
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres?schema=public"
+SUPABASE_URL="http://127.0.0.1:54321"
+SUPABASE_KEY="eyJhbGciOi..."   # service_role key from `npx supabase start`
+```
+
+> The `.env` file is loaded by the `api` container via `env_file`. `DATABASE_URL`
+> and `SUPABASE_URL` are overridden inside `docker-compose.yml` to use internal
+> Docker network hostnames, so their values in `.env` are used only for local
+> development without Docker.
+
+### Step 3 — Build and start the API
+
+```bash
+docker-compose up --build
+```
+
+Docker Compose will:
+1. Build the NestJS image (multi-stage, node:20-alpine).
+2. Run `prisma migrate deploy` in a one-shot `migrate` container — applies all pending migrations against the Supabase Postgres instance.
+3. Start the `api` container on port **3000** once the migration succeeds.
+
+The API is available at **http://localhost:3000**.
+
+### Stopping
+
+```bash
+docker-compose down
+```
+
+To also stop Supabase:
+
+```bash
+npx supabase stop
+```
 
 ---
 
-## Local Development Setup
+## Local Development (without Docker)
 
 ### 1. Install dependencies
 
@@ -64,23 +108,13 @@ npm install
 npx supabase start
 ```
 
-This spins up Postgres (port **54322**), the Supabase API gateway (port **54321**),
-Auth, Storage, and the Studio dashboard.
-
-At the end of the command, copy the **anon key** from the output:
-
-```
-API URL:      http://localhost:54321
-anon key:     eyJhbGciOi...   <-- copy this
-```
-
 ### 3. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and paste the `anon key` as `SUPABASE_KEY`.
+Paste the **service_role key** from the Supabase output as `SUPABASE_KEY` in `.env`.
 
 ### 4. Run database migrations
 
@@ -98,19 +132,51 @@ The API will be available at **http://localhost:3000**.
 
 ---
 
-## Running with Docker Compose
+## Project Structure
 
-> Supabase must already be running locally (`npx supabase start`) so the
-> containers can reach it via `host.docker.internal`.
-
-```bash
-docker-compose up --build
+```
+src/
+  auth/
+    auth.guard.ts        # Validates Supabase JWT on every protected route
+    auth.module.ts
+  prisma/
+    prisma.service.ts    # PrismaClient singleton (connects on init)
+    prisma.module.ts     # Global module — no need to re-import elsewhere
+  supabase/
+    supabase.service.ts  # Supabase JS client wrapper
+    supabase.module.ts   # Global module
+  app.module.ts          # Root module — wires ConfigModule, Prisma, Supabase, Auth
+  main.ts
+prisma/
+  schema.prisma          # Database schema
+supabase/
+  config.toml            # Supabase CLI local project config (project_id: gym-tracker)
+Dockerfile
+docker-compose.yml
+.env.example
 ```
 
-This will:
-1. Build the NestJS image.
-2. Run `prisma migrate deploy` in a one-shot `migrate` container.
-3. Start the `api` container on port **3000**.
+---
+
+## Supabase Infrastructure Details
+
+`npx supabase start` spins up the following services locally:
+
+| Service        | URL / Port                    | Description                              |
+|----------------|-------------------------------|------------------------------------------|
+| API Gateway    | http://127.0.0.1:54321        | Kong — routes to Auth, Storage, REST     |
+| Postgres       | postgresql://...@127.0.0.1:54322 | Main database                         |
+| Studio         | http://127.0.0.1:54323        | Web UI for browsing data & running SQL   |
+| Inbucket       | http://127.0.0.1:54324        | Email testing inbox                      |
+| Analytics      | port 54327                    | Internal analytics backend               |
+
+The CLI also creates a Docker network named **`supabase_network_gym-tracker`**. The `api` and `migrate` containers in `docker-compose.yml` attach to this network so they can reach Postgres at `supabase_db_gym-tracker:5432` and Kong at `supabase_kong_gym-tracker:8000` using container hostnames — no `host.docker.internal` needed.
+
+To check running services and retrieve keys at any time:
+
+```bash
+npx supabase status
+```
 
 ---
 
@@ -140,13 +206,13 @@ The guard expects an `Authorization: Bearer <supabase-access-token>` header.
 
 | Command                            | Description                              |
 |------------------------------------|------------------------------------------|
-| `npm run start:dev`                | Start API in watch mode                  |
-| `npm run build`                    | Compile TypeScript                       |
+| `docker-compose up --build`        | Build & start API + run migrations       |
+| `docker-compose down`              | Stop and remove containers               |
 | `npx supabase start`               | Start local Supabase stack               |
 | `npx supabase stop`                | Stop local Supabase stack                |
 | `npx supabase status`              | Show service URLs and keys               |
+| `npm run start:dev`                | Start API in watch mode (local dev)      |
+| `npm run build`                    | Compile TypeScript                       |
 | `npx prisma migrate dev`           | Create and apply a new migration         |
 | `npx prisma migrate deploy`        | Apply pending migrations (CI/prod)       |
 | `npx prisma studio`                | Open Prisma Studio GUI                   |
-| `docker-compose up --build`        | Build & start API container              |
-| `docker-compose down`              | Stop and remove containers               |
