@@ -13,8 +13,58 @@ datasource db {
 model User {
   id         String   @id @default(uuid())
   email      String   @unique
+  full_name  String?
   avatar_url String?
   created_at DateTime @default(now())
+}
+
+model WorkoutSession {
+  id               String            @id @default(uuid())
+  user_id          String
+  title            String
+  type             String
+  status           String            @default("proposed")
+  started_at       DateTime?
+  completed_at     DateTime?
+  duration_minutes Int?
+  ai_generated     Boolean           @default(false)
+  ai_message       String?
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+  exercises        SessionExercise[]
+
+  @@map("workout_sessions")
+}
+
+model SessionExercise {
+  id               String         @id @default(uuid())
+  session_id       String
+  name             String
+  step_number      Int
+  sets_display     String
+  sets             Int?
+  reps             Int?
+  duration_seconds Int?
+  is_per_side      Boolean        @default(false)
+  accent_color     String         @default("#E86A75")
+  created_at       DateTime       @default(now())
+  session          WorkoutSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@map("session_exercises")
+}
+
+model MotivationInsight {
+  id                 String    @id @default(uuid())
+  user_id            String
+  title              String
+  message            String
+  workouts_this_week Int       @default(0)
+  personal_records   String[]
+  valid_from         DateTime  @default(now())
+  valid_until        DateTime?
+  created_at         DateTime  @default(now())
+
+  @@map("motivation_insights")
 }
 
 model OnboardingData {

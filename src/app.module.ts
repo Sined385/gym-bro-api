@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { HomeModule } from './home/home.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
     SupabaseModule,
     AuthModule,
     OnboardingModule,
+    HomeModule,
   ],
   controllers: [AppController],
   providers: [AppService],
