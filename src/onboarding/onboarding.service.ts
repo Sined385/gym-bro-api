@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import type { InputJsonValue } from '@prisma/client/runtime/client';
-import type { OnboardingData } from '../../generated/prisma/client.js';
+import type { OnboardingData } from '../../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import { SaveOnboardingDto, InjuryDto } from './dto/onboarding.dto';
