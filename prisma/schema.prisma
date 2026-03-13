@@ -1,0 +1,35 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  avatar_url String?
+  created_at DateTime @default(now())
+}
+
+model OnboardingData {
+  id                  String    @id @default(uuid())
+  user_id             String    @unique
+  primary_goal        String
+  primary_sport       String
+  experience_level    String
+  training_frequency  Int
+  workout_duration    Int
+  available_equipment String
+  injuries            Json      @default("[]")
+  completed_at        DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  @@map("onboarding_data")
+}

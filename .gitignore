@@ -1,0 +1,19 @@
+# Dependencies
+node_modules
+
+# Environment variables
+.env
+
+# Build output
+dist
+
+# Prisma generated client
+/generated/prisma
+
+# Supabase local state
+supabase/.branches
+supabase/.temp
+supabase-config.txt
+
+# Claude Code local settings
+.claude

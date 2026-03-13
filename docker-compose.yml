@@ -1,0 +1,35 @@
+# Joins the Docker network that `npx supabase start` creates so the API can
+# reach Postgres and Kong using their container hostnames — no host.docker.internal needed.
+
+services:
+  migrate:
+    build: .
+    container_name: gym-tracker-migrate
+    command: npx prisma migrate deploy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@supabase_db_gym-tracker:5432/postgres?schema=public
+    networks:
+      - supabase_network_gym-tracker
+    restart: "no"
+
+  api:
+    build: .
+    container_name: gym-tracker-api
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://postgres:postgres@supabase_db_gym-tracker:5432/postgres?schema=public
+      SUPABASE_URL: http://supabase_kong_gym-tracker:8000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - supabase_network_gym-tracker
+    restart: unless-stopped
+
+networks:
+  supabase_network_gym-tracker:
+    external: true   # created by `npx supabase start`
