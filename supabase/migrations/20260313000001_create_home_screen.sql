@@ -1,5 +1,11 @@
--- Add full_name column to existing User table
-ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS full_name TEXT;
+-- Add full_name column to existing User table (created by Prisma migrations).
+-- Wrapped in DO block so supabase start doesn't fail when Prisma hasn't run yet.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'User') THEN
+        ALTER TABLE public."User" ADD COLUMN IF NOT EXISTS full_name TEXT;
+    END IF;
+END $$;
 
 -- ============================================================
 -- workout_sessions

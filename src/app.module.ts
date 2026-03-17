@@ -7,6 +7,7 @@ import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { HomeModule } from './home/home.module';
+import { ExercisesModule } from './exercises/exercises.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { HomeModule } from './home/home.module';
     AuthModule,
     OnboardingModule,
     HomeModule,
+    ExercisesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

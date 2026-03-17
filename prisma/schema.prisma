@@ -19,38 +19,87 @@ model User {
 }
 
 model WorkoutSession {
-  id               String            @id @default(uuid())
-  user_id          String
-  title            String
-  type             String
-  status           String            @default("proposed")
-  started_at       DateTime?
-  completed_at     DateTime?
-  duration_minutes Int?
-  ai_generated     Boolean           @default(false)
-  ai_message       String?
-  created_at       DateTime          @default(now())
-  updated_at       DateTime          @updatedAt
-  exercises        SessionExercise[]
+  id                String            @id @default(uuid())
+  user_id           String
+  title             String
+  type              String
+  status            String            @default("proposed")
+  started_at        DateTime?
+  completed_at      DateTime?
+  duration_minutes  Int?
+  calories          Int?
+  performance_score Int?
+  ai_generated      Boolean           @default(false)
+  ai_message        String?
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  exercises         SessionExercise[]
+  feedback          SessionFeedback?
 
   @@map("workout_sessions")
 }
 
 model SessionExercise {
-  id               String         @id @default(uuid())
-  session_id       String
-  name             String
-  step_number      Int
-  sets_display     String
-  sets             Int?
-  reps             Int?
-  duration_seconds Int?
-  is_per_side      Boolean        @default(false)
-  accent_color     String         @default("#E86A75")
-  created_at       DateTime       @default(now())
-  session          WorkoutSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  id                  String           @id @default(uuid())
+  session_id          String
+  name                String
+  step_number         Int
+  sets_display        String
+  sets                Int?
+  reps                Int?
+  duration_seconds    Int?
+  is_per_side         Boolean          @default(false)
+  accent_color        String           @default("#E86A75")
+  muscle_group        String?
+  equipment           String?
+  library_exercise_id String?
+  superset_group_id   String?
+  superset_order      String?
+  created_at          DateTime         @default(now())
+  session             WorkoutSession   @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  exercise_sets       ExerciseSet[]
+  library_exercise    ExerciseLibrary? @relation(fields: [library_exercise_id], references: [id])
 
   @@map("session_exercises")
+}
+
+model ExerciseSet {
+  id           String          @id @default(uuid())
+  exercise_id  String
+  set_number   Int
+  weight       Decimal?
+  weight_unit  String          @default("lbs")
+  reps         Int
+  is_completed Boolean         @default(true)
+  created_at   DateTime        @default(now())
+  exercise     SessionExercise @relation(fields: [exercise_id], references: [id], onDelete: Cascade)
+
+  @@map("exercise_sets")
+}
+
+model ExerciseLibrary {
+  id                String            @id @default(uuid())
+  user_id           String?
+  name              String
+  muscle_group      String
+  equipment         String
+  is_system         Boolean           @default(false)
+  created_at        DateTime          @default(now())
+  session_exercises SessionExercise[]
+
+  @@map("exercise_library")
+}
+
+model SessionFeedback {
+  id              String         @id @default(uuid())
+  session_id      String         @unique
+  effort_level    Int
+  energy_level    Int
+  pain_discomfort String         @default("None")
+  created_at      DateTime       @default(now())
+  session         WorkoutSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@map("session_feedback")
 }
 
 model MotivationInsight {
