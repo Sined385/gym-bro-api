@@ -15,6 +15,7 @@ import {
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { HomeService } from './home.service';
+import { SessionExerciseService } from './session-exercise.service';
 import {
   AddExercisesDto,
   CompleteSessionDto,
@@ -30,7 +31,10 @@ import {
 @Controller('api/v1/home')
 @UseGuards(AuthGuard)
 export class HomeController {
-  constructor(private readonly homeService: HomeService) {}
+  constructor(
+    private readonly homeService: HomeService,
+    private readonly sessionExerciseService: SessionExerciseService,
+  ) {}
 
   @Get('dashboard')
   @HttpCode(HttpStatus.OK)
@@ -81,7 +85,7 @@ export class HomeController {
     @Body() dto: AddExercisesDto,
     @Req() req: Request,
   ) {
-    return this.homeService.addExercises(req.user!.id, sessionId, dto);
+    return this.sessionExerciseService.addExercises(req.user!.id, sessionId, dto);
   }
 
   @Post('sessions/:id/supersets')
@@ -91,7 +95,7 @@ export class HomeController {
     @Body() dto: CreateSupersetDto,
     @Req() req: Request,
   ) {
-    return this.homeService.createSuperset(req.user!.id, sessionId, dto);
+    return this.sessionExerciseService.createSuperset(req.user!.id, sessionId, dto);
   }
 
   @Delete('sessions/:id/exercises/:eid')
@@ -101,7 +105,7 @@ export class HomeController {
     @Param('eid') exerciseId: string,
     @Req() req: Request,
   ) {
-    return this.homeService.removeExercise(req.user!.id, sessionId, exerciseId);
+    return this.sessionExerciseService.removeExercise(req.user!.id, sessionId, exerciseId);
   }
 
   @Post('sessions/:id/exercises/:eid/sets')
@@ -112,7 +116,7 @@ export class HomeController {
     @Body() dto: LogSetDto,
     @Req() req: Request,
   ) {
-    return this.homeService.logSet(req.user!.id, sessionId, exerciseId, dto);
+    return this.sessionExerciseService.logSet(req.user!.id, sessionId, exerciseId, dto);
   }
 
   @Patch('sessions/:id/exercises/:eid/sets/:sid')
@@ -124,7 +128,7 @@ export class HomeController {
     @Body() dto: UpdateSetDto,
     @Req() req: Request,
   ) {
-    return this.homeService.updateSet(
+    return this.sessionExerciseService.updateSet(
       req.user!.id,
       sessionId,
       exerciseId,
@@ -141,7 +145,7 @@ export class HomeController {
     @Param('sid') setId: string,
     @Req() req: Request,
   ) {
-    return this.homeService.deleteSet(
+    return this.sessionExerciseService.deleteSet(
       req.user!.id,
       sessionId,
       exerciseId,

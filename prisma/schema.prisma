@@ -35,6 +35,7 @@ model WorkoutSession {
   updated_at        DateTime          @updatedAt
   exercises         SessionExercise[]
   feedback          SessionFeedback?
+  plan_day          PlanDay?
 
   @@map("workout_sessions")
 }
@@ -68,7 +69,7 @@ model ExerciseSet {
   exercise_id  String
   set_number   Int
   weight       Decimal?
-  weight_unit  String          @default("lbs")
+  weight_unit  String          @default("kg")
   reps         Int
   is_completed Boolean         @default(true)
   created_at   DateTime        @default(now())
@@ -116,6 +117,28 @@ model MotivationInsight {
   @@map("motivation_insights")
 }
 
+model CoachConversation {
+  id         String         @id @default(uuid())
+  user_id    String
+  created_at DateTime       @default(now())
+  updated_at DateTime       @updatedAt
+  messages   CoachMessage[]
+
+  @@map("coach_conversations")
+}
+
+model CoachMessage {
+  id              String            @id @default(uuid())
+  conversation_id String
+  role            String
+  content         String
+  session_id      String?
+  created_at      DateTime          @default(now())
+  conversation    CoachConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+
+  @@map("coach_messages")
+}
+
 model OnboardingData {
   id                  String    @id @default(uuid())
   user_id             String    @unique
@@ -126,9 +149,136 @@ model OnboardingData {
   workout_duration    Int
   available_equipment String
   injuries            Json      @default("[]")
+  body_weight_kg      Float?
   completed_at        DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
 
   @@map("onboarding_data")
+}
+
+model TrainingPlan {
+  id               String    @id @default(uuid())
+  user_id          String
+  week_number      Int       @default(1)
+  week_start_date  DateTime
+  is_active        Boolean   @default(true)
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+  days             PlanDay[]
+
+  @@map("training_plans")
+}
+
+model PlanDay {
+  id                 String          @id @default(uuid())
+  plan_id            String
+  day_of_week        Int
+  day_type           String
+  session_title      String?
+  session_type       String?
+  muscle_groups      String[]
+  exercises_json     Json            @default("[]")
+  status             String          @default("pending")
+  workout_session_id String?         @unique
+  ai_notes           String?
+  created_at         DateTime        @default(now())
+  updated_at         DateTime        @updatedAt
+  plan               TrainingPlan    @relation(fields: [plan_id], references: [id], onDelete: Cascade)
+  workout_session    WorkoutSession? @relation(fields: [workout_session_id], references: [id])
+
+  @@map("plan_days")
+}
+
+model Post {
+  id                 String        @id @default(uuid())
+  user_id            String
+  content            String
+  visibility         String        @default("global")
+  photo_url          String?
+  workout_session_id String?
+  created_at         DateTime      @default(now())
+  updated_at         DateTime      @updatedAt
+  likes              PostLike[]
+  comments           PostComment[]
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@index([visibility, created_at(sort: Desc)])
+  @@map("posts")
+}
+
+model PostLike {
+  id         String   @id @default(uuid())
+  post_id    String
+  user_id    String
+  created_at DateTime @default(now())
+  post       Post     @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@unique([post_id, user_id])
+  @@map("post_likes")
+}
+
+model PostComment {
+  id         String   @id @default(uuid())
+  post_id    String
+  user_id    String
+  content    String
+  created_at DateTime @default(now())
+  post       Post     @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@index([post_id, created_at])
+  @@map("post_comments")
+}
+
+model Friendship {
+  id           String   @id @default(uuid())
+  requester_id String
+  addressee_id String
+  status       String   @default("pending")
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@unique([requester_id, addressee_id])
+  @@index([addressee_id, status])
+  @@index([requester_id, status])
+  @@map("friendships")
+}
+
+model Follow {
+  id           String   @id @default(uuid())
+  follower_id  String
+  following_id String
+  created_at   DateTime @default(now())
+
+  @@unique([follower_id, following_id])
+  @@index([following_id])
+  @@index([follower_id])
+  @@map("follows")
+}
+
+model DeviceToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token      String   @unique
+  platform   String   @default("ios")
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([user_id])
+  @@map("device_tokens")
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  user_id    String
+  type       String
+  title      String
+  body       String
+  data       Json?
+  is_read    Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  @@index([user_id, is_read, created_at(sort: Desc)])
+  @@map("notifications")
 }

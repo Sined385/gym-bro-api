@@ -56,13 +56,15 @@ export class ExercisesService {
   }
 
   async getPreviousSets(userId: string, exerciseId: string) {
-    const sessionExercise = await this.prisma.sessionExercise.findFirst({
+    // First try matching by library_exercise_id
+    let sessionExercises = await this.prisma.sessionExercise.findMany({
       where: {
         library_exercise_id: exerciseId,
         session: {
           user_id: userId,
           status: 'completed',
         },
+        exercise_sets: { some: {} },
       },
       orderBy: {
         session: { completed_at: 'desc' },
@@ -71,20 +73,48 @@ export class ExercisesService {
         exercise_sets: { orderBy: { set_number: 'asc' } },
         session: { select: { completed_at: true } },
       },
+      take: 10,
     });
 
-    if (!sessionExercise) {
-      return { exercise_id: exerciseId, session_date: null, sets: [] };
+    // Fallback: match by exercise name (covers AI-created exercises without library_exercise_id)
+    if (sessionExercises.length === 0) {
+      const libraryExercise = await this.prisma.exerciseLibrary.findUnique({
+        where: { id: exerciseId },
+        select: { name: true },
+      });
+
+      if (libraryExercise) {
+        sessionExercises = await this.prisma.sessionExercise.findMany({
+          where: {
+            name: { equals: libraryExercise.name, mode: 'insensitive' },
+            session: {
+              user_id: userId,
+              status: 'completed',
+            },
+            exercise_sets: { some: {} },
+          },
+          orderBy: {
+            session: { completed_at: 'desc' },
+          },
+          include: {
+            exercise_sets: { orderBy: { set_number: 'asc' } },
+            session: { select: { completed_at: true } },
+          },
+          take: 10,
+        });
+      }
     }
 
     return {
       exercise_id: exerciseId,
-      session_date: sessionExercise.session.completed_at?.toISOString() ?? null,
-      sets: sessionExercise.exercise_sets.map((s) => ({
-        set_number: s.set_number,
-        weight: s.weight ? Number(s.weight) : null,
-        weight_unit: s.weight_unit,
-        reps: s.reps,
+      sessions: sessionExercises.map((se) => ({
+        session_date: se.session.completed_at?.toISOString() ?? null,
+        sets: se.exercise_sets.map((s) => ({
+          set_number: s.set_number,
+          weight: s.weight ? Number(s.weight) : null,
+          weight_unit: s.weight_unit,
+          reps: s.reps,
+        })),
       })),
     };
   }

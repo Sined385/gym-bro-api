@@ -1,12 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HomeService } from './home.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { HomeAiService } from './home-ai.service';
 
 const mockPrisma = {
   workoutSession: {
     findFirst: jest.fn(),
     findMany: jest.fn(),
   },
+};
+
+const mockHomeAiService = {
+  getOrGenerateMotivation: jest.fn(),
+  generateProposedSession: jest.fn(),
 };
 
 describe('HomeService', () => {
@@ -17,6 +23,7 @@ describe('HomeService', () => {
       providers: [
         HomeService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: HomeAiService, useValue: mockHomeAiService },
       ],
     }).compile();
 
