@@ -5,7 +5,6 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "node dist/src/main",
-    "preDeploy": "npx prisma migrate deploy"
+    "startCommand": "npx prisma migrate deploy && node scripts/apply-supabase-migrations.js && node dist/src/main"
   }
 }
