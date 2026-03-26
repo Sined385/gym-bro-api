@@ -29,4 +29,4 @@ COPY --from=builder /app/scripts                         ./scripts
 
 EXPOSE 3000
 
-CMD node scripts/apply-supabase-migrations.js && npx prisma migrate deploy && node dist/src/main
+CMD npx prisma migrate deploy && node scripts/apply-supabase-migrations.js && node dist/src/main
