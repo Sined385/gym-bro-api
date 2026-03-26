@@ -1,3 +1,7 @@
+-- Drop partially-created tables from a previous failed migration attempt (UUID/TEXT mismatch)
+DROP TABLE IF EXISTS "plan_days";
+DROP TABLE IF EXISTS "training_plans";
+
 -- CreateTable
 CREATE TABLE "training_plans" (
     "id" TEXT NOT NULL,
