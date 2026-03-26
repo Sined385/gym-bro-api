@@ -15,7 +15,7 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'supabase', 'migrations');
 const TRACKING_TABLE = '_applied_supabase_migrations';
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
   if (!databaseUrl) {
     console.error('DATABASE_URL is not set — skipping Supabase migrations');
     process.exit(0);
