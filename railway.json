@@ -5,6 +5,6 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "npx prisma migrate deploy && node scripts/apply-supabase-migrations.js && node dist/src/main"
+    "startCommand": "PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=1 npx prisma migrate deploy && node scripts/apply-supabase-migrations.js && node dist/src/main"
   }
 }
