@@ -23,14 +23,22 @@ function run(label, command, timeoutMs = 60000, extraEnv = {}) {
   }
 }
 
-// 1. Prisma migrations first (creates all tables)
+// 1. Resolve any previously-failed Prisma migrations so migrate deploy can retry
+run(
+  'Resolve failed Prisma migrations',
+  'npx prisma migrate resolve --rolled-back 20260318100000_add_training_plan',
+  30000,
+  { PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1' },
+);
+
+// 2. Prisma migrations (creates all tables)
 run('Prisma migrations', 'npx prisma migrate deploy', 120000, {
   PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1',
 });
 
-// 2. Supabase SQL migrations (adds RLS policies, seed data, storage buckets)
+// 3. Supabase SQL migrations (adds RLS policies, seed data, storage buckets)
 run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 120000);
 
-// 3. Start the app
+// 4. Start the app
 console.log('[startup] Starting NestJS app...');
 require('../dist/src/main');
