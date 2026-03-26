@@ -22,7 +22,8 @@ function run(label, command, timeoutMs = 30000) {
 // 1. Supabase SQL migrations
 run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 60000);
 
-// 2. Prisma migrations (may hang on pooler — 30s timeout)
+// 2. Prisma migrations (disable advisory lock for Supabase pooler, 30s timeout)
+process.env.PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK = '1';
 run('Prisma migrations', 'npx prisma migrate deploy', 30000);
 
 // 3. Start the app (replaces this process)
