@@ -184,7 +184,8 @@ export class HomeService {
     sessionId: string,
     dto: CompleteSessionDto,
   ) {
-    const session = await this.prisma.workoutSession.findFirst({
+    try {
+      const session = await this.prisma.workoutSession.findFirst({
       where: { id: sessionId, user_id: userId },
     });
 
@@ -292,6 +293,10 @@ export class HomeService {
           }
         : null,
     };
+    } catch (error) {
+      if (error instanceof AppException) throw error;
+      throw new AppException('completion_failed', 'Failed to complete session', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
   // ── Feedback ─────────────────────────────────────────────

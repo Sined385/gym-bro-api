@@ -62,12 +62,23 @@ export class CommunityService {
   // ── Posts ─────────────────────────────────────────────────
 
   async createPost(userId: string, dto: CreatePostDto) {
+    // Verify workout_session_id exists before inserting (avoid FK violation)
+    let sessionId = dto.workout_session_id ?? null;
+    if (sessionId) {
+      const session = await this.prisma.workoutSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) {
+        sessionId = null;
+      }
+    }
+
     const post = await this.prisma.post.create({
       data: {
         user_id: userId,
         content: dto.content,
         visibility: dto.visibility ?? 'global',
-        workout_session_id: dto.workout_session_id ?? null,
+        workout_session_id: sessionId,
         photo_url: dto.photo_url ?? null,
       },
     });
