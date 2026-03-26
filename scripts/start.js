@@ -1,14 +1,18 @@
 /**
  * Railway startup script.
- * Runs Supabase migrations, then Prisma migrations (with timeout), then starts the app.
+ * Runs Supabase migrations, then Prisma migrations, then starts the app.
  */
 
 const { execSync } = require('child_process');
 
-function run(label, command, timeoutMs = 30000) {
+function run(label, command, timeoutMs = 60000, extraEnv = {}) {
   console.log(`[startup] ${label}...`);
   try {
-    execSync(command, { stdio: 'inherit', timeout: timeoutMs });
+    execSync(command, {
+      stdio: 'inherit',
+      timeout: timeoutMs,
+      env: { ...process.env, ...extraEnv },
+    });
     console.log(`[startup] ${label} — done`);
   } catch (err) {
     if (err.killed) {
@@ -20,12 +24,13 @@ function run(label, command, timeoutMs = 30000) {
 }
 
 // 1. Supabase SQL migrations
-run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 60000);
+run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 120000);
 
-// 2. Prisma migrations (disable advisory lock for Supabase pooler, 30s timeout)
-process.env.PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK = '1';
-run('Prisma migrations', 'npx prisma migrate deploy', 30000);
+// 2. Prisma migrations (120s timeout, advisory lock disabled for Supabase pooler)
+run('Prisma migrations', 'npx prisma migrate deploy', 120000, {
+  PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1',
+});
 
-// 3. Start the app (replaces this process)
+// 3. Start the app
 console.log('[startup] Starting NestJS app...');
 require('../dist/src/main');
