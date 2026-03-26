@@ -21,14 +21,21 @@ export class NotificationsModule implements OnModuleInit {
   onModuleInit() {
     if (admin.apps.length > 0) return; // Already initialized
 
+    const serviceAccountJson = this.configService.get<string>('FIREBASE_SERVICE_ACCOUNT_JSON');
     const serviceAccountPath = this.configService.get<string>('FIREBASE_SERVICE_ACCOUNT_PATH');
 
-    if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
+    if (serviceAccountJson) {
+      const serviceAccount = JSON.parse(serviceAccountJson);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      });
+      this.logger.log('Firebase Admin initialized with service account (from env var)');
+    } else if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
       const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       });
-      this.logger.log('Firebase Admin initialized with service account');
+      this.logger.log('Firebase Admin initialized with service account (from file)');
     } else {
       // Initialize without credentials — FCM sends will fail gracefully
       try {
