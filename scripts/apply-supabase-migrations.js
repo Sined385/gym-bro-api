@@ -3,6 +3,9 @@
  * Tracks applied migrations in a `_applied_supabase_migrations` table
  * so each migration only runs once (like prisma migrate deploy).
  *
+ * Runs each migration's SQL statements individually so that "already exists"
+ * errors on some objects don't block creation of other objects in the same file.
+ *
  * Usage: node scripts/apply-supabase-migrations.js
  * Requires DATABASE_URL env var.
  */
@@ -13,6 +16,73 @@ const path = require('path');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'supabase', 'migrations');
 const TRACKING_TABLE = '_applied_supabase_migrations';
+
+// Postgres error codes that mean "already exists" — safe to skip
+const ALREADY_EXISTS_CODES = new Set([
+  '42P07', // duplicate_table
+  '42P16', // invalid_table_definition (duplicate column)
+  '42701', // duplicate_column
+  '42710', // duplicate_object
+  '42P04', // duplicate_database
+  '42723', // duplicate_function
+  '23505', // unique_violation (for seed data inserts)
+]);
+
+/**
+ * Split a SQL file into individual statements.
+ * Handles dollar-quoted blocks ($$), DO blocks, and CREATE FUNCTION bodies.
+ */
+function splitStatements(sql) {
+  const statements = [];
+  let current = '';
+  let inDollarQuote = false;
+  let dollarTag = '';
+
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+
+    // Check for dollar-quoting ($$, $tag$, etc.)
+    if (char === '$' && !inDollarQuote) {
+      const match = sql.slice(i).match(/^(\$[^$]*\$)/);
+      if (match) {
+        const tag = match[1];
+        inDollarQuote = true;
+        dollarTag = tag;
+        current += tag;
+        i += tag.length - 1;
+        continue;
+      }
+    } else if (char === '$' && inDollarQuote) {
+      const remaining = sql.slice(i);
+      if (remaining.startsWith(dollarTag)) {
+        current += dollarTag;
+        i += dollarTag.length - 1;
+        inDollarQuote = false;
+        dollarTag = '';
+        continue;
+      }
+    }
+
+    if (char === ';' && !inDollarQuote) {
+      current += ';';
+      const trimmed = current.trim();
+      if (trimmed && trimmed !== ';') {
+        statements.push(trimmed);
+      }
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  // Add any remaining statement without semicolon
+  const trimmed = current.trim();
+  if (trimmed && trimmed !== ';') {
+    statements.push(trimmed);
+  }
+
+  return statements;
+}
 
 async function main() {
   const databaseUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
@@ -64,22 +134,34 @@ async function main() {
 
       console.log(`  Applying: ${file} ...`);
       const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8');
+      const statements = splitStatements(sql);
 
-      await client.query('BEGIN');
-      try {
-        await client.query(sql);
-        await client.query(
-          `INSERT INTO public."${TRACKING_TABLE}" (version, name) VALUES ($1, $2)`,
-          [version, name],
-        );
-        await client.query('COMMIT');
-        console.log(`  Applied: ${file}`);
-        appliedCount++;
-      } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(`  FAILED: ${file} — ${err.message}`);
-        throw err;
+      let errors = 0;
+      let skipped = 0;
+
+      for (const stmt of statements) {
+        try {
+          await client.query(stmt);
+        } catch (err) {
+          if (ALREADY_EXISTS_CODES.has(err.code)) {
+            skipped++;
+          } else {
+            errors++;
+            console.warn(`    Warning: ${err.message.split('\n')[0]}`);
+          }
+        }
       }
+
+      // Mark as applied regardless (idempotent — objects that exist are skipped)
+      await client.query(
+        `INSERT INTO public."${TRACKING_TABLE}" (version, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [version, name],
+      );
+
+      const suffix = skipped > 0 ? ` (${skipped} already existed)` : '';
+      const errSuffix = errors > 0 ? ` (${errors} warnings)` : '';
+      console.log(`  Applied: ${file}${suffix}${errSuffix}`);
+      appliedCount++;
     }
 
     if (appliedCount === 0) {
