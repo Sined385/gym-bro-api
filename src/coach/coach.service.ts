@@ -11,6 +11,59 @@ interface SSEEvent {
   data: Record<string, any>;
 }
 
+/**
+ * Attempt to repair and parse potentially truncated/trailing JSON from streamed OpenAI tool calls.
+ */
+function safeParseToolArgs(raw: string): Record<string, any> {
+  try {
+    return JSON.parse(raw);
+  } catch (firstErr) {
+    console.warn('[safeParseToolArgs] Raw tool args failed to parse, attempting repair. Raw:', raw);
+
+    // Strategy 1: trailing garbage after valid JSON — find the closing brace
+    const firstBrace = raw.indexOf('{');
+    if (firstBrace >= 0) {
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = firstBrace; i < raw.length; i++) {
+        const ch = raw[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\') { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        if (ch === '}') depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(raw.slice(firstBrace, i + 1));
+          } catch { break; }
+        }
+      }
+    }
+
+    // Strategy 2: truncated JSON — close open strings, arrays, objects
+    let repaired = raw.trim();
+    const quoteCount = (repaired.match(/(?<!\\)"/g) || []).length;
+    if (quoteCount % 2 !== 0) repaired += '"';
+    const balance = (o: string, c: string) => {
+      const opens = (repaired.match(new RegExp(`\\${o}`, 'g')) || []).length;
+      const closes = (repaired.match(new RegExp(`\\${c}`, 'g')) || []).length;
+      for (let i = 0; i < opens - closes; i++) repaired += c;
+    };
+    balance('[', ']');
+    balance('{', '}');
+    repaired = repaired.replace(/,\s*([\]}])/g, '$1');
+
+    try {
+      return JSON.parse(repaired);
+    } catch (repairErr) {
+      console.error('[safeParseToolArgs] Repair also failed. Repaired:', repaired);
+      throw firstErr;
+    }
+  }
+}
+
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
   dumbbells_only: ['Dumbbells', 'Bodyweight'],
@@ -341,7 +394,7 @@ export class CoachService {
         // Execute the tool
         if (toolCallName === 'create_workout_session') {
           try {
-            const args = JSON.parse(toolCallArgs);
+            const args = safeParseToolArgs(toolCallArgs) as any;
             const session = await this.createWorkoutSession(
               userId,
               args,
@@ -425,7 +478,7 @@ export class CoachService {
           }
         } else if (toolCallName === 'modify_plan_day') {
             try {
-              const args = JSON.parse(toolCallArgs);
+              const args = safeParseToolArgs(toolCallArgs);
               const plan = await this.prisma.trainingPlan.findFirst({
                 where: { user_id: userId, is_active: true },
                 include: { days: true },
@@ -730,8 +783,11 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goal}
     return `You are a no-nonsense strength coach for the GymBro app.
 You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.
 
-When the user asks you to create, adjust, or modify a workout — use the provided tools.
-When giving advice — respond in text only.
+Tool usage rules:
+- When the user asks to "create a workout", "build me a workout", "give me a workout for today", or anything about generating a new session → call create_workout_session immediately. Do NOT ask clarifying questions — just pick exercises that match their profile and goal.
+- Only use modify_plan_day when the user explicitly asks to change a specific day in their weekly training plan (e.g. "swap Tuesday to legs", "make Friday a rest day").
+- NEVER list exercises as plain text. Always use the tool so the session is saved.
+When giving advice or answering questions — respond in text only.
 
 Keep responses concise (2-3 sentences max for text replies).
 

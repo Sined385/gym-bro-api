@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Put,
   Req,
   UseGuards,
@@ -35,6 +36,12 @@ export class OnboardingController {
   @HttpCode(HttpStatus.OK)
   async findOne(@Req() req: Request) {
     return this.onboardingService.findByUserId(req.user!.id);
+  }
+
+  @Patch()
+  @HttpCode(HttpStatus.OK)
+  async patch(@Req() req: Request, @Body() body: Record<string, any>) {
+    return this.onboardingService.patchField(req.user!.id, body);
   }
 
   @Delete()

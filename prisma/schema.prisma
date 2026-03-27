@@ -146,8 +146,9 @@ model OnboardingData {
   primary_sport       String
   experience_level    String
   training_frequency  Int
-  workout_duration    Int
-  available_equipment String
+  workout_duration      Int
+  preferred_rest_time   Int?
+  available_equipment   String
   injuries            Json      @default("[]")
   body_weight_kg      Float?
   completed_at        DateTime?

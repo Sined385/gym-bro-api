@@ -9,6 +9,7 @@ export interface SaveOnboardingDto {
   experience_level: string;
   training_frequency: number;
   workout_duration: number;
+  preferred_rest_time?: number;
   available_equipment: string;
   injuries?: InjuryDto[];
   completed_at: string;
