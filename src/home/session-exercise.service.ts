@@ -99,7 +99,9 @@ export class SessionExerciseService {
           accent_color: ACCENT_COLORS[(currentStep - 1) % ACCENT_COLORS.length],
           sets_display: '',
         },
-        include: { exercise_sets: true },
+        include: {
+          exercise_sets: true,
+        },
       });
       created.push({
         id: exercise.id,

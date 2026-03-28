@@ -53,6 +53,7 @@ model SessionExercise {
   accent_color        String           @default("#E86A75")
   muscle_group        String?
   equipment           String?
+  suggested_weight    Float?
   library_exercise_id String?
   superset_group_id   String?
   superset_order      String?
@@ -85,6 +86,11 @@ model ExerciseLibrary {
   muscle_group      String
   equipment         String
   is_system         Boolean           @default(false)
+  external_id       String?           @unique
+  level             String?
+  category          String?
+  force             String?
+  mechanic          String?
   created_at        DateTime          @default(now())
   session_exercises SessionExercise[]
 
@@ -151,6 +157,8 @@ model OnboardingData {
   available_equipment   String
   injuries            Json      @default("[]")
   body_weight_kg      Float?
+  height_cm           Float?
+  biological_sex      String?
   completed_at        DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt

@@ -234,7 +234,7 @@ export class CoachService {
         }),
       ]);
 
-    const proposedSession = await this.prisma.workoutSession.findFirst({
+    const quickWorkout = await this.prisma.workoutSession.findFirst({
       where: { user_id: userId, status: 'proposed' },
       orderBy: { created_at: 'desc' },
       include: { exercises: { orderBy: { step_number: 'asc' } } },
@@ -246,7 +246,7 @@ export class CoachService {
       recentSessions,
       weekStats,
       exerciseLibrary,
-      proposedSession,
+      quickWorkout,
     );
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -661,7 +661,9 @@ export class CoachService {
         },
       },
       include: {
-        exercises: { orderBy: { step_number: 'asc' } },
+        exercises: {
+          orderBy: { step_number: 'asc' },
+        },
       },
     });
 
@@ -749,7 +751,7 @@ export class CoachService {
       daysLeftInWeek: number;
     },
     exerciseLibrary: any[],
-    proposedSession: any,
+    quickWorkout: any,
   ): string {
     const nameLine = userName ? `User name: ${userName}` : '';
 
@@ -776,9 +778,9 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goal}
             .join('\n')}`
         : 'No exercise library available.';
 
-    const currentSession = proposedSession
-      ? `Current proposed session: "${proposedSession.title}" with ${proposedSession.exercises.length} exercises: ${proposedSession.exercises.map((e: any) => e.name).join(', ')}`
-      : 'No current proposed session.';
+    const currentSession = quickWorkout
+      ? `Current quick workout: "${quickWorkout.title}" with ${quickWorkout.exercises.length} exercises: ${quickWorkout.exercises.map((e: any) => e.name).join(', ')}`
+      : 'No current quick workout.';
 
     return `You are a no-nonsense strength coach for the GymBro app.
 You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.

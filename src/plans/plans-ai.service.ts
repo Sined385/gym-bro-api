@@ -43,7 +43,10 @@ export class PlansAiService {
       (onboarding.training_frequency || 3) * (totalDays / 7),
     );
 
-    const exerciseList = exerciseLibrary
+    // Limit exercises per muscle group to keep prompt token count low
+    const limited = this.limitExercisesPerGroup(exerciseLibrary, 8);
+
+    const exerciseList = limited
       .map(
         (e) =>
           `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
@@ -130,9 +133,12 @@ Rules:
     // Distribute training days evenly within the partial week
     const trainingDays = this.getTrainingDayIndices(scaledFrequency, startDayOfWeek);
 
+    // Limit exercises per group for faster deterministic selection
+    const limitedLibrary = this.limitExercisesPerGroup(exerciseLibrary, 10);
+
     // Group exercises by muscle group
     const byMuscle = new Map<string, typeof exerciseLibrary>();
-    for (const ex of exerciseLibrary) {
+    for (const ex of limitedLibrary) {
       const group = byMuscle.get(ex.muscle_group) ?? [];
       group.push(ex);
       byMuscle.set(ex.muscle_group, group);
@@ -225,6 +231,26 @@ Rules:
       indices.push(startDow + Math.round((i * (totalDays - 1)) / (clamped - 1 || 1)));
     }
     return [...new Set(indices)].sort((a, b) => a - b);
+  }
+
+  private limitExercisesPerGroup(exercises: any[], maxPerGroup: number): any[] {
+    const groups = new Map<string, any[]>();
+    for (const ex of exercises) {
+      const g = groups.get(ex.muscle_group) ?? [];
+      g.push(ex);
+      groups.set(ex.muscle_group, g);
+    }
+    const result: any[] = [];
+    for (const [, group] of groups) {
+      // Compound exercises first, then isolation
+      group.sort(
+        (a, b) =>
+          (a.mechanic === 'compound' ? -1 : 1) -
+          (b.mechanic === 'compound' ? -1 : 1),
+      );
+      result.push(...group.slice(0, maxPerGroup));
+    }
+    return result;
   }
 
   async generateCompletionNotes(

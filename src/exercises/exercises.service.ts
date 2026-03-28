@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExerciseDto } from './dto/exercises.dto';
 
+const IMAGE_BASE_URL =
+  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+
 @Injectable()
 export class ExercisesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -19,7 +22,7 @@ export class ExercisesService {
       where.muscle_group = muscleGroup;
     }
 
-    const exercises = await this.prisma.exerciseLibrary.findMany({
+    const rows = await this.prisma.exerciseLibrary.findMany({
       where,
       orderBy: [{ is_system: 'desc' }, { name: 'asc' }],
       select: {
@@ -28,8 +31,23 @@ export class ExercisesService {
         muscle_group: true,
         equipment: true,
         is_system: true,
+        external_id: true,
       },
     });
+
+    const exercises = rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      muscle_group: r.muscle_group,
+      equipment: r.equipment,
+      is_system: r.is_system,
+      images: r.external_id
+        ? [
+            `${IMAGE_BASE_URL}/${r.external_id}/0.jpg`,
+            `${IMAGE_BASE_URL}/${r.external_id}/1.jpg`,
+          ]
+        : [],
+    }));
 
     return { exercises };
   }
@@ -53,6 +71,20 @@ export class ExercisesService {
     });
 
     return exercise;
+  }
+
+  async getExercise(userId: string, exerciseId: string) {
+    const exercise = await this.prisma.exerciseLibrary.findFirst({
+      where: { id: exerciseId, OR: [{ is_system: true }, { user_id: userId }] },
+      select: { id: true, name: true, muscle_group: true, equipment: true, is_system: true, external_id: true },
+    });
+    if (!exercise) return null;
+    return {
+      ...exercise,
+      images: exercise.external_id
+        ? [`${IMAGE_BASE_URL}/${exercise.external_id}/0.jpg`, `${IMAGE_BASE_URL}/${exercise.external_id}/1.jpg`]
+        : [],
+    };
   }
 
   async getPreviousSets(userId: string, exerciseId: string) {

@@ -36,6 +36,9 @@ export class OnboardingService {
       preferred_rest_time,
       available_equipment,
       injuries,
+      weight_kg,
+      height_cm,
+      biological_sex,
       completed_at,
     } = dto;
 
@@ -110,6 +113,9 @@ export class OnboardingService {
       ...(preferred_rest_time !== undefined && { preferred_rest_time }),
       available_equipment,
       injuries: validatedInjuries as unknown as InputJsonValue,
+      ...(weight_kg !== undefined && { body_weight_kg: weight_kg }),
+      ...(height_cm !== undefined && { height_cm }),
+      ...(biological_sex !== undefined && { biological_sex }),
       completed_at: new Date(completed_at),
       updated_at: new Date(),
     };

@@ -12,7 +12,7 @@ const mockPrisma = {
 
 const mockHomeAiService = {
   getOrGenerateMotivation: jest.fn(),
-  generateProposedSession: jest.fn(),
+  generateQuickWorkout: jest.fn(),
 };
 
 describe('HomeService', () => {

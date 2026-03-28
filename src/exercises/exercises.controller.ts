@@ -40,6 +40,12 @@ export class ExercisesController {
     return this.exercisesService.createExercise(req.user!.id, dto);
   }
 
+  @Get(':id')
+  @HttpCode(HttpStatus.OK)
+  async getExercise(@Param('id') exerciseId: string, @Req() req: Request) {
+    return this.exercisesService.getExercise(req.user!.id, exerciseId);
+  }
+
   @Get(':id/previous-sets')
   @HttpCode(HttpStatus.OK)
   async getPreviousSets(@Param('id') exerciseId: string, @Req() req: Request) {

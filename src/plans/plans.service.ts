@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import { PlansAiService } from './plans-ai.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
+import { WeightSuggestionService } from '../home/weight-suggestion.service';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
@@ -18,6 +19,7 @@ export class PlansService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly plansAiService: PlansAiService,
+    private readonly weightSuggestionService: WeightSuggestionService,
   ) {}
 
   async getActivePlan(userId: string) {
@@ -112,6 +114,7 @@ export class PlansService {
             setsDisplay: e.sets_display,
             libraryExerciseId: e.library_exercise_id ?? null,
             accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
+            suggestedWeight: e.suggested_weight ?? null,
           })),
           workoutSession: day.workout_session
             ? {
@@ -185,6 +188,29 @@ export class PlansService {
       exerciseLibrary,
       startDow,
     );
+
+    // Enrich exercises with suggested weights
+    const allExercises = generatedDays.flatMap((day: any) =>
+      (day.exercises ?? []).map((ex: any) => ({
+        library_exercise_id: ex.library_exercise_id ?? null,
+        muscle_group: ex.muscle_group ?? '',
+        equipment: ex.equipment ?? '',
+      })),
+    );
+    const weightMap = await this.weightSuggestionService.suggestWeights(
+      userId,
+      allExercises,
+      onboarding,
+    );
+    for (const day of generatedDays) {
+      if (day.exercises) {
+        for (const ex of day.exercises as any[]) {
+          if (ex.library_exercise_id) {
+            ex.suggested_weight = weightMap.get(ex.library_exercise_id) ?? null;
+          }
+        }
+      }
+    }
 
     const weekStart = this.getWeekStart(now);
 
@@ -275,6 +301,7 @@ export class PlansService {
             step_number: i + 1,
             sets_display: ex.sets_display || '3 × 10',
             accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+            suggested_weight: ex.suggested_weight ?? null,
           })),
         },
       },
@@ -352,6 +379,7 @@ export class PlansService {
         library_exercise_id: e.library_exercise_id ?? null,
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
+        suggested_weight: e.suggested_weight ?? null,
       })),
     };
   }

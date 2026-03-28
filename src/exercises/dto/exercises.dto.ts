@@ -16,6 +16,7 @@ const EQUIPMENT = [
   'Cable',
   'Machine',
   'Bodyweight',
+  'Bands',
   'Other',
 ];
 

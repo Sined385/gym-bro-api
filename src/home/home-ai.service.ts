@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACCENT_COLORS } from './session-exercise.service';
+import { WeightSuggestionService } from './weight-suggestion.service';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [], // empty means all equipment allowed
@@ -25,6 +26,7 @@ export class HomeAiService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
+    private readonly weightSuggestionService: WeightSuggestionService,
   ) {}
 
   // ── AI Motivation ───────────────────────────────────────
@@ -52,17 +54,21 @@ export class HomeAiService {
   }
 
   private async generateAIMotivation(userId: string) {
-    const [onboarding, recentSessions, weekStats] = await Promise.all([
-      this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
-      this.getRecentSessions(userId, 14),
-      this.getWeekStats(userId),
-    ]);
+    const [onboarding, recentSessions, weekStats, totalSessionCount] =
+      await Promise.all([
+        this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
+        this.getRecentSessions(userId, 14),
+        this.getWeekStats(userId),
+        this.prisma.workoutSession.count({
+          where: { user_id: userId, status: 'completed' },
+        }),
+      ]);
 
-    const systemPrompt = this.buildMotivationPrompt(
-      onboarding,
-      recentSessions,
-      weekStats,
-    );
+    const isNewUser = totalSessionCount === 0;
+
+    const systemPrompt = isNewUser
+      ? this.buildWelcomePrompt(onboarding)
+      : this.buildMotivationPrompt(onboarding, recentSessions, weekStats);
 
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
     const response = await this.openai.chat.completions.create({
@@ -103,7 +109,40 @@ export class HomeAiService {
   }
 
   private async generateFallbackMotivation(userId: string) {
-    const weekStats = await this.getWeekStats(userId);
+    const [weekStats, totalSessionCount, onboarding] = await Promise.all([
+      this.getWeekStats(userId),
+      this.prisma.workoutSession.count({
+        where: { user_id: userId, status: 'completed' },
+      }),
+      this.prisma.onboardingData.findUnique({
+        where: { user_id: userId },
+        select: { primary_goal: true, primary_sport: true },
+      }),
+    ]);
+
+    // New user — welcome message based on profile
+    if (totalSessionCount === 0) {
+      const goalLabels: Record<string, string> = {
+        build_muscle: 'building muscle',
+        lose_fat: 'burning fat',
+        get_stronger: 'getting stronger',
+        improve_endurance: 'boosting endurance',
+        stay_healthy: 'staying healthy',
+      };
+      const goalLabel = goalLabels[onboarding?.primary_goal ?? ''] ?? 'your fitness goals';
+
+      return this.prisma.motivationInsight.create({
+        data: {
+          user_id: userId,
+          title: 'Welcome to GymBro',
+          message: `Your profile is set up and ready for ${goalLabel}. Start your first workout to get personalized insights.`,
+          workouts_this_week: 0,
+          personal_records: [],
+          valid_until: this.endOfDay(),
+        },
+      });
+    }
+
     const remaining = weekStats.targetPerWeek - weekStats.completedThisWeek;
     const message =
       remaining > 0
@@ -164,9 +203,41 @@ Rules:
 - This appears on a mobile card — be concise`;
   }
 
-  // ── AI Proposed Session ─────────────────────────────────
+  private buildWelcomePrompt(onboarding: any): string {
+    const profile = onboarding
+      ? `User profile:
+- Goal: ${onboarding.primary_goal}
+- Sport: ${onboarding.primary_sport}
+- Experience: ${onboarding.experience_level}
+- Training frequency target: ${onboarding.training_frequency}x per week
+- Workout duration: ${onboarding.workout_duration} min
+- Equipment: ${onboarding.available_equipment}
+- Injuries: ${JSON.stringify(onboarding.injuries)}`
+      : 'No onboarding profile available.';
 
-  async generateProposedSession(userId: string) {
+    return `You are a friendly strength coach for the GymBro app.
+This is a brand new user who just signed up and hasn't done any workouts yet. Welcome them and get them excited to start their first session.
+
+${profile}
+
+Respond with a JSON object:
+{
+  "title": "Short welcoming title (max 6 words, e.g. 'Ready to get started?')",
+  "message": "1-2 sentences: welcome them, reference their goal or sport, and encourage them to start their first workout (max 180 chars)",
+  "personal_records": []
+}
+
+Rules:
+- Be warm and encouraging — this is their first impression of the app
+- Reference their specific goal or sport to make it feel personal
+- Do NOT mention missed workouts, streaks, or inactivity — they are brand new
+- Keep the tone friendly and motivating
+- This appears on a mobile card — be concise`;
+  }
+
+  // ── Quick Workout ──────────────────────────────────────
+
+  async generateQuickWorkout(userId: string) {
     const onboarding = await this.prisma.onboardingData.findUnique({
       where: { user_id: userId },
     });
@@ -188,7 +259,7 @@ Rules:
         ? { equipment: { in: allowedEquipment } }
         : {};
 
-    const [exercises, recentSessions, weekStats] = await Promise.all([
+    const [allExercises, recentSessions, weekStats] = await Promise.all([
       this.prisma.exerciseLibrary.findMany({
         where: {
           OR: [{ is_system: true }, { user_id: userId }],
@@ -200,7 +271,17 @@ Rules:
       this.getWeekStats(userId),
     ]);
 
-    if (exercises.length === 0) return null;
+    if (allExercises.length === 0) return null;
+
+    // Pre-filter: pick target muscle groups and limit exercises per group
+    const targetMuscleGroups = this.pickTargetMuscleGroups(recentSessions);
+    const filtered = targetMuscleGroups.length > 0
+      ? allExercises.filter((e) => targetMuscleGroups.includes(e.muscle_group))
+      : allExercises;
+    const exercises = this.limitExercisesPerGroup(
+      filtered.length > 0 ? filtered : allExercises,
+      10,
+    );
 
     const systemPrompt = this.buildSessionPrompt(
       onboarding,
@@ -249,6 +330,20 @@ Rules:
       throw new Error('AI returned no valid exercises');
     }
 
+    // Suggest weights for each exercise
+    const weightMap = await this.weightSuggestionService.suggestWeights(
+      userId,
+      validExercises.map((ex) => {
+        const libEx = exerciseMap.get(ex.library_exercise_id)!;
+        return {
+          library_exercise_id: ex.library_exercise_id,
+          muscle_group: libEx.muscle_group,
+          equipment: libEx.equipment,
+        };
+      }),
+      onboarding,
+    );
+
     const session = await this.prisma.workoutSession.create({
       data: {
         user_id: userId,
@@ -270,12 +365,15 @@ Rules:
               step_number: i + 1,
               sets_display: ex.sets_display || '3 × 10',
               accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+              suggested_weight: weightMap.get(ex.library_exercise_id) ?? null,
             };
           }),
         },
       },
       include: {
-        exercises: { orderBy: { step_number: 'asc' } },
+        exercises: {
+          orderBy: { step_number: 'asc' },
+        },
       },
     });
 
@@ -350,7 +448,7 @@ Rules:
         ? { equipment: { in: allowedEquipment } }
         : {};
 
-    const exercises = await this.prisma.exerciseLibrary.findMany({
+    const allExercises = await this.prisma.exerciseLibrary.findMany({
       where: {
         OR: [{ is_system: true }, { user_id: userId }],
         ...equipmentFilter,
@@ -358,7 +456,9 @@ Rules:
       orderBy: { name: 'asc' },
     });
 
-    if (exercises.length === 0) return null;
+    if (allExercises.length === 0) return null;
+
+    const exercises = this.limitExercisesPerGroup(allExercises, 10);
 
     const targetCount = Math.min(6, Math.max(4, exercises.length));
     const byMuscle = new Map<string, typeof exercises>();
@@ -391,6 +491,17 @@ Rules:
     const setsDisplay =
       SETS_DISPLAY_BY_GOAL[onboarding.primary_goal] ?? '3 × 10';
 
+    // Suggest weights for picked exercises
+    const weightMap = await this.weightSuggestionService.suggestWeights(
+      userId,
+      picked.map((ex) => ({
+        library_exercise_id: ex.id,
+        muscle_group: ex.muscle_group,
+        equipment: ex.equipment,
+      })),
+      onboarding,
+    );
+
     const goalLabels: Record<string, string> = {
       build_muscle: 'muscle building',
       lose_fat: 'fat loss',
@@ -419,15 +530,61 @@ Rules:
             step_number: i + 1,
             sets_display: setsDisplay,
             accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+            suggested_weight: weightMap.get(ex.id) ?? null,
           })),
         },
       },
       include: {
-        exercises: { orderBy: { step_number: 'asc' } },
+        exercises: {
+          orderBy: { step_number: 'asc' },
+        },
       },
     });
 
     return session;
+  }
+
+  // ── Exercise Pre-filtering ──────────────────────────────────
+
+  private pickTargetMuscleGroups(recentSessions: any[]): string[] {
+    const allGroups = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Other'];
+
+    if (recentSessions.length === 0) return [];
+
+    // Count how often each muscle group appeared in recent sessions
+    const counts = new Map<string, number>();
+    for (const mg of allGroups) counts.set(mg, 0);
+    for (const session of recentSessions) {
+      for (const ex of session.exercises ?? []) {
+        if (ex.muscle_group) {
+          counts.set(ex.muscle_group, (counts.get(ex.muscle_group) ?? 0) + 1);
+        }
+      }
+    }
+
+    // Sort by least-trained first, pick 3-4 groups
+    const sorted = [...counts.entries()].sort((a, b) => a[1] - b[1]);
+    return sorted.slice(0, 4).map(([mg]) => mg);
+  }
+
+  private limitExercisesPerGroup(exercises: any[], maxPerGroup: number): any[] {
+    const groups = new Map<string, any[]>();
+    for (const ex of exercises) {
+      const g = groups.get(ex.muscle_group) ?? [];
+      g.push(ex);
+      groups.set(ex.muscle_group, g);
+    }
+    const result: any[] = [];
+    for (const [, group] of groups) {
+      // Compound exercises first, then isolation
+      group.sort(
+        (a, b) =>
+          (a.mechanic === 'compound' ? -1 : 1) -
+          (b.mechanic === 'compound' ? -1 : 1),
+      );
+      result.push(...group.slice(0, maxPerGroup));
+    }
+    return result;
   }
 
   // ── Shared Helpers ────────────────────────────────────────

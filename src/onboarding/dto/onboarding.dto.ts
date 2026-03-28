@@ -12,5 +12,8 @@ export interface SaveOnboardingDto {
   preferred_rest_time?: number;
   available_equipment: string;
   injuries?: InjuryDto[];
+  weight_kg?: number;
+  height_cm?: number;
+  biological_sex?: string;
   completed_at: string;
 }

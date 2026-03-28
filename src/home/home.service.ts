@@ -25,7 +25,7 @@ export class HomeService {
 
     const todayStr = now.toISOString().split('T')[0];
 
-    const [profile, completedSessions, proposedSession, todayHistory] =
+    const [profile, completedSessions, quickWorkout, todayHistory] =
       await Promise.all([
         this.prisma.user.findUnique({
           where: { id: userId },
@@ -43,7 +43,9 @@ export class HomeService {
           where: { user_id: userId, status: 'proposed' },
           orderBy: { created_at: 'desc' },
           include: {
-            exercises: { orderBy: { step_number: 'asc' } },
+            exercises: {
+              orderBy: { step_number: 'asc' },
+            },
           },
         }),
         this.getSessionHistory(userId, todayStr),
@@ -61,9 +63,9 @@ export class HomeService {
       ),
     ];
 
-    let finalProposedSession = proposedSession;
-    if (!finalProposedSession) {
-      finalProposedSession = await this.homeAiService.generateProposedSession(userId);
+    let finalQuickWorkout = quickWorkout;
+    if (!finalQuickWorkout) {
+      finalQuickWorkout = await this.homeAiService.generateQuickWorkout(userId);
     }
 
     return {
@@ -77,14 +79,14 @@ export class HomeService {
           }
         : null,
       week_completed_days: weekCompletedDays,
-      proposed_session: finalProposedSession
+      quick_workout: finalQuickWorkout
         ? {
-            id: finalProposedSession.id,
-            title: finalProposedSession.title,
-            type: finalProposedSession.type,
-            duration_minutes: finalProposedSession.duration_minutes,
-            ai_message: finalProposedSession.ai_message,
-            exercises: finalProposedSession.exercises.map((e) => ({
+            id: finalQuickWorkout.id,
+            title: finalQuickWorkout.title,
+            type: finalQuickWorkout.type,
+            duration_minutes: finalQuickWorkout.duration_minutes,
+            ai_message: finalQuickWorkout.ai_message,
+            exercises: finalQuickWorkout.exercises.map((e: any) => ({
               id: e.id,
               name: e.name,
               step_number: e.step_number,
@@ -93,6 +95,7 @@ export class HomeService {
               library_exercise_id: e.library_exercise_id ?? null,
               muscle_group: e.muscle_group ?? null,
               equipment: e.equipment ?? null,
+              suggested_weight: e.suggested_weight ?? null,
             })),
           }
         : null,
@@ -155,7 +158,11 @@ export class HomeService {
         started_at: new Date(),
         updated_at: new Date(),
       },
-      include: { exercises: { orderBy: { step_number: 'asc' } } },
+      include: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+        },
+      },
     });
 
     return this.formatSession(updated);
@@ -173,7 +180,9 @@ export class HomeService {
         ai_generated: false,
         updated_at: new Date(),
       },
-      include: { exercises: true },
+      include: {
+        exercises: true,
+      },
     });
 
     return this.formatSession(session);
@@ -276,7 +285,9 @@ export class HomeService {
     const fullSession = await this.prisma.workoutSession.findUniqueOrThrow({
       where: { id: sessionId },
       include: {
-        exercises: { orderBy: { step_number: 'asc' } },
+        exercises: {
+          orderBy: { step_number: 'asc' },
+        },
         feedback: true,
       },
     });
@@ -459,6 +470,7 @@ export class HomeService {
       library_exercise_id: string | null;
       muscle_group: string | null;
       equipment: string | null;
+      suggested_weight: number | null;
     }[];
   }) {
     return {
@@ -483,6 +495,7 @@ export class HomeService {
         library_exercise_id: e.library_exercise_id ?? null,
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
+        suggested_weight: e.suggested_weight ?? null,
       })),
     };
   }
