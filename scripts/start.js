@@ -23,10 +23,18 @@ function run(label, command, timeoutMs = 60000, extraEnv = {}) {
   }
 }
 
-// 1. Resolve any previously-failed Prisma migrations so migrate deploy can retry
+// 1. Resolve any previously-failed Prisma migrations so migrate deploy can proceed
 run(
   'Resolve failed Prisma migrations',
   'npx prisma migrate resolve --rolled-back 20260318100000_add_training_plan',
+  30000,
+  { PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1' },
+);
+
+// analytics_events table was already created by Supabase migration, so mark Prisma's as applied
+run(
+  'Resolve analytics_events migration',
+  'npx prisma migrate resolve --applied 20260330000000_add_analytics_events',
   30000,
   { PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1' },
 );
