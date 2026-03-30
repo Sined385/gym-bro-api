@@ -291,3 +291,15 @@ model Notification {
   @@index([user_id, is_read, created_at(sort: Desc)])
   @@map("notifications")
 }
+
+model AnalyticsEvent {
+  id         String   @id @default(uuid())
+  user_id    String
+  event_name String
+  properties Json     @default("{}")
+  created_at DateTime @default(now())
+
+  @@index([event_name, created_at(sort: Desc)])
+  @@index([user_id, created_at(sort: Desc)])
+  @@map("analytics_events")
+}

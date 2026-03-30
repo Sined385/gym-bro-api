@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class AuthService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly prisma: PrismaService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -33,6 +35,10 @@ export class AuthService {
         email: supabaseUser.email!,
       },
       update: {},
+    });
+
+    this.analytics.track(user.id, 'user_registered', {
+      email: user.email,
     });
 
     return {

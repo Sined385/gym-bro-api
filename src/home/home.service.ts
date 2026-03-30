@@ -8,12 +8,14 @@ import {
 } from './dto/home.dto';
 import { ACCENT_COLORS } from './session-exercise.service';
 import { HomeAiService } from './home-ai.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 @Injectable()
 export class HomeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly homeAiService: HomeAiService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   // ── Dashboard ────────────────────────────────────────────
@@ -263,6 +265,12 @@ export class HomeService {
           },
         });
       }
+    });
+
+    this.analytics.track(userId, 'session_completed', {
+      duration_minutes: durationMinutes,
+      calories,
+      effort_level: dto.feedback?.effort_level ?? null,
     });
 
     // Invalidate cached motivation so the next dashboard load regenerates it
