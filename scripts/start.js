@@ -47,6 +47,9 @@ run('Prisma migrations', 'npx prisma migrate deploy', 120000, {
 // 3. Supabase SQL migrations (adds RLS policies, seed data, storage buckets)
 run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 120000);
 
-// 4. Start the app
+// 4. Seed exercise library (with external_id for images)
+run('Seed exercise library', 'node scripts/seed-exercise-library.js', 120000);
+
+// 5. Start the app
 console.log('[startup] Starting NestJS app...');
 require('../dist/src/main');

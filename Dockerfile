@@ -26,6 +26,7 @@ COPY --from=builder /app/prisma.config.ts               ./prisma.config.ts
 COPY --from=builder /app/generated                      ./generated
 COPY --from=builder /app/supabase/migrations             ./supabase/migrations
 COPY --from=builder /app/scripts                         ./scripts
+COPY --from=builder /app/data                            ./data
 
 EXPOSE 3000
 
