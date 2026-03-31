@@ -4,16 +4,23 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
-import { SupabaseService } from '../supabase/supabase.service';
-import { PrismaService } from '../prisma/prisma.service';
+import * as jwt from 'jsonwebtoken';
+import { JwksClient } from 'jwks-rsa';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(
-    private readonly supabase: SupabaseService,
-    private readonly prisma: PrismaService,
-  ) {}
+  private jwks: JwksClient;
+
+  constructor(private readonly config: ConfigService) {
+    this.jwks = new JwksClient({
+      jwksUri: `${this.config.getOrThrow('SUPABASE_URL')}/.well-known/jwks.json`,
+      cache: true,
+      cacheMaxEntries: 5,
+      cacheMaxAge: 600_000, // 10 min
+    });
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -23,34 +30,21 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing authorization token');
     }
 
-    const { data, error } = await this.supabase.getClient().auth.getUser(token);
+    try {
+      const decoded = jwt.decode(token, { complete: true });
+      if (!decoded) {
+        throw new Error('Malformed token');
+      }
 
-    if (error || !data.user) {
+      const kid = decoded.header.kid;
+      const key = await this.jwks.getSigningKey(kid);
+      const publicKey = key.getPublicKey();
+
+      const payload = jwt.verify(token, publicKey) as jwt.JwtPayload;
+      request.user = { id: payload.sub!, email: payload.email };
+    } catch {
       throw new UnauthorizedException('Invalid or expired token');
     }
-
-    // Sync user to public.User table (upsert)
-    const user = data.user;
-    const meta = user.user_metadata ?? {};
-    await this.prisma.user.upsert({
-      where: { id: user.id },
-      update: {
-        email: user.email ?? '',
-        full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
-        avatar_url:
-          (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
-      },
-      create: {
-        id: user.id,
-        email: user.email ?? '',
-        full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
-        avatar_url:
-          (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
-      },
-    });
-
-    // Attach the authenticated user to the request for downstream use
-    request.user = data.user;
 
     return true;
   }

@@ -11,18 +11,23 @@ async function bootstrap() {
   const logger = new Logger('HTTP');
   app.use((req, res, next) => {
     const start = Date.now();
+
+    // Only buffer response bodies for error responses (4xx/5xx)
     const chunks: Buffer[] = [];
     const origWrite = res.write;
     const origEnd = res.end;
+
     res.write = function (chunk: any, ...args: any[]) {
-      if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      if (chunk && res.statusCode >= 400) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
       return origWrite.apply(res, [chunk, ...args]);
     };
     res.end = function (chunk: any, ...args: any[]) {
-      if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      const body = Buffer.concat(chunks).toString('utf8');
       const ms = Date.now() - start;
       if (res.statusCode >= 400) {
+        if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        const body = Buffer.concat(chunks).toString('utf8');
         logger.warn(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms body=${JSON.stringify(req.body)} resp=${body}`);
       } else {
         logger.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
