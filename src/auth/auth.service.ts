@@ -56,11 +56,30 @@ export class AuthService {
       throw new UnauthorizedException(error.message);
     }
 
+    const supabaseUser = data.user;
+    const meta = supabaseUser.user_metadata ?? {};
+
+    // Ensure user exists in public.User table
+    await this.prisma.user.upsert({
+      where: { id: supabaseUser.id },
+      create: {
+        id: supabaseUser.id,
+        email: supabaseUser.email ?? '',
+        full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
+        avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
+      },
+      update: {
+        email: supabaseUser.email ?? '',
+        full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
+        avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
+      },
+    });
+
     return {
       access_token: data.session.access_token,
       refresh_token: data.session.refresh_token,
       expires_in: data.session.expires_in,
-      user: data.user,
+      user: supabaseUser,
     };
   }
 }
