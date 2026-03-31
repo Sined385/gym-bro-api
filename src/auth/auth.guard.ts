@@ -4,28 +4,18 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
-import * as jwt from 'jsonwebtoken';
-import { JwksClient } from 'jwks-rsa';
+import { SupabaseService } from '../supabase/supabase.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  private jwks: JwksClient;
   private syncedUsers = new Set<string>();
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly supabase: SupabaseService,
     private readonly prisma: PrismaService,
-  ) {
-    this.jwks = new JwksClient({
-      jwksUri: `${this.config.getOrThrow('SUPABASE_URL')}/auth/v1/.well-known/jwks.json`,
-      cache: true,
-      cacheMaxEntries: 5,
-      cacheMaxAge: 600_000, // 10 min
-    });
-  }
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -35,38 +25,34 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing authorization token');
     }
 
-    try {
-      const decoded = jwt.decode(token, { complete: true });
-      if (!decoded) {
-        throw new Error('Malformed token');
-      }
+    const { data, error } = await this.supabase.getClient().auth.getUser(token);
 
-      const kid = decoded.header.kid;
-      const key = await this.jwks.getSigningKey(kid);
-      const publicKey = key.getPublicKey();
-
-      const payload = jwt.verify(token, publicKey) as jwt.JwtPayload;
-      request.user = { id: payload.sub!, email: payload.email };
-    } catch {
+    if (error || !data.user) {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
-    // Ensure User row exists (fire-and-forget, never blocks auth)
-    const userId = request.user.id;
-    if (!this.syncedUsers.has(userId)) {
+    request.user = { id: data.user.id, email: data.user.email ?? '' };
+
+    // Ensure User row exists (non-blocking, never fails auth)
+    const user = data.user;
+    if (!this.syncedUsers.has(user.id)) {
       try {
-        const meta = (jwt.decode(token) as any)?.user_metadata ?? {};
+        const meta = user.user_metadata ?? {};
         await this.prisma.user.upsert({
-          where: { id: userId },
-          create: {
-            id: userId,
-            email: request.user.email ?? '',
+          where: { id: user.id },
+          update: {
+            email: user.email ?? '',
             full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
             avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
           },
-          update: {},
+          create: {
+            id: user.id,
+            email: user.email ?? '',
+            full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
+            avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
+          },
         });
-        this.syncedUsers.add(userId);
+        this.syncedUsers.add(user.id);
       } catch (err) {
         console.warn('[AuthGuard] User sync failed:', (err as Error).message);
       }
