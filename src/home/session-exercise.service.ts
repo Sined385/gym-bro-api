@@ -85,13 +85,29 @@ export class SessionExerciseService {
 
     let currentStep = maxStep._max.step_number ?? 0;
 
+    // Validate library_exercise_ids upfront — stale IDs (e.g. after exercise re-seed) become null
+    const candidateIds = dto.exercises
+      .map((e) => e.library_exercise_id)
+      .filter((id): id is string => !!id);
+    const validIds = candidateIds.length > 0
+      ? new Set(
+          (await this.prisma.exerciseLibrary.findMany({
+            where: { id: { in: candidateIds } },
+            select: { id: true },
+          })).map((e) => e.id),
+        )
+      : new Set<string>();
+
     const created: any[] = [];
     for (const item of dto.exercises) {
       currentStep++;
+      const libId = item.library_exercise_id && validIds.has(item.library_exercise_id)
+        ? item.library_exercise_id
+        : null;
       const exercise = await this.prisma.sessionExercise.create({
         data: {
           session_id: sessionId,
-          library_exercise_id: item.library_exercise_id ?? null,
+          library_exercise_id: libId,
           name: item.name,
           muscle_group: item.muscle_group,
           equipment: item.equipment ?? null,
