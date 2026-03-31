@@ -27,7 +27,7 @@ export class HomeService {
 
     const todayStr = now.toISOString().split('T')[0];
 
-    const [profile, completedSessions, quickWorkout, todayHistory] =
+    const [profile, completedSessions, quickWorkout, todayHistory, motivation] =
       await Promise.all([
         this.prisma.user.findUnique({
           where: { id: userId },
@@ -51,9 +51,8 @@ export class HomeService {
           },
         }),
         this.getSessionHistory(userId, todayStr),
+        this.homeAiService.getOrGenerateMotivation(userId),
       ]);
-
-    const motivation = await this.homeAiService.getOrGenerateMotivation(userId);
 
     const name = profile?.full_name ?? profile?.email?.split('@')[0] ?? '';
 
@@ -67,7 +66,8 @@ export class HomeService {
 
     let finalQuickWorkout = quickWorkout;
     if (!finalQuickWorkout) {
-      finalQuickWorkout = await this.homeAiService.generateQuickWorkout(userId);
+      // Generate in background — will be available on next dashboard load
+      this.homeAiService.generateQuickWorkout(userId).catch(() => {});
     }
 
     return {

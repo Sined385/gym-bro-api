@@ -395,7 +395,7 @@ export class CommunityService {
         fullName: user.full_name ?? 'Unknown',
         avatarUrl: user.avatar_url,
       },
-      primaryGoal: onboarding?.primary_goal ?? null,
+      primaryGoals: onboarding?.primary_goals ?? [],
       experienceLevel: onboarding?.experience_level ?? null,
       bodyWeightKg: onboarding?.body_weight_kg ?? null,
       consistencyStats: {
@@ -415,6 +415,7 @@ export class CommunityService {
   // ── My Profile ───────────────────────────────────────────
 
   async getMyProfile(userId: string) {
+    // Fetch user first — must exist before proceeding
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -422,11 +423,7 @@ export class CommunityService {
       throw new AppException('USER_NOT_FOUND', 'User not found', HttpStatus.NOT_FOUND);
     }
 
-    const onboarding = await this.prisma.onboardingData.findUnique({
-      where: { user_id: userId },
-    });
-
-    // Follower/following counts + consistency + session aggregates in parallel
+    // Follower/following counts + consistency + session aggregates + user/onboarding in parallel
     const completedWhere = { user_id: userId, status: 'completed' as const };
     const now = new Date();
     const dayOfWeek = now.getDay();
@@ -436,6 +433,7 @@ export class CommunityService {
     const startOfYear = new Date(now.getFullYear(), 0, 1);
 
     const [
+      onboarding,
       followerCount,
       followingCount,
       thisWeek,
@@ -445,6 +443,7 @@ export class CommunityService {
       avgDurationAgg,
       recentPosts,
     ] = await Promise.all([
+      this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
       this.prisma.follow.count({ where: { following_id: userId } }),
       this.prisma.follow.count({ where: { follower_id: userId } }),
       this.prisma.workoutSession.count({
@@ -472,66 +471,87 @@ export class CommunityService {
       }),
     ]);
 
-    // These queries can fail without breaking the profile — use safe defaults
-    let avgEffortLevel: number | null = null;
-    try {
-      const feedbackAgg = await this.prisma.sessionFeedback.aggregate({
-        where: {
-          session: { user_id: userId, status: 'completed' },
-        },
-        _avg: { effort_level: true },
-      });
-      avgEffortLevel = feedbackAgg._avg.effort_level ?? null;
-    } catch { /* no feedback data */ }
+    // Parallelize: feedback agg, total weight, personal records, following IDs, and batch post enrichment
+    // Wrap the failable queries in safe helpers that return defaults on error
+    const safeFeedbackAgg = async (): Promise<number | null> => {
+      try {
+        const feedbackAgg = await this.prisma.sessionFeedback.aggregate({
+          where: {
+            session: { user_id: userId, status: 'completed' },
+          },
+          _avg: { effort_level: true },
+        });
+        return feedbackAgg._avg.effort_level ?? null;
+      } catch { /* no feedback data */ return null; }
+    };
 
-    let totalWeightLifted = 0;
-    try {
-      const weightResult = await this.prisma.$queryRaw<[{ total: number | null }]>`
-        SELECT COALESCE(SUM(es.weight * es.reps), 0) as total
-        FROM exercise_sets es
-        JOIN session_exercises se ON se.id = es.exercise_id
-        JOIN workout_sessions ws ON ws.id = se.session_id
-        WHERE ws.user_id = ${userId} AND ws.status = 'completed'
-      `;
-      totalWeightLifted = Number(weightResult[0]?.total ?? 0);
-    } catch { /* no weight data */ }
+    const safeTotalWeight = async (): Promise<number> => {
+      try {
+        const weightResult = await this.prisma.$queryRaw<[{ total: number | null }]>`
+          SELECT COALESCE(SUM(es.weight * es.reps), 0) as total
+          FROM exercise_sets es
+          JOIN session_exercises se ON se.id = es.exercise_id
+          JOIN workout_sessions ws ON ws.id = se.session_id
+          WHERE ws.user_id = ${userId} AND ws.status = 'completed'
+        `;
+        return Number(weightResult[0]?.total ?? 0);
+      } catch { /* no weight data */ return 0; }
+    };
 
-    let personalRecords: { exerciseName: string; weight: number; weightUnit: string; reps: number; date: string | null }[] = [];
-    try {
-      const prRows = await this.prisma.$queryRaw<
-        { exercise_name: string; weight: number; weight_unit: string; reps: number; date: string | null }[]
-      >`
-        SELECT DISTINCT ON (se.name)
-          se.name as exercise_name,
-          es.weight::float as weight,
-          es.weight_unit,
-          es.reps,
-          ws.completed_at::text as date
-        FROM exercise_sets es
-        JOIN session_exercises se ON se.id = es.exercise_id
-        JOIN workout_sessions ws ON ws.id = se.session_id
-        WHERE ws.user_id = ${userId}
-          AND ws.status = 'completed'
-          AND es.weight IS NOT NULL
-          AND es.weight > 0
-        ORDER BY se.name, es.weight DESC, es.created_at DESC
-        LIMIT 5
-      `;
-      personalRecords = prRows.map((pr) => ({
-        exerciseName: pr.exercise_name,
-        weight: Number(pr.weight),
-        weightUnit: pr.weight_unit,
-        reps: pr.reps,
-        date: pr.date,
-      }));
-    } catch { /* no PR data */ }
+    const safePersonalRecords = async (): Promise<{ exerciseName: string; weight: number; weightUnit: string; reps: number; date: string | null }[]> => {
+      try {
+        const prRows = await this.prisma.$queryRaw<
+          { exercise_name: string; weight: number; weight_unit: string; reps: number; date: string | null }[]
+        >`
+          SELECT DISTINCT ON (se.name)
+            se.name as exercise_name,
+            es.weight::float as weight,
+            es.weight_unit,
+            es.reps,
+            ws.completed_at::text as date
+          FROM exercise_sets es
+          JOIN session_exercises se ON se.id = es.exercise_id
+          JOIN workout_sessions ws ON ws.id = se.session_id
+          WHERE ws.user_id = ${userId}
+            AND ws.status = 'completed'
+            AND es.weight IS NOT NULL
+            AND es.weight > 0
+          ORDER BY se.name, es.weight DESC, es.created_at DESC
+          LIMIT 5
+        `;
+        return prRows.map((pr) => ({
+          exerciseName: pr.exercise_name,
+          weight: Number(pr.weight),
+          weightUnit: pr.weight_unit,
+          reps: pr.reps,
+          date: pr.date,
+        }));
+      } catch { /* no PR data */ return []; }
+    };
 
-    // Enrich posts
-    const followingIds = await this.getFollowingIds(userId);
+    const [
+      avgEffortLevel,
+      totalWeightLifted,
+      personalRecords,
+      followingIds,
+      enrichedPosts,
+    ] = await Promise.all([
+      safeFeedbackAgg(),
+      safeTotalWeight(),
+      safePersonalRecords(),
+      this.getFollowingIds(userId),
+      this.enrichPostsBatch(recentPosts, userId),
+    ]);
+
     const followingSet = new Set(followingIds);
-    const enrichedPosts = await Promise.all(
-      recentPosts.map((p) => this.enrichPost(p, userId, followingSet)),
-    );
+    // Apply followingSet to enriched posts (set isFollowingAuthor)
+    const enrichedPostsWithFollowing = enrichedPosts.map((post) => ({
+      ...post,
+      isFollowingAuthor:
+        post.user.id === userId
+          ? false
+          : followingSet.has(post.user.id),
+    }));
 
     const totalSessions = sessionAgg._count;
 
@@ -541,7 +561,7 @@ export class CommunityService {
         fullName: user.full_name ?? 'Unknown',
         avatarUrl: user.avatar_url,
       },
-      primaryGoal: onboarding?.primary_goal ?? null,
+      primaryGoals: onboarding?.primary_goals ?? [],
       experienceLevel: onboarding?.experience_level ?? null,
       bodyWeightKg: onboarding?.body_weight_kg ?? null,
       memberSince: user.created_at.toISOString(),
@@ -562,7 +582,7 @@ export class CommunityService {
       },
       followerCount,
       followingCount,
-      recentPosts: enrichedPosts,
+      recentPosts: enrichedPostsWithFollowing,
     };
   }
 
@@ -591,6 +611,92 @@ export class CommunityService {
     });
 
     return follows.map((f) => f.following_id);
+  }
+
+  private async enrichPostsBatch(posts: any[], currentUserId: string) {
+    if (posts.length === 0) return [];
+
+    const postIds = posts.map((p) => p.id);
+    const postUserIds = [...new Set(posts.map((p) => p.user_id))];
+    const sessionIds = posts.filter((p) => p.workout_session_id).map((p) => p.workout_session_id!);
+
+    const [users, likeCounts, commentCounts, userLikes, sessions] = await Promise.all([
+      // Batch fetch all post authors
+      this.prisma.user.findMany({ where: { id: { in: postUserIds } } }),
+      // Batch count likes per post
+      this.prisma.postLike.groupBy({ by: ['post_id'], where: { post_id: { in: postIds } }, _count: true }),
+      // Batch count comments per post
+      this.prisma.postComment.groupBy({ by: ['post_id'], where: { post_id: { in: postIds } }, _count: true }),
+      // Batch check if current user liked these posts
+      this.prisma.postLike.findMany({ where: { post_id: { in: postIds }, user_id: currentUserId } }),
+      // Batch fetch workout sessions for posts that have them
+      sessionIds.length > 0
+        ? this.prisma.workoutSession.findMany({
+            where: { id: { in: sessionIds } },
+            include: {
+              exercises: { orderBy: { step_number: 'asc' }, include: { exercise_sets: true } },
+              feedback: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    // Build O(1) lookup maps
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const likeCountMap = new Map(likeCounts.map((lc) => [lc.post_id, lc._count]));
+    const commentCountMap = new Map(commentCounts.map((cc) => [cc.post_id, cc._count]));
+    const userLikeSet = new Set(userLikes.map((ul) => ul.post_id));
+    const sessionMap = new Map((sessions as any[]).map((s) => [s.id, s]));
+
+    return posts.map((post) => {
+      const postUser = userMap.get(post.user_id);
+      const likeCount = likeCountMap.get(post.id) ?? 0;
+      const commentCount = commentCountMap.get(post.id) ?? 0;
+      const isLiked = userLikeSet.has(post.id);
+
+      let workoutAttachment: any = null;
+      if (post.workout_session_id) {
+        const session = sessionMap.get(post.workout_session_id) as any;
+        if (session) {
+          workoutAttachment = {
+            sessionId: session.id,
+            title: session.title,
+            durationMinutes: session.duration_minutes,
+            exerciseCount: session.exercises.length,
+            aiGenerated: session.ai_generated,
+            rpe: session.feedback?.effort_level ?? null,
+            exercises: session.exercises.map((ex: any, index: number) => ({
+              name: ex.name,
+              muscleGroup: ex.muscle_group,
+              stepNumber: ex.step_number,
+              setsDisplay: ex.sets_display,
+              accentColor: ACCENT_COLORS[index % ACCENT_COLORS.length],
+              totalSets: ex.exercise_sets.length,
+              totalReps: ex.exercise_sets.reduce((sum: number, s: any) => sum + s.reps, 0),
+            })),
+          };
+        }
+      }
+
+      return {
+        id: post.id,
+        user: {
+          id: post.user_id,
+          fullName: postUser?.full_name ?? 'Unknown',
+          avatarUrl: postUser?.avatar_url,
+        },
+        content: post.content,
+        visibility: post.visibility,
+        photoUrl: post.photo_url,
+        workoutAttachment,
+        likeCount,
+        commentCount,
+        isLiked,
+        isFollowingAuthor: false, // Caller sets this with followingSet
+        isOwnPost: post.user_id === currentUserId,
+        createdAt: post.created_at.toISOString(),
+      };
+    });
   }
 
   private async enrichPost(post: any, currentUserId: string, followingSet?: Set<string>) {

@@ -42,41 +42,17 @@ export class PlansService {
     });
 
     if (!plan) {
-      // Auto-generate on first access
-      await this.generatePlan(userId, false);
-      plan = await this.prisma.trainingPlan.findFirst({
-        where: { user_id: userId, is_active: true },
-        include: {
-          days: {
-            orderBy: { day_of_week: 'asc' },
-            include: {
-              workout_session: {
-                select: {
-                  id: true,
-                  duration_minutes: true,
-                  completed_at: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (!plan) {
-        throw new AppException(
-          'plan_generation_failed',
-          'Could not generate a training plan. Please complete onboarding first.',
-          HttpStatus.NOT_FOUND,
-        );
-      }
+      // Generate in background — client should poll
+      this.generatePlan(userId, false).catch(() => {});
+      return { status: 'generating' as const, plan: null, days: [] };
     }
 
     // Auto-advance week if needed
     const now = new Date();
     const weekEnd = new Date(plan.week_start_date.getTime() + 7 * 24 * 60 * 60 * 1000);
     if (now >= weekEnd) {
-      await this.generatePlan(userId, true);
-      return this.getActivePlan(userId);
+      // Generate new week in background — return current plan for now
+      this.generatePlan(userId, true).catch(() => {});
     }
 
     const onboarding = await this.prisma.onboardingData.findUnique({
@@ -94,7 +70,7 @@ export class PlansService {
       plan: {
         id: plan.id,
         weekNumber: plan.week_number,
-        primaryGoal: onboarding?.primary_goal ?? 'build_muscle',
+        primaryGoals: onboarding?.primary_goals ?? ['build_muscle'],
         experienceLevel: onboarding?.experience_level ?? 'intermediate',
       },
       days: plan.days.map((day) => {
