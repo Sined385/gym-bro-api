@@ -46,28 +46,30 @@ export class AuthGuard implements CanActivate {
       const publicKey = key.getPublicKey();
 
       const payload = jwt.verify(token, publicKey) as jwt.JwtPayload;
-      const userId = payload.sub!;
-      const email = payload.email;
-      const meta = payload.user_metadata ?? {};
-      request.user = { id: userId, email };
+      request.user = { id: payload.sub!, email: payload.email };
+    } catch {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
 
-      // Ensure User row exists (cached per process lifetime to avoid repeated DB calls)
-      if (!this.syncedUsers.has(userId)) {
+    // Ensure User row exists (fire-and-forget, never blocks auth)
+    const userId = request.user.id;
+    if (!this.syncedUsers.has(userId)) {
+      try {
+        const meta = (jwt.decode(token) as any)?.user_metadata ?? {};
         await this.prisma.user.upsert({
           where: { id: userId },
           create: {
             id: userId,
-            email: email ?? '',
+            email: request.user.email ?? '',
             full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
             avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
           },
           update: {},
         });
         this.syncedUsers.add(userId);
+      } catch (err) {
+        console.warn('[AuthGuard] User sync failed:', (err as Error).message);
       }
-    } catch (err) {
-      if (err instanceof UnauthorizedException) throw err;
-      throw new UnauthorizedException('Invalid or expired token');
     }
 
     return true;

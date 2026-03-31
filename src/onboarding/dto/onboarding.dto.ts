@@ -4,8 +4,11 @@ export interface InjuryDto {
 }
 
 export interface SaveOnboardingDto {
-  primary_goals: string[];
-  primary_sports: string[];
+  // Accept both singular (prod mobile) and plural (new clients) formats
+  primary_goal?: string;
+  primary_goals?: string[];
+  primary_sport?: string;
+  primary_sports?: string[];
   experience_level: string;
   training_frequency: number;
   workout_duration: number;

@@ -28,8 +28,6 @@ export class OnboardingService {
 
   async upsert(userId: string, dto: SaveOnboardingDto) {
     const {
-      primary_goals,
-      primary_sports,
       experience_level,
       training_frequency,
       workout_duration,
@@ -42,18 +40,22 @@ export class OnboardingService {
       completed_at,
     } = dto;
 
-    if (!Array.isArray(primary_goals) || primary_goals.length === 0 || !primary_goals.every(g => PRIMARY_GOALS.includes(g))) {
+    // Normalize: accept both singular (primary_goal) and plural (primary_goals) formats
+    const goals = dto.primary_goals ?? (dto.primary_goal ? [dto.primary_goal] : []);
+    const sports = dto.primary_sports ?? (dto.primary_sport ? [dto.primary_sport] : []);
+
+    if (goals.length === 0 || !goals.every(g => PRIMARY_GOALS.includes(g))) {
       throw new AppException(
         'invalid_primary_goals',
-        `primary_goals must be a non-empty array of: ${PRIMARY_GOALS.join(', ')}`,
+        `primary_goal(s) must be one of: ${PRIMARY_GOALS.join(', ')}`,
         HttpStatus.BAD_REQUEST,
       );
     }
 
-    if (!Array.isArray(primary_sports) || primary_sports.length === 0 || !primary_sports.every(s => typeof s === 'string' && s.trim().length > 0)) {
+    if (sports.length === 0 || !sports.every(s => typeof s === 'string' && s.trim().length > 0)) {
       throw new AppException(
         'invalid_primary_sports',
-        'primary_sports must be a non-empty array of non-empty strings',
+        'primary_sport(s) must be a non-empty string',
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -105,8 +107,8 @@ export class OnboardingService {
     const validatedInjuries = this.normalizeInjuries(injuries);
 
     const data = {
-      primary_goal: primary_goals[0],
-      primary_sport: primary_sports.map(s => s.trim())[0],
+      primary_goal: goals[0],
+      primary_sport: sports[0].trim(),
       experience_level,
       training_frequency,
       workout_duration,
