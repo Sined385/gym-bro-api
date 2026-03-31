@@ -15,7 +15,7 @@ export class AuthGuard implements CanActivate {
 
   constructor(private readonly config: ConfigService) {
     this.jwks = new JwksClient({
-      jwksUri: `${this.config.getOrThrow('SUPABASE_URL')}/.well-known/jwks.json`,
+      jwksUri: `${this.config.getOrThrow('SUPABASE_URL')}/auth/v1/.well-known/jwks.json`,
       cache: true,
       cacheMaxEntries: 5,
       cacheMaxAge: 600_000, // 10 min
