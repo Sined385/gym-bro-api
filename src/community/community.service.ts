@@ -395,7 +395,7 @@ export class CommunityService {
         fullName: user.full_name ?? 'Unknown',
         avatarUrl: user.avatar_url,
       },
-      primaryGoals: onboarding?.primary_goals ?? [],
+      primaryGoal: (onboarding as any)?.primary_goal ?? null,
       experienceLevel: onboarding?.experience_level ?? null,
       bodyWeightKg: onboarding?.body_weight_kg ?? null,
       consistencyStats: {
@@ -561,7 +561,7 @@ export class CommunityService {
         fullName: user.full_name ?? 'Unknown',
         avatarUrl: user.avatar_url,
       },
-      primaryGoals: onboarding?.primary_goals ?? [],
+      primaryGoal: (onboarding as any)?.primary_goal ?? null,
       experienceLevel: onboarding?.experience_level ?? null,
       bodyWeightKg: onboarding?.body_weight_kg ?? null,
       memberSince: user.created_at.toISOString(),
