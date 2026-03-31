@@ -8,12 +8,17 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { JwksClient } from 'jwks-rsa';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
   private jwks: JwksClient;
+  private syncedUsers = new Set<string>();
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     this.jwks = new JwksClient({
       jwksUri: `${this.config.getOrThrow('SUPABASE_URL')}/auth/v1/.well-known/jwks.json`,
       cache: true,
@@ -41,8 +46,27 @@ export class AuthGuard implements CanActivate {
       const publicKey = key.getPublicKey();
 
       const payload = jwt.verify(token, publicKey) as jwt.JwtPayload;
-      request.user = { id: payload.sub!, email: payload.email };
-    } catch {
+      const userId = payload.sub!;
+      const email = payload.email;
+      const meta = payload.user_metadata ?? {};
+      request.user = { id: userId, email };
+
+      // Ensure User row exists (cached per process lifetime to avoid repeated DB calls)
+      if (!this.syncedUsers.has(userId)) {
+        await this.prisma.user.upsert({
+          where: { id: userId },
+          create: {
+            id: userId,
+            email: email ?? '',
+            full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
+            avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
+          },
+          update: {},
+        });
+        this.syncedUsers.add(userId);
+      }
+    } catch (err) {
+      if (err instanceof UnauthorizedException) throw err;
       throw new UnauthorizedException('Invalid or expired token');
     }
 

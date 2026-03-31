@@ -189,7 +189,7 @@ export class CommunityAiService {
       deadlift: liftStats['deadlift'] ?? null,
       bodyWeightKg: onboarding?.body_weight_kg ?? null,
       experienceLevel: onboarding?.experience_level ?? null,
-      primaryGoal: onboarding?.primary_goal ?? null,
+      primaryGoals: onboarding?.primary_goal ? [onboarding.primary_goal] : [],
     };
   }
 
@@ -414,7 +414,7 @@ Keep the tone encouraging, constructive, and specific. Reference actual numbers 
 
 USER 1 (${currentUser.fullName}):
 - Experience: ${currentUser.experienceLevel ?? 'Unknown'}
-- Goal: ${currentUser.primaryGoal ?? 'Unknown'}
+- Goal: ${currentUser.primaryGoals?.join(', ') || 'Unknown'}
 - Body Weight: ${currentUser.bodyWeightKg ? currentUser.bodyWeightKg + ' kg' : 'Unknown'}
 - Bench Press Max: ${currentUser.benchPress ? currentUser.benchPress + ' kg' : 'No data'}
 - Squat Max: ${currentUser.squat ? currentUser.squat + ' kg' : 'No data'}
@@ -429,7 +429,7 @@ USER 1 (${currentUser.fullName}):
 
 USER 2 (${otherUser.fullName}):
 - Experience: ${otherUser.experienceLevel ?? 'Unknown'}
-- Goal: ${otherUser.primaryGoal ?? 'Unknown'}
+- Goal: ${otherUser.primaryGoals?.join(', ') || 'Unknown'}
 - Body Weight: ${otherUser.bodyWeightKg ? otherUser.bodyWeightKg + ' kg' : 'Unknown'}
 - Bench Press Max: ${otherUser.benchPress ? otherUser.benchPress + ' kg' : 'No data'}
 - Squat Max: ${otherUser.squat ? otherUser.squat + ' kg' : 'No data'}

@@ -129,7 +129,7 @@ export class HomeAiService {
         improve_endurance: 'boosting endurance',
         stay_healthy: 'staying healthy',
       };
-      const goalLabel = goalLabels[onboarding?.primary_goal ?? ''] ?? 'your fitness goals';
+      const goalLabel = goalLabels[onboarding?.primary_goal ?? ''] || 'your fitness goals';
 
       return this.prisma.motivationInsight.create({
         data: {
@@ -489,7 +489,7 @@ Rules:
     }
 
     const setsDisplay =
-      SETS_DISPLAY_BY_GOAL[onboarding.primary_goal] ?? '3 × 10';
+      SETS_DISPLAY_BY_GOAL[onboarding.primary_goal ?? ''] ?? '3 × 10';
 
     // Suggest weights for picked exercises
     const weightMap = await this.weightSuggestionService.suggestWeights(
@@ -509,7 +509,7 @@ Rules:
       improve_endurance: 'endurance',
       stay_healthy: 'general fitness',
     };
-    const goalLabel = goalLabels[onboarding.primary_goal] ?? 'fitness';
+    const goalLabel = goalLabels[onboarding.primary_goal ?? ''] || 'fitness';
 
     const session = await this.prisma.workoutSession.create({
       data: {

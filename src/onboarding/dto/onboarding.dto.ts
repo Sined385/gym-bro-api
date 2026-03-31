@@ -4,8 +4,8 @@ export interface InjuryDto {
 }
 
 export interface SaveOnboardingDto {
-  primary_goal: string;
-  primary_sport: string;
+  primary_goals: string[];
+  primary_sports: string[];
   experience_level: string;
   training_frequency: number;
   workout_duration: number;

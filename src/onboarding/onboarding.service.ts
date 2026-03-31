@@ -28,8 +28,8 @@ export class OnboardingService {
 
   async upsert(userId: string, dto: SaveOnboardingDto) {
     const {
-      primary_goal,
-      primary_sport,
+      primary_goals,
+      primary_sports,
       experience_level,
       training_frequency,
       workout_duration,
@@ -42,18 +42,18 @@ export class OnboardingService {
       completed_at,
     } = dto;
 
-    if (!PRIMARY_GOALS.includes(primary_goal)) {
+    if (!Array.isArray(primary_goals) || primary_goals.length === 0 || !primary_goals.every(g => PRIMARY_GOALS.includes(g))) {
       throw new AppException(
-        'invalid_primary_goal',
-        `primary_goal must be one of: ${PRIMARY_GOALS.join(', ')}`,
+        'invalid_primary_goals',
+        `primary_goals must be a non-empty array of: ${PRIMARY_GOALS.join(', ')}`,
         HttpStatus.BAD_REQUEST,
       );
     }
 
-    if (primary_sport.trim().length === 0) {
+    if (!Array.isArray(primary_sports) || primary_sports.length === 0 || !primary_sports.every(s => typeof s === 'string' && s.trim().length > 0)) {
       throw new AppException(
-        'invalid_primary_sport',
-        'primary_sport must be a non-empty string',
+        'invalid_primary_sports',
+        'primary_sports must be a non-empty array of non-empty strings',
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -105,8 +105,8 @@ export class OnboardingService {
     const validatedInjuries = this.normalizeInjuries(injuries);
 
     const data = {
-      primary_goal,
-      primary_sport: primary_sport.trim(),
+      primary_goal: primary_goals[0],
+      primary_sport: primary_sports.map(s => s.trim())[0],
       experience_level,
       training_frequency,
       workout_duration,
@@ -215,8 +215,8 @@ export class OnboardingService {
     return {
       id: record.id,
       user_id: record.user_id,
-      primary_goal: record.primary_goal,
-      primary_sport: record.primary_sport,
+      primary_goals: [record.primary_goal],
+      primary_sports: [record.primary_sport],
       experience_level: record.experience_level,
       training_frequency: record.training_frequency,
       workout_duration: record.workout_duration,

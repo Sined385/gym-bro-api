@@ -152,7 +152,7 @@ Rules:
       improve_endurance: '3 × 15',
       stay_healthy: '3 × 10',
     };
-    const setsDisplay = setsMap[onboarding.primary_goal] ?? '3 × 10';
+    const setsDisplay = setsMap[onboarding.primary_goal ?? ''] ?? '3 × 10';
 
     const sessionTemplates = [
       { title: 'Upper Body Power', type: 'strength', groups: ['Chest', 'Back', 'Shoulders'] },
