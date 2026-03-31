@@ -36,25 +36,22 @@ export class AuthGuard implements CanActivate {
     // Ensure User row exists (non-blocking, never fails auth)
     const user = data.user;
     if (!this.syncedUsers.has(user.id)) {
+      this.syncedUsers.add(user.id); // Mark immediately to avoid retry spam
       try {
         const meta = user.user_metadata ?? {};
+        const fullName = (meta.full_name as string) ?? (meta.name as string) ?? null;
+        const avatarUrl = (meta.avatar_url as string) ?? (meta.picture as string) ?? null;
+        // First delete any stale seed row with the same email but different id
+        await this.prisma.user.deleteMany({
+          where: { email: user.email ?? '', id: { not: user.id } },
+        });
         await this.prisma.user.upsert({
           where: { id: user.id },
-          update: {
-            email: user.email ?? '',
-            full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
-            avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
-          },
-          create: {
-            id: user.id,
-            email: user.email ?? '',
-            full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
-            avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
-          },
+          update: { email: user.email ?? '', full_name: fullName, avatar_url: avatarUrl },
+          create: { id: user.id, email: user.email ?? '', full_name: fullName, avatar_url: avatarUrl },
         });
-        this.syncedUsers.add(user.id);
-      } catch (err) {
-        console.warn('[AuthGuard] User sync failed:', (err as Error).message);
+      } catch {
+        // Non-critical — profile page will just show defaults
       }
     }
 
