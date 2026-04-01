@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -38,6 +39,7 @@ export class HomeController {
 
   @Get('dashboard')
   @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
   async getDashboard(@Req() req: Request) {
     return this.homeService.getDashboard(req.user!.id);
   }

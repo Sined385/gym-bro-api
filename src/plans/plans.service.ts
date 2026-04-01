@@ -44,7 +44,7 @@ export class PlansService {
     if (!plan) {
       // Generate in background — client should poll
       this.generatePlan(userId, false).catch(() => {});
-      return { status: 'generating' as const, plan: null, days: [] };
+      return { status: 'generating' as const, plan: null, days: [], todayIndex: 0 };
     }
 
     // Auto-advance week if needed
@@ -70,7 +70,7 @@ export class PlansService {
       plan: {
         id: plan.id,
         weekNumber: plan.week_number,
-        primaryGoal: (onboarding as any)?.primary_goal ?? 'build_muscle',
+        primaryGoals: [(onboarding as any)?.primary_goal ?? 'build_muscle'],
         experienceLevel: onboarding?.experience_level ?? 'intermediate',
       },
       days: plan.days.map((day) => {

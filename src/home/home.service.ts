@@ -27,7 +27,7 @@ export class HomeService {
 
     const todayStr = now.toISOString().split('T')[0];
 
-    const [profile, completedSessions, quickWorkout, todayHistory, motivation] =
+    const [profile, completedSessions, quickWorkout, todayHistory, motivation, activePlan] =
       await Promise.all([
         this.prisma.user.findUnique({
           where: { id: userId },
@@ -39,7 +39,11 @@ export class HomeService {
             status: 'completed',
             completed_at: { gte: weekStart, lt: weekEnd },
           },
-          select: { completed_at: true },
+          include: {
+            exercises: {
+              include: { exercise_sets: true },
+            },
+          },
         }),
         this.prisma.workoutSession.findFirst({
           where: { user_id: userId, status: 'proposed' },
@@ -52,6 +56,10 @@ export class HomeService {
         }),
         this.getSessionHistory(userId, todayStr),
         this.homeAiService.getOrGenerateMotivation(userId),
+        this.prisma.trainingPlan.findFirst({
+          where: { user_id: userId, is_active: true },
+          include: { days: { orderBy: { day_of_week: 'asc' } } },
+        }),
       ]);
 
     const name = profile?.full_name ?? profile?.email?.split('@')[0] ?? '';
@@ -68,6 +76,99 @@ export class HomeService {
     if (!finalQuickWorkout) {
       // Generate in background — will be available on next dashboard load
       this.homeAiService.generateQuickWorkout(userId).catch(() => {});
+    }
+
+    // Compute today's plan day
+    const todayDow = now.getDay() === 0 ? 6 : now.getDay() - 1;
+    const todayPlanDay = activePlan?.days.find(
+      (d) => d.day_of_week === todayDow,
+    );
+
+    let plannedWorkout: any = null;
+    let weekWorkoutsTotal: number | null = null;
+    let weekWorkoutsCompleted: number | null = null;
+
+    if (activePlan && todayPlanDay) {
+      const trainingDays = activePlan.days.filter(
+        (d) => d.day_type === 'training',
+      );
+      weekWorkoutsTotal = trainingDays.length;
+      weekWorkoutsCompleted = activePlan.days.filter(
+        (d) => d.status === 'completed',
+      ).length;
+
+      if (todayPlanDay.day_type === 'rest') {
+        plannedWorkout = { type: 'rest' };
+      } else {
+        const exercises = todayPlanDay.exercises_json as any[];
+        plannedWorkout = {
+          type: 'training',
+          plan_day_id: todayPlanDay.id,
+          session_title: todayPlanDay.session_title,
+          session_type: todayPlanDay.session_type,
+          muscle_groups: todayPlanDay.muscle_groups,
+          status: todayPlanDay.status,
+          exercises: exercises.map((e: any, i: number) => ({
+            name: e.name,
+            muscle_group: e.muscle_group,
+            sets_display: e.sets_display,
+            library_exercise_id: e.library_exercise_id ?? null,
+            accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+            suggested_weight: e.suggested_weight ?? null,
+          })),
+        };
+      }
+    }
+
+    // Compute week volume in kg
+    let weekVolumeKg = 0;
+    for (const session of completedSessions) {
+      for (const exercise of session.exercises) {
+        for (const set of exercise.exercise_sets) {
+          if (set.weight && set.reps) {
+            let weightKg = Number(set.weight);
+            if (set.weight_unit === 'lbs') {
+              weightKg *= 0.453592;
+            }
+            weekVolumeKg += weightKg * set.reps;
+          }
+        }
+      }
+    }
+
+    // Compute avg duration and total calories from completed sessions
+    const durationsMinutes = completedSessions
+      .map((s) => s.duration_minutes)
+      .filter((d): d is number => d !== null);
+    const weekAvgDurationMinutes =
+      durationsMinutes.length > 0
+        ? Math.round(
+            durationsMinutes.reduce((a, b) => a + b, 0) /
+              durationsMinutes.length,
+          )
+        : null;
+    const weekTotalCalories = completedSessions.reduce(
+      (sum, s) => sum + (s.calories ?? 0),
+      0,
+    );
+
+    // Compute week streak: consecutive days ending at today (or yesterday)
+    const todayDayIndex = now.getDay(); // 0=Sun
+    const completedDaySet = new Set(weekCompletedDays);
+    let weekStreak = 0;
+    let checkDay = todayDayIndex;
+    // If today has no workout, start from yesterday
+    if (!completedDaySet.has(checkDay)) {
+      checkDay = checkDay === 0 ? 6 : checkDay - 1;
+    }
+    // Count consecutive days backwards
+    for (let i = 0; i < 7; i++) {
+      if (completedDaySet.has(checkDay)) {
+        weekStreak++;
+        checkDay = checkDay === 0 ? 6 : checkDay - 1;
+      } else {
+        break;
+      }
     }
 
     return {
@@ -101,6 +202,13 @@ export class HomeService {
             })),
           }
         : null,
+      planned_workout: plannedWorkout,
+      week_workouts_total: weekWorkoutsTotal,
+      week_workouts_completed: weekWorkoutsCompleted,
+      week_volume_kg: Math.round(weekVolumeKg),
+      week_streak: weekStreak,
+      week_avg_duration_minutes: weekAvgDurationMinutes,
+      week_total_calories: weekTotalCalories || null,
       today_completed_session: todayHistory.session,
     };
   }

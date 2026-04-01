@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -21,6 +22,7 @@ export class PlansController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
   async getActivePlan(@Req() req: Request) {
     return this.plansService.getActivePlan(req.user!.id);
   }

@@ -171,6 +171,7 @@ export class CommunityService {
           user: {
             id: c.user_id,
             fullName: user?.full_name ?? 'Unknown',
+            username: user?.username ?? null,
             avatarUrl: user?.avatar_url,
           },
           content: c.content,
@@ -213,6 +214,7 @@ export class CommunityService {
       user: {
         id: userId,
         fullName: user?.full_name ?? 'Unknown',
+        username: user?.username ?? null,
         avatarUrl: user?.avatar_url,
       },
       content: comment.content,
@@ -393,6 +395,7 @@ export class CommunityService {
       user: {
         id: user.id,
         fullName: user.full_name ?? 'Unknown',
+        username: user.username ?? null,
         avatarUrl: user.avatar_url,
       },
       primaryGoal: (onboarding as any)?.primary_goal ?? null,
@@ -559,6 +562,7 @@ export class CommunityService {
       user: {
         id: user.id,
         fullName: user.full_name ?? 'Unknown',
+        username: user.username ?? null,
         avatarUrl: user.avatar_url,
       },
       primaryGoal: (onboarding as any)?.primary_goal ?? null,
@@ -583,6 +587,60 @@ export class CommunityService {
       followerCount,
       followingCount,
       recentPosts: enrichedPostsWithFollowing,
+    };
+  }
+
+  // ── Workout History ──────────────────────────────────────
+
+  async getWorkoutHistory(userId: string, limit = 10, cursor?: string) {
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+
+    const sessions = await this.prisma.workoutSession.findMany({
+      where: {
+        user_id: userId,
+        status: 'completed',
+        ...(cursorDate ? { completed_at: { lt: cursorDate } } : {}),
+      },
+      orderBy: { completed_at: 'desc' },
+      take: limit + 1,
+      include: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+        },
+      },
+    });
+
+    const hasMore = sessions.length > limit;
+    const resultSessions = hasMore ? sessions.slice(0, limit) : sessions;
+    const nextCursor = hasMore
+      ? resultSessions[resultSessions.length - 1].completed_at?.toISOString() ?? null
+      : null;
+
+    return {
+      workouts: resultSessions.map((s) => ({
+        id: s.id,
+        title: s.title,
+        type: s.type,
+        duration_minutes: s.duration_minutes,
+        calories: s.calories,
+        completed_at: s.completed_at?.toISOString() ?? s.created_at.toISOString(),
+        exercises: s.exercises.map((e, index) => ({
+          id: e.id,
+          name: e.name,
+          muscle_group: e.muscle_group,
+          accent_color: ACCENT_COLORS[index % ACCENT_COLORS.length],
+          step_number: e.step_number,
+          sets: e.exercise_sets.map((set) => ({
+            set_number: set.set_number,
+            weight: set.weight ? Number(set.weight) : null,
+            weight_unit: set.weight_unit,
+            reps: set.reps,
+          })),
+        })),
+      })),
+      next_cursor: nextCursor,
+      has_more: hasMore,
     };
   }
 
@@ -683,6 +741,7 @@ export class CommunityService {
         user: {
           id: post.user_id,
           fullName: postUser?.full_name ?? 'Unknown',
+          username: postUser?.username ?? null,
           avatarUrl: postUser?.avatar_url,
         },
         content: post.content,
@@ -761,6 +820,7 @@ export class CommunityService {
       user: {
         id: post.user_id,
         fullName: user?.full_name ?? 'Unknown',
+        username: user?.username ?? null,
         avatarUrl: user?.avatar_url,
       },
       content: post.content,

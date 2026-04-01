@@ -47,7 +47,7 @@ export class AuthGuard implements CanActivate {
         });
         await this.prisma.user.upsert({
           where: { id: user.id },
-          update: { email: user.email ?? '', full_name: fullName, avatar_url: avatarUrl },
+          update: { email: user.email ?? '' },
           create: { id: user.id, email: user.email ?? '', full_name: fullName, avatar_url: avatarUrl },
         });
       } catch {

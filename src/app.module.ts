@@ -15,6 +15,7 @@ import { OpenAIModule } from './openai/openai.module';
 import { CommunityModule } from './community/community.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { UserModule } from './user/user.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     CommunityModule,
     NotificationsModule,
     AnalyticsModule,
+    UserModule,
   ],
   controllers: [AppController],
   providers: [AppService],

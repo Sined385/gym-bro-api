@@ -110,6 +110,16 @@ export class CommunityController {
     return this.communityService.getMyProfile(req.user!.id);
   }
 
+  @Get('me/workouts')
+  @HttpCode(HttpStatus.OK)
+  async getMyWorkouts(
+    @Req() req: Request,
+    @Query('limit') limit?: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.communityService.getWorkoutHistory(req.user!.id, limit ?? 10, cursor);
+  }
+
   // ── User Profiles ─────────────────────────────────────────
 
   @Get('users/:userId/profile')
@@ -119,6 +129,16 @@ export class CommunityController {
     @Req() req: Request,
   ) {
     return this.communityService.getUserProfile(req.user!.id, userId);
+  }
+
+  @Get('users/:userId/workouts')
+  @HttpCode(HttpStatus.OK)
+  async getUserWorkouts(
+    @Param('userId') userId: string,
+    @Query('limit') limit?: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.communityService.getWorkoutHistory(userId, limit ?? 10, cursor);
   }
 
   @Get('users/:userId/compare')

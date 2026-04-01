@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { HomeService } from '../home/home.service';
+import { PlansService } from '../plans/plans.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { SendMessageDto } from './dto/coach.dto';
 
@@ -77,6 +78,7 @@ export class CoachService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly homeService: HomeService,
+    private readonly plansService: PlansService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
   ) {}
 
@@ -184,8 +186,10 @@ export class CoachService {
                   step_number: e.step_number,
                   sets_display: e.sets_display,
                   accent_color: e.accent_color,
+                  library_exercise_id: e.library_exercise_id ?? null,
                   muscle_group: e.muscle_group,
                   equipment: e.equipment,
+                  suggested_weight: e.suggested_weight ?? null,
                 })),
               }
             : null,
@@ -219,7 +223,7 @@ export class CoachService {
     });
 
     // 3. Build context
-    const [user, onboarding, recentSessions, weekStats, exerciseLibrary, history] =
+    const [user, onboarding, recentSessions, weekStats, exerciseLibrary, history, activePlanData] =
       await Promise.all([
         this.prisma.user.findUnique({ where: { id: userId }, select: { full_name: true } }),
         this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
@@ -232,6 +236,7 @@ export class CoachService {
           take: 20,
           select: { role: true, content: true },
         }),
+        this.plansService.getActivePlan(userId),
       ]);
 
     const quickWorkout = await this.prisma.workoutSession.findFirst({
@@ -247,6 +252,7 @@ export class CoachService {
       weekStats,
       exerciseLibrary,
       quickWorkout,
+      activePlanData,
     );
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -304,49 +310,59 @@ export class CoachService {
       {
         type: 'function',
         function: {
-          name: 'modify_plan_day',
+          name: 'modify_plan_days',
           description:
-            'Modify a specific day in the user\'s weekly training plan. Use this when the user asks to change, swap, or adjust a day in their plan.',
+            'Modify one or more days in the user\'s weekly training plan. Use this when the user asks to change, swap, or adjust days in their plan — supports single day or bulk changes.',
           parameters: {
             type: 'object',
             properties: {
-              day_of_week: {
-                type: 'number',
-                description: 'Day of week to modify: 0=Monday, 1=Tuesday, ..., 6=Sunday',
-              },
-              day_type: {
-                type: 'string',
-                enum: ['training', 'rest'],
-                description: 'Whether this should be a training or rest day',
-              },
-              session_title: {
-                type: 'string',
-                description: 'New session title (for training days)',
-              },
-              session_type: {
-                type: 'string',
-                enum: ['strength', 'cardio', 'mobility', 'hiit', 'custom'],
-              },
-              muscle_groups: {
+              days: {
                 type: 'array',
-                items: { type: 'string' },
-                description: 'Target muscle groups',
-              },
-              exercises: {
-                type: 'array',
+                description: 'Array of days to modify',
                 items: {
                   type: 'object',
                   properties: {
-                    library_exercise_id: { type: 'string' },
-                    name: { type: 'string' },
-                    muscle_group: { type: 'string' },
-                    sets_display: { type: 'string' },
+                    day_of_week: {
+                      type: 'number',
+                      description: 'Day of week to modify: 0=Monday, 1=Tuesday, ..., 6=Sunday',
+                    },
+                    day_type: {
+                      type: 'string',
+                      enum: ['training', 'rest'],
+                      description: 'Whether this should be a training or rest day',
+                    },
+                    session_title: {
+                      type: 'string',
+                      description: 'New session title (for training days)',
+                    },
+                    session_type: {
+                      type: 'string',
+                      enum: ['strength', 'cardio', 'mobility', 'hiit', 'custom'],
+                    },
+                    muscle_groups: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'Target muscle groups',
+                    },
+                    exercises: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          library_exercise_id: { type: 'string' },
+                          name: { type: 'string' },
+                          muscle_group: { type: 'string' },
+                          sets_display: { type: 'string' },
+                        },
+                        required: ['name', 'muscle_group', 'sets_display'],
+                      },
+                    },
                   },
-                  required: ['name', 'muscle_group', 'sets_display'],
+                  required: ['day_of_week', 'day_type'],
                 },
               },
             },
-            required: ['day_of_week', 'day_type'],
+            required: ['days'],
           },
         },
       },
@@ -361,7 +377,7 @@ export class CoachService {
       tools,
       stream: true,
       max_tokens: 1000,
-      temperature: 0.7,
+      temperature: 0.4,
     });
 
     let fullContent = '';
@@ -372,16 +388,15 @@ export class CoachService {
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta;
-      if (!delta) continue;
 
       // Text content streaming
-      if (delta.content) {
+      if (delta?.content) {
         fullContent += delta.content;
         yield { type: 'text_delta', data: { content: delta.content } };
       }
 
       // Tool call accumulation
-      if (delta.tool_calls) {
+      if (delta?.tool_calls) {
         for (const tc of delta.tool_calls) {
           if (tc.id) toolCallId = tc.id;
           if (tc.function?.name) toolCallName = tc.function.name;
@@ -389,7 +404,7 @@ export class CoachService {
         }
       }
 
-      // Stream finished
+      // Stream finished — check finish_reason regardless of delta
       if (chunk.choices[0]?.finish_reason === 'tool_calls') {
         // Execute the tool
         if (toolCallName === 'create_workout_session') {
@@ -419,6 +434,7 @@ export class CoachService {
                     library_exercise_id: e.library_exercise_id ?? null,
                     muscle_group: e.muscle_group,
                     equipment: e.equipment,
+                    suggested_weight: e.suggested_weight ?? null,
                   })),
                 },
               },
@@ -476,80 +492,143 @@ export class CoachService {
             fullContent += errMsg;
             yield { type: 'text_delta', data: { content: errMsg } };
           }
-        } else if (toolCallName === 'modify_plan_day') {
+        } else if (toolCallName === 'modify_plan_days') {
             try {
               const args = safeParseToolArgs(toolCallArgs);
+              console.log('[modify_plan_days] User message:', dto.content);
+              console.log('[modify_plan_days] Tool args:', JSON.stringify(args, null, 2));
+
+              // Guard: detect when tool args contradict the user's request
+              const mismatch = this.detectMuscleGroupMismatch(dto.content, args);
+              if (mismatch) {
+                console.warn('[modify_plan_days] Mismatch detected:', mismatch);
+                // Retry with explicit correction
+                const retryStream = await this.openai.chat.completions.create({
+                  model,
+                  messages: [
+                    ...messages,
+                    {
+                      role: 'system',
+                      content: `CORRECTION: The user asked "${dto.content}" but you generated tool args targeting "${mismatch.got}" instead of "${mismatch.expected}". Redo the tool call with the correct muscle group: ${mismatch.expected}. Do NOT use ${mismatch.got}.`,
+                    },
+                  ],
+                  tools,
+                  max_tokens: 1000,
+                  temperature: 0.2,
+                });
+                const retryChoice = retryStream.choices[0];
+                if (retryChoice?.message?.tool_calls?.[0]) {
+                  const retryTc = retryChoice.message.tool_calls[0] as any;
+                  toolCallId = retryTc.id ?? toolCallId;
+                  toolCallArgs = retryTc.function?.arguments ?? toolCallArgs;
+                  console.log('[modify_plan_days] Retry args:', toolCallArgs);
+                }
+              }
+
+              const retryArgs = safeParseToolArgs(toolCallArgs);
+              const daysToModify = retryArgs.days as any[];
               const plan = await this.prisma.trainingPlan.findFirst({
                 where: { user_id: userId, is_active: true },
+                orderBy: { created_at: 'desc' },
                 include: { days: true },
               });
 
-              if (plan) {
-                const planDay = plan.days.find(
-                  (d) => d.day_of_week === args.day_of_week,
-                );
-                if (planDay) {
-                  await this.prisma.planDay.update({
-                    where: { id: planDay.id },
-                    data: {
-                      day_type: args.day_type,
-                      session_title: args.session_title ?? null,
-                      session_type: args.session_type ?? null,
-                      muscle_groups: args.muscle_groups ?? [],
-                      exercises_json: args.exercises ?? [],
-                      status: 'pending',
-                    },
-                  });
+              if (!plan) {
+                const errMsg = "You don't have an active training plan yet. Ask me to build one first!";
+                fullContent += errMsg;
+                yield { type: 'text_delta', data: { content: errMsg } };
+              } else if (!daysToModify?.length) {
+                const errMsg = "I couldn't determine which days to modify. Could you be more specific?";
+                fullContent += errMsg;
+                yield { type: 'text_delta', data: { content: errMsg } };
+              } else if (plan && daysToModify?.length > 0) {
+                const dayLabels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+                const modifiedSummary: { day: string; day_type: string; session_title?: string; muscle_groups?: string[] }[] = [];
 
-                  const dayLabels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-                  const dayLabel = dayLabels[args.day_of_week] ?? 'Day';
-
-                  // Feed tool result back
-                  const followUp = await this.openai.chat.completions.create({
-                    model,
-                    messages: [
-                      ...messages,
-                      {
-                        role: 'assistant',
-                        content: fullContent || null,
-                        tool_calls: [
-                          {
-                            id: toolCallId,
-                            type: 'function',
-                            function: {
-                              name: toolCallName,
-                              arguments: toolCallArgs,
-                            },
-                          },
-                        ],
-                      },
-                      {
-                        role: 'tool',
-                        tool_call_id: toolCallId,
-                        content: JSON.stringify({
-                          success: true,
-                          day: dayLabel,
-                          day_type: args.day_type,
-                          session_title: args.session_title,
-                        }),
-                      },
-                    ],
-                    stream: true,
-                    max_tokens: 200,
-                    temperature: 0.7,
-                  });
-
-                  for await (const followChunk of followUp) {
-                    const followDelta = followChunk.choices[0]?.delta;
-                    if (followDelta?.content) {
-                      fullContent += followDelta.content;
-                      yield {
-                        type: 'text_delta',
-                        data: { content: followDelta.content },
+                await this.prisma.$transaction(async (tx) => {
+                  for (const dayArgs of daysToModify) {
+                    const planDay = plan.days.find(
+                      (d) => d.day_of_week === dayArgs.day_of_week,
+                    );
+                    if (planDay && planDay.status !== 'completed') {
+                      const updateData: any = {
+                        day_type: dayArgs.day_type,
+                        session_title: dayArgs.session_title ?? null,
+                        session_type: dayArgs.session_type ?? null,
+                        muscle_groups: dayArgs.muscle_groups ?? [],
+                        status: 'pending',
                       };
+                      // Only overwrite exercises if explicitly provided; preserve existing otherwise
+                      if (dayArgs.exercises && dayArgs.exercises.length > 0) {
+                        updateData.exercises_json = dayArgs.exercises;
+                      } else if (dayArgs.day_type === 'rest') {
+                        updateData.exercises_json = [];
+                      }
+                      await tx.planDay.update({
+                        where: { id: planDay.id },
+                        data: updateData,
+                      });
+                      modifiedSummary.push({
+                        day: dayLabels[dayArgs.day_of_week] ?? 'Day',
+                        day_type: dayArgs.day_type,
+                        session_title: dayArgs.session_title,
+                        muscle_groups: dayArgs.muscle_groups,
+                      });
                     }
                   }
+                });
+
+                // Feed tool result back
+                const followUp = await this.openai.chat.completions.create({
+                  model,
+                  messages: [
+                    ...messages,
+                    {
+                      role: 'assistant',
+                      content: fullContent || null,
+                      tool_calls: [
+                        {
+                          id: toolCallId,
+                          type: 'function',
+                          function: {
+                            name: toolCallName,
+                            arguments: toolCallArgs,
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      role: 'tool',
+                      tool_call_id: toolCallId,
+                      content: JSON.stringify({
+                        success: true,
+                        user_request: dto.content,
+                        days_modified: modifiedSummary,
+                        days_count: modifiedSummary.length,
+                      }),
+                    },
+                  ],
+                  stream: true,
+                  max_tokens: 300,
+                  temperature: 0.7,
+                });
+
+                for await (const followChunk of followUp) {
+                  const followDelta = followChunk.choices[0]?.delta;
+                  if (followDelta?.content) {
+                    fullContent += followDelta.content;
+                    yield {
+                      type: 'text_delta',
+                      data: { content: followDelta.content },
+                    };
+                  }
                 }
+
+                // Notify iOS to reload plan/home data
+                yield {
+                  type: 'plan_modified',
+                  data: { days_count: modifiedSummary.length },
+                };
               }
             } catch (error) {
               console.error('Plan modification failed:', error);
@@ -561,20 +640,26 @@ export class CoachService {
       }
     }
 
-    // 5. Save assistant message
-    const assistantMessage = await this.prisma.coachMessage.create({
-      data: {
-        conversation_id: conversationId,
-        role: 'assistant',
-        content: fullContent,
-        session_id: sessionId,
-      },
-    });
+    // 5. Save assistant message (skip empty — prevents polluting history)
+    const contentToSave = fullContent.trim();
+    const assistantMessage = contentToSave
+      ? await this.prisma.coachMessage.create({
+          data: {
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: contentToSave,
+            session_id: sessionId,
+          },
+        })
+      : await this.prisma.coachMessage.findFirst({
+          where: { conversation_id: conversationId },
+          orderBy: { created_at: 'desc' },
+        });
 
     yield {
       type: 'done',
       data: {
-        message_id: assistantMessage.id,
+        message_id: assistantMessage?.id ?? '',
         conversation_id: conversationId,
       },
     };
@@ -752,6 +837,7 @@ export class CoachService {
     },
     exerciseLibrary: any[],
     quickWorkout: any,
+    activePlanData?: any,
   ): string {
     const nameLine = userName ? `User name: ${userName}` : '';
 
@@ -782,12 +868,34 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goal}
       ? `Current quick workout: "${quickWorkout.title}" with ${quickWorkout.exercises.length} exercises: ${quickWorkout.exercises.map((e: any) => e.name).join(', ')}`
       : 'No current quick workout.';
 
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const now = new Date();
+    const todayDow = now.getDay() === 0 ? 6 : now.getDay() - 1;
+
+    let planContext = 'No active training plan.';
+    if (activePlanData?.plan && activePlanData.days?.length > 0) {
+      const weekNum = activePlanData.plan.weekNumber;
+      const dayLines = activePlanData.days.map((d: any) => {
+        const label = d.dayLabel ?? dayLabels[d.dayOfWeek] ?? 'Day';
+        const isToday = d.dayOfWeek === todayDow;
+        const todayMarker = isToday ? ' ← TODAY' : '';
+        if (d.dayType === 'rest') {
+          return `- ${label}: Rest Day${todayMarker} — ${d.status}`;
+        }
+        const muscles = d.muscleGroups?.join(', ') ?? '';
+        return `- ${label}: ${d.sessionTitle ?? 'Training'} (${muscles})${todayMarker} — ${d.status}`;
+      });
+      planContext = `Current training plan (Week ${weekNum}):\n${dayLines.join('\n')}`;
+    }
+
     return `You are a no-nonsense strength coach for the GymBro app.
 You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.
 
 Tool usage rules:
 - When the user asks to "create a workout", "build me a workout", "give me a workout for today", or anything about generating a new session → call create_workout_session immediately. Do NOT ask clarifying questions — just pick exercises that match their profile and goal.
-- Only use modify_plan_day when the user explicitly asks to change a specific day in their weekly training plan (e.g. "swap Tuesday to legs", "make Friday a rest day").
+- Use modify_plan_days for any plan changes — single day or bulk. When the user asks to change their plan (e.g. "swap Tuesday to chest", "focus this week on arms", "make Friday a rest day"), use this tool.
+- CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
+- Reference the training plan context above when user asks about their plan.
 - NEVER list exercises as plain text. Always use the tool so the session is saved.
 When giving advice or answering questions — respond in text only.
 
@@ -796,6 +904,8 @@ Keep responses concise (2-3 sentences max for text replies).
 ${profile}
 
 Week progress: ${weekStats.completedThisWeek}/${weekStats.targetPerWeek} workouts completed, ${weekStats.daysLeftInWeek} days left in the week.
+
+${planContext}
 
 ${sessionsContext}
 
@@ -840,6 +950,50 @@ Rules:
     });
 
     return `Session log (last 14 days):\n${blocks.join('\n\n')}`;
+  }
+
+  /**
+   * Detect when OpenAI tool args target a different muscle group than the user requested.
+   * Returns null if no mismatch, or { expected, got } if there's a clear contradiction.
+   */
+  private detectMuscleGroupMismatch(
+    userMessage: string,
+    toolArgs: Record<string, any>,
+  ): { expected: string; got: string } | null {
+    const muscleKeywords: Record<string, string[]> = {
+      arms: ['arms', 'biceps', 'triceps', 'arm'],
+      legs: ['legs', 'leg', 'quads', 'hamstrings', 'glutes', 'calves'],
+      chest: ['chest', 'pecs', 'pectoral'],
+      back: ['back', 'lats', 'lat'],
+      shoulders: ['shoulders', 'shoulder', 'delts'],
+      core: ['core', 'abs', 'abdominal'],
+    };
+
+    const msgLower = userMessage.toLowerCase();
+
+    // Find what the user asked for
+    let userTarget: string | null = null;
+    for (const [group, keywords] of Object.entries(muscleKeywords)) {
+      if (keywords.some((kw) => msgLower.includes(kw))) {
+        userTarget = group;
+        break;
+      }
+    }
+    if (!userTarget) return null; // Can't determine user intent
+
+    // Check what the tool args contain
+    const argsStr = JSON.stringify(toolArgs).toLowerCase();
+    for (const [group, keywords] of Object.entries(muscleKeywords)) {
+      if (group === userTarget) continue;
+      const targetKeywords = muscleKeywords[userTarget];
+      const hasWrongGroup = keywords.some((kw) => argsStr.includes(kw));
+      const hasRightGroup = targetKeywords.some((kw) => argsStr.includes(kw));
+      if (hasWrongGroup && !hasRightGroup) {
+        return { expected: userTarget, got: group };
+      }
+    }
+
+    return null;
   }
 
   private getWeekStart(date: Date): Date {
