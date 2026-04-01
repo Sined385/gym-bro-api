@@ -107,8 +107,8 @@ export class OnboardingService {
     const validatedInjuries = this.normalizeInjuries(injuries);
 
     const data = {
-      primary_goal: goals[0],
-      primary_sport: sports[0].trim(),
+      primary_goals: goals,
+      primary_sports: sports.map(s => s.trim()),
       experience_level,
       training_frequency,
       workout_duration,
@@ -202,8 +202,8 @@ export class OnboardingService {
   private formatRecord(record: {
     id: string;
     user_id: string;
-    primary_goal: string;
-    primary_sport: string;
+    primary_goals: string[];
+    primary_sports: string[];
     experience_level: string;
     training_frequency: number;
     workout_duration: number;
@@ -217,8 +217,8 @@ export class OnboardingService {
     return {
       id: record.id,
       user_id: record.user_id,
-      primary_goals: [record.primary_goal],
-      primary_sports: [record.primary_sport],
+      primary_goals: record.primary_goals,
+      primary_sports: record.primary_sports,
       experience_level: record.experience_level,
       training_frequency: record.training_frequency,
       workout_duration: record.workout_duration,

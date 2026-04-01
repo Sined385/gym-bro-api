@@ -149,8 +149,8 @@ model CoachMessage {
 model OnboardingData {
   id                  String    @id @default(uuid())
   user_id             String    @unique
-  primary_goal        String
-  primary_sport       String
+  primary_goals       String[]  @default([])
+  primary_sports      String[]  @default([])
   experience_level    String
   training_frequency  Int
   workout_duration      Int

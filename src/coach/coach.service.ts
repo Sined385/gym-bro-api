@@ -843,8 +843,8 @@ export class CoachService {
 
     const profile = onboarding
       ? `User profile:
-${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goal}
-- Sport: ${onboarding.primary_sport}
+${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
+- Sport: ${onboarding.primary_sports?.[0]}
 - Experience: ${onboarding.experience_level}
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min

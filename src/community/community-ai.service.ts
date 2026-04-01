@@ -189,7 +189,7 @@ export class CommunityAiService {
       deadlift: liftStats['deadlift'] ?? null,
       bodyWeightKg: onboarding?.body_weight_kg ?? null,
       experienceLevel: onboarding?.experience_level ?? null,
-      primaryGoals: onboarding?.primary_goal ? [onboarding.primary_goal] : [],
+      primaryGoals: onboarding?.primary_goals ?? [],
     };
   }
 

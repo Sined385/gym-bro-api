@@ -56,8 +56,8 @@ export class PlansAiService {
     const prompt = `You are a fitness coach AI. Generate a ${totalDays}-day training plan from ${dayNames[startDayOfWeek]} through Sunday.
 
 User profile:
-- Goal: ${onboarding.primary_goal}
-- Sport: ${onboarding.primary_sport}
+- Goal: ${onboarding.primary_goals?.[0]}
+- Sport: ${onboarding.primary_sports?.[0]}
 - Experience: ${onboarding.experience_level}
 - Training frequency: ${scaledFrequency} training days (scaled from ${onboarding.training_frequency}x/week for partial week)
 - Workout duration: ${onboarding.workout_duration} min
@@ -152,7 +152,7 @@ Rules:
       improve_endurance: '3 × 15',
       stay_healthy: '3 × 10',
     };
-    const setsDisplay = setsMap[onboarding.primary_goal ?? ''] ?? '3 × 10';
+    const setsDisplay = setsMap[onboarding.primary_goals?.[0] ?? ''] ?? '3 × 10';
 
     const sessionTemplates = [
       { title: 'Upper Body Power', type: 'strength', groups: ['Chest', 'Back', 'Shoulders'] },

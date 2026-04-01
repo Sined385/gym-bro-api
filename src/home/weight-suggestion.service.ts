@@ -57,7 +57,7 @@ export class WeightSuggestionService {
     onboarding: {
       body_weight_kg?: number | null;
       experience_level: string;
-      primary_goal: string;
+      primary_goals: string[];
     },
   ): Promise<Map<string, number | null>> {
     const result = new Map<string, number | null>();
@@ -111,7 +111,7 @@ export class WeightSuggestionService {
 
     const bodyWeight = onboarding.body_weight_kg ?? 70;
     const experience = onboarding.experience_level ?? 'intermediate';
-    const isGetStronger = onboarding.primary_goal === 'get_stronger';
+    const isGetStronger = onboarding.primary_goals?.[0] === 'get_stronger';
 
     for (const ex of exercises) {
       const key = ex.library_exercise_id;

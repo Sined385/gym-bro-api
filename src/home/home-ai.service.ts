@@ -116,7 +116,7 @@ export class HomeAiService {
       }),
       this.prisma.onboardingData.findUnique({
         where: { user_id: userId },
-        select: { primary_goal: true, primary_sport: true },
+        select: { primary_goals: true, primary_sports: true },
       }),
     ]);
 
@@ -129,7 +129,7 @@ export class HomeAiService {
         improve_endurance: 'boosting endurance',
         stay_healthy: 'staying healthy',
       };
-      const goalLabel = goalLabels[onboarding?.primary_goal ?? ''] || 'your fitness goals';
+      const goalLabel = goalLabels[onboarding?.primary_goals?.[0] ?? ''] || 'your fitness goals';
 
       return this.prisma.motivationInsight.create({
         data: {
@@ -168,8 +168,8 @@ export class HomeAiService {
   ): string {
     const profile = onboarding
       ? `User profile:
-- Goal: ${onboarding.primary_goal}
-- Sport: ${onboarding.primary_sport}
+- Goal: ${onboarding.primary_goals?.[0]}
+- Sport: ${onboarding.primary_sports?.[0]}
 - Experience: ${onboarding.experience_level}
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
@@ -206,8 +206,8 @@ Rules:
   private buildWelcomePrompt(onboarding: any): string {
     const profile = onboarding
       ? `User profile:
-- Goal: ${onboarding.primary_goal}
-- Sport: ${onboarding.primary_sport}
+- Goal: ${onboarding.primary_goals?.[0]}
+- Sport: ${onboarding.primary_sports?.[0]}
 - Experience: ${onboarding.experience_level}
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
@@ -396,8 +396,8 @@ Rules:
 Create a workout session for this user by selecting exercises from their available exercise library.
 
 User profile:
-- Goal: ${onboarding.primary_goal}
-- Sport: ${onboarding.primary_sport}
+- Goal: ${onboarding.primary_goals?.[0]}
+- Sport: ${onboarding.primary_sports?.[0]}
 - Experience: ${onboarding.experience_level}
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
@@ -489,7 +489,7 @@ Rules:
     }
 
     const setsDisplay =
-      SETS_DISPLAY_BY_GOAL[onboarding.primary_goal ?? ''] ?? '3 × 10';
+      SETS_DISPLAY_BY_GOAL[onboarding.primary_goals?.[0] ?? ''] ?? '3 × 10';
 
     // Suggest weights for picked exercises
     const weightMap = await this.weightSuggestionService.suggestWeights(
@@ -509,7 +509,7 @@ Rules:
       improve_endurance: 'endurance',
       stay_healthy: 'general fitness',
     };
-    const goalLabel = goalLabels[onboarding.primary_goal ?? ''] || 'fitness';
+    const goalLabel = goalLabels[onboarding.primary_goals?.[0] ?? ''] || 'fitness';
 
     const session = await this.prisma.workoutSession.create({
       data: {

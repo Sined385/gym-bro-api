@@ -70,7 +70,7 @@ export class PlansService {
       plan: {
         id: plan.id,
         weekNumber: plan.week_number,
-        primaryGoals: [(onboarding as any)?.primary_goal ?? 'build_muscle'],
+        primaryGoals: onboarding?.primary_goals ?? ['build_muscle'],
         experienceLevel: onboarding?.experience_level ?? 'intermediate',
       },
       days: plan.days.map((day) => {
