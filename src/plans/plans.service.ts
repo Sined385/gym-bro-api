@@ -257,7 +257,7 @@ export class PlansService {
 
     const exercises = planDay.exercises_json as any[];
 
-    // Validate library_exercise_ids still exist (seed script regenerates UUIDs)
+    // Validate library_exercise_ids still exist (seed script regenerates UUIDs on deploy)
     const libraryIds = exercises
       .map((ex: any) => ex.library_exercise_id)
       .filter((id: string | null): id is string => !!id);
@@ -268,6 +268,19 @@ export class PlansService {
         select: { id: true },
       });
       for (const e of existing) validIds.add(e.id);
+    }
+
+    // Re-resolve stale IDs by exercise name from current library
+    const nameToLibraryId = new Map<string, string>();
+    const staleNames = exercises
+      .filter((ex: any) => ex.library_exercise_id && !validIds.has(ex.library_exercise_id))
+      .map((ex: any) => ex.name as string);
+    if (staleNames.length > 0) {
+      const resolved = await this.prisma.exerciseLibrary.findMany({
+        where: { name: { in: staleNames }, is_system: true },
+        select: { id: true, name: true },
+      });
+      for (const e of resolved) nameToLibraryId.set(e.name, e.id);
     }
 
     // Create WorkoutSession + SessionExercise rows
@@ -282,18 +295,24 @@ export class PlansService {
         ai_message: `Part of your Week ${planDay.plan.week_number} training plan`,
         updated_at: new Date(),
         exercises: {
-          create: exercises.map((ex: any, i: number) => ({
-            library_exercise_id: ex.library_exercise_id && validIds.has(ex.library_exercise_id)
-              ? ex.library_exercise_id
-              : null,
-            name: ex.name,
-            muscle_group: ex.muscle_group,
-            equipment: ex.equipment ?? null,
-            step_number: i + 1,
-            sets_display: ex.sets_display || '3 × 10',
-            accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
-            suggested_weight: ex.suggested_weight ?? null,
-          })),
+          create: exercises.map((ex: any, i: number) => {
+            let libId: string | null = null;
+            if (ex.library_exercise_id && validIds.has(ex.library_exercise_id)) {
+              libId = ex.library_exercise_id;
+            } else if (ex.name && nameToLibraryId.has(ex.name)) {
+              libId = nameToLibraryId.get(ex.name)!;
+            }
+            return {
+              library_exercise_id: libId,
+              name: ex.name,
+              muscle_group: ex.muscle_group,
+              equipment: ex.equipment ?? null,
+              step_number: i + 1,
+              sets_display: ex.sets_display || '3 × 10',
+              accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+              suggested_weight: ex.suggested_weight ?? null,
+            };
+          }),
         },
       },
       include: { exercises: { orderBy: { step_number: 'asc' } } },
