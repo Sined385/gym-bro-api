@@ -257,6 +257,19 @@ export class PlansService {
 
     const exercises = planDay.exercises_json as any[];
 
+    // Validate library_exercise_ids still exist (seed script regenerates UUIDs)
+    const libraryIds = exercises
+      .map((ex: any) => ex.library_exercise_id)
+      .filter((id: string | null): id is string => !!id);
+    const validIds = new Set<string>();
+    if (libraryIds.length > 0) {
+      const existing = await this.prisma.exerciseLibrary.findMany({
+        where: { id: { in: libraryIds } },
+        select: { id: true },
+      });
+      for (const e of existing) validIds.add(e.id);
+    }
+
     // Create WorkoutSession + SessionExercise rows
     const session = await this.prisma.workoutSession.create({
       data: {
@@ -270,7 +283,9 @@ export class PlansService {
         updated_at: new Date(),
         exercises: {
           create: exercises.map((ex: any, i: number) => ({
-            library_exercise_id: ex.library_exercise_id ?? null,
+            library_exercise_id: ex.library_exercise_id && validIds.has(ex.library_exercise_id)
+              ? ex.library_exercise_id
+              : null,
             name: ex.name,
             muscle_group: ex.muscle_group,
             equipment: ex.equipment ?? null,
