@@ -376,7 +376,7 @@ export class CoachService {
       messages,
       tools,
       stream: true,
-      max_tokens: 1000,
+      max_tokens: 2000,
       temperature: 0.4,
     });
 
@@ -854,9 +854,32 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
 
     const sessionsContext = this.formatRecentSessions(recentSessions);
 
+    // Cap exercise list to avoid bloating the system prompt (~15K+ tokens with 700+ exercises)
+    // Diversify by muscle group so all groups are represented
+    const MAX_EXERCISES = 150;
+    let cappedLibrary = exerciseLibrary;
+    if (exerciseLibrary.length > MAX_EXERCISES) {
+      const byGroup = new Map<string, any[]>();
+      for (const e of exerciseLibrary) {
+        const group = e.muscle_group ?? 'Other';
+        if (!byGroup.has(group)) byGroup.set(group, []);
+        byGroup.get(group)!.push(e);
+      }
+      cappedLibrary = [];
+      const groups = [...byGroup.keys()];
+      let idx = 0;
+      while (cappedLibrary.length < MAX_EXERCISES && idx < exerciseLibrary.length) {
+        for (const g of groups) {
+          const arr = byGroup.get(g)!;
+          if (idx < arr.length) cappedLibrary.push(arr[idx]);
+          if (cappedLibrary.length >= MAX_EXERCISES) break;
+        }
+        idx++;
+      }
+    }
     const exerciseList =
-      exerciseLibrary.length > 0
-        ? `Available exercises (use these library_exercise_id values when creating workouts):\n${exerciseLibrary
+      cappedLibrary.length > 0
+        ? `Available exercises (use these library_exercise_id values when creating workouts — ${exerciseLibrary.length} total, showing ${cappedLibrary.length}):\n${cappedLibrary
             .map(
               (e) =>
                 `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
