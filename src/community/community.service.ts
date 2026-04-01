@@ -4,12 +4,14 @@ import { AppException } from '../common/exceptions/app.exception';
 import { CreatePostDto, CreateCommentDto, FeedQueryDto } from './dto/community.dto';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 @Injectable()
 export class CommunityService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   // ── Feed ──────────────────────────────────────────────────
@@ -83,6 +85,13 @@ export class CommunityService {
       },
     });
 
+    this.analytics.track(userId, 'post_created', {
+      post_id: post.id,
+      visibility: post.visibility,
+      has_workout: !!post.workout_session_id,
+      has_photo: !!post.photo_url,
+    });
+
     // Notify followers (fire-and-forget)
     this.notifyFollowersOfNewPost(userId, post.id);
 
@@ -115,6 +124,8 @@ export class CommunityService {
       await this.prisma.postLike.create({
         data: { post_id: postId, user_id: userId },
       });
+
+      this.analytics.track(userId, 'post_liked', { post_id: postId });
 
       // Notify post author of new like (fire-and-forget)
       const post = await this.prisma.post.findUnique({ where: { id: postId } });
@@ -197,6 +208,11 @@ export class CommunityService {
       },
     });
 
+    this.analytics.track(userId, 'post_commented', {
+      post_id: postId,
+      comment_id: comment.id,
+    });
+
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
 
     // Notify post author about new comment
@@ -266,6 +282,10 @@ export class CommunityService {
         follower_id: followerId,
         following_id: followingId,
       },
+    });
+
+    this.analytics.track(followerId, 'follow_created', {
+      following_id: followingId,
     });
 
     // Notify user of new follower (fire-and-forget)

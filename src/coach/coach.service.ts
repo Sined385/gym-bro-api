@@ -6,6 +6,7 @@ import { HomeService } from '../home/home.service';
 import { PlansService } from '../plans/plans.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { SendMessageDto } from './dto/coach.dto';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 interface SSEEvent {
   type: string;
@@ -79,6 +80,7 @@ export class CoachService {
     private readonly configService: ConfigService,
     private readonly homeService: HomeService,
     private readonly plansService: PlansService,
+    private readonly analytics: AnalyticsService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
   ) {}
 
@@ -220,6 +222,10 @@ export class CoachService {
     await this.prisma.coachConversation.update({
       where: { id: conversationId },
       data: { updated_at: new Date() },
+    });
+
+    this.analytics.track(userId, 'coach_message_sent', {
+      conversation_id: conversationId,
     });
 
     // 3. Build context

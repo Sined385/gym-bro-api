@@ -275,6 +275,12 @@ export class HomeService {
       },
     });
 
+    this.analytics.track(userId, 'session_started', {
+      session_id: updated.id,
+      title: updated.title,
+      type: updated.type,
+    });
+
     return this.formatSession(updated);
   }
 
@@ -293,6 +299,13 @@ export class HomeService {
       include: {
         exercises: true,
       },
+    });
+
+    this.analytics.track(userId, 'session_started', {
+      session_id: session.id,
+      title: session.title,
+      type: session.type,
+      source: 'manual',
     });
 
     return this.formatSession(session);

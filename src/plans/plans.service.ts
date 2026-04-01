@@ -4,6 +4,7 @@ import { AppException } from '../common/exceptions/app.exception';
 import { PlansAiService } from './plans-ai.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
@@ -20,6 +21,7 @@ export class PlansService {
     private readonly prisma: PrismaService,
     private readonly plansAiService: PlansAiService,
     private readonly weightSuggestionService: WeightSuggestionService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async getActivePlan(userId: string) {
@@ -211,6 +213,11 @@ export class PlansService {
       include: { days: { orderBy: { day_of_week: 'asc' } } },
     });
 
+    this.analytics.track(userId, 'plan_generated', {
+      plan_id: plan.id,
+      week_number: newWeekNumber,
+    });
+
     return { message: 'Plan generated', planId: plan.id };
   }
 
@@ -322,6 +329,11 @@ export class PlansService {
     await this.prisma.planDay.update({
       where: { id: dayId },
       data: { workout_session_id: session.id },
+    });
+
+    this.analytics.track(userId, 'plan_day_started', {
+      plan_day_id: dayId,
+      session_id: session.id,
     });
 
     return this.formatSessionResponse(session);
