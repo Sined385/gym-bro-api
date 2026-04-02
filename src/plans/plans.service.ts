@@ -25,7 +25,7 @@ export class PlansService {
   ) {}
 
   async getActivePlan(userId: string) {
-    let plan = await this.prisma.trainingPlan.findFirst({
+    const plan = await this.prisma.trainingPlan.findFirst({
       where: { user_id: userId, is_active: true },
       include: {
         days: {
@@ -46,12 +46,19 @@ export class PlansService {
     if (!plan) {
       // Generate in background — client should poll
       this.generatePlan(userId, false).catch(() => {});
-      return { status: 'generating' as const, plan: null, days: [], todayIndex: 0 };
+      return {
+        status: 'generating' as const,
+        plan: null,
+        days: [],
+        todayIndex: 0,
+      };
     }
 
     // Auto-advance week if needed
     const now = new Date();
-    const weekEnd = new Date(plan.week_start_date.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const weekEnd = new Date(
+      plan.week_start_date.getTime() + 7 * 24 * 60 * 60 * 1000,
+    );
     if (now >= weekEnd) {
       // Generate new week in background — return current plan for now
       this.generatePlan(userId, true).catch(() => {});
@@ -63,7 +70,9 @@ export class PlansService {
 
     // Calculate today's index as position within the returned days array
     const absoluteTodayDow = now.getDay() === 0 ? 6 : now.getDay() - 1;
-    let todayIndex = plan.days.findIndex((d) => d.day_of_week === absoluteTodayDow);
+    let todayIndex = plan.days.findIndex(
+      (d) => d.day_of_week === absoluteTodayDow,
+    );
     if (todayIndex === -1) {
       todayIndex = plan.days.length - 1;
     }
@@ -98,7 +107,8 @@ export class PlansService {
             ? {
                 id: day.workout_session.id,
                 durationMinutes: day.workout_session.duration_minutes,
-                completedAt: day.workout_session.completed_at?.toISOString() ?? null,
+                completedAt:
+                  day.workout_session.completed_at?.toISOString() ?? null,
               }
             : null,
           aiNotes: day.ai_notes,
@@ -162,6 +172,7 @@ export class PlansService {
     const startDow = force ? 0 : jsDay === 0 ? 6 : jsDay - 1;
 
     const generatedDays = await this.plansAiService.generateWeeklyPlan(
+      userId,
       onboarding,
       exerciseLibrary,
       startDow,
@@ -280,7 +291,10 @@ export class PlansService {
     // Re-resolve stale IDs by exercise name from current library
     const nameToLibraryId = new Map<string, string>();
     const staleNames = exercises
-      .filter((ex: any) => ex.library_exercise_id && !validIds.has(ex.library_exercise_id))
+      .filter(
+        (ex: any) =>
+          ex.library_exercise_id && !validIds.has(ex.library_exercise_id),
+      )
       .map((ex: any) => ex.name as string);
     if (staleNames.length > 0) {
       const resolved = await this.prisma.exerciseLibrary.findMany({
@@ -304,7 +318,10 @@ export class PlansService {
         exercises: {
           create: exercises.map((ex: any, i: number) => {
             let libId: string | null = null;
-            if (ex.library_exercise_id && validIds.has(ex.library_exercise_id)) {
+            if (
+              ex.library_exercise_id &&
+              validIds.has(ex.library_exercise_id)
+            ) {
               libId = ex.library_exercise_id;
             } else if (ex.name && nameToLibraryId.has(ex.name)) {
               libId = nameToLibraryId.get(ex.name)!;
@@ -361,6 +378,7 @@ export class PlansService {
     if (session) {
       try {
         aiNotes = await this.plansAiService.generateCompletionNotes(
+          session.user_id,
           planDay,
           session,
         );

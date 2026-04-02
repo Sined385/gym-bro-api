@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiUsageService } from '../analytics/ai-usage.service';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
@@ -30,14 +31,24 @@ export class PlansAiService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   async generateWeeklyPlan(
+    userId: string,
     onboarding: any,
     exerciseLibrary: any[],
     startDayOfWeek: number = 0,
   ): Promise<PlanDayGenerated[]> {
-    const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const dayNames = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
     const totalDays = 7 - startDayOfWeek;
     const scaledFrequency = Math.round(
       (onboarding.training_frequency || 3) * (totalDays / 7),
@@ -108,6 +119,16 @@ Rules:
         temperature: 0.7,
       });
 
+      if (response.usage) {
+        this.aiUsage.trackUsage({
+          userId,
+          feature: 'plan_generation',
+          model,
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+        });
+      }
+
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('Empty OpenAI response');
 
@@ -115,7 +136,11 @@ Rules:
       return parsed.days;
     } catch (error) {
       console.error('AI plan generation failed, using fallback:', error);
-      return this.generateFallbackPlan(onboarding, exerciseLibrary, startDayOfWeek);
+      return this.generateFallbackPlan(
+        onboarding,
+        exerciseLibrary,
+        startDayOfWeek,
+      );
     }
   }
 
@@ -131,7 +156,10 @@ Rules:
     const days: PlanDayGenerated[] = [];
 
     // Distribute training days evenly within the partial week
-    const trainingDays = this.getTrainingDayIndices(scaledFrequency, startDayOfWeek);
+    const trainingDays = this.getTrainingDayIndices(
+      scaledFrequency,
+      startDayOfWeek,
+    );
 
     // Limit exercises per group for faster deterministic selection
     const limitedLibrary = this.limitExercisesPerGroup(exerciseLibrary, 10);
@@ -152,22 +180,52 @@ Rules:
       improve_endurance: '3 × 15',
       stay_healthy: '3 × 10',
     };
-    const setsDisplay = setsMap[onboarding.primary_goals?.[0] ?? ''] ?? '3 × 10';
+    const setsDisplay =
+      setsMap[onboarding.primary_goals?.[0] ?? ''] ?? '3 × 10';
 
     const sessionTemplates = [
-      { title: 'Upper Body Power', type: 'strength', groups: ['Chest', 'Back', 'Shoulders'] },
-      { title: 'Lower Body Strength', type: 'strength', groups: ['Legs', 'Glutes', 'Core'] },
-      { title: 'Push Day', type: 'strength', groups: ['Chest', 'Shoulders', 'Triceps'] },
-      { title: 'Pull Day', type: 'strength', groups: ['Back', 'Biceps', 'Core'] },
-      { title: 'Full Body', type: 'strength', groups: ['Chest', 'Back', 'Legs'] },
-      { title: 'Upper Hypertrophy', type: 'strength', groups: ['Chest', 'Back', 'Shoulders'] },
-      { title: 'Lower Hypertrophy', type: 'strength', groups: ['Legs', 'Glutes', 'Core'] },
+      {
+        title: 'Upper Body Power',
+        type: 'strength',
+        groups: ['Chest', 'Back', 'Shoulders'],
+      },
+      {
+        title: 'Lower Body Strength',
+        type: 'strength',
+        groups: ['Legs', 'Glutes', 'Core'],
+      },
+      {
+        title: 'Push Day',
+        type: 'strength',
+        groups: ['Chest', 'Shoulders', 'Triceps'],
+      },
+      {
+        title: 'Pull Day',
+        type: 'strength',
+        groups: ['Back', 'Biceps', 'Core'],
+      },
+      {
+        title: 'Full Body',
+        type: 'strength',
+        groups: ['Chest', 'Back', 'Legs'],
+      },
+      {
+        title: 'Upper Hypertrophy',
+        type: 'strength',
+        groups: ['Chest', 'Back', 'Shoulders'],
+      },
+      {
+        title: 'Lower Hypertrophy',
+        type: 'strength',
+        groups: ['Legs', 'Glutes', 'Core'],
+      },
     ];
 
     let templateIdx = 0;
     for (let dow = startDayOfWeek; dow < 7; dow++) {
       if (trainingDays.includes(dow)) {
-        const template = sessionTemplates[templateIdx % sessionTemplates.length];
+        const template =
+          sessionTemplates[templateIdx % sessionTemplates.length];
         templateIdx++;
 
         // Pick exercises from relevant muscle groups
@@ -175,7 +233,10 @@ Rules:
         const targetCount = 5;
         let mgIdx = 0;
 
-        while (exercises.length < targetCount && mgIdx < muscleGroups.length * 2) {
+        while (
+          exercises.length < targetCount &&
+          mgIdx < muscleGroups.length * 2
+        ) {
           const mg = muscleGroups[mgIdx % muscleGroups.length];
           const available = byMuscle.get(mg) ?? [];
           const unused = available.filter(
@@ -216,7 +277,10 @@ Rules:
     return days;
   }
 
-  private getTrainingDayIndices(frequency: number, startDow: number = 0): number[] {
+  private getTrainingDayIndices(
+    frequency: number,
+    startDow: number = 0,
+  ): number[] {
     const totalDays = 7 - startDow;
     const clamped = Math.min(Math.max(frequency, 0), totalDays);
 
@@ -228,7 +292,9 @@ Rules:
     // Distribute training days evenly within the range [startDow, 6]
     const indices: number[] = [];
     for (let i = 0; i < clamped; i++) {
-      indices.push(startDow + Math.round((i * (totalDays - 1)) / (clamped - 1 || 1)));
+      indices.push(
+        startDow + Math.round((i * (totalDays - 1)) / (clamped - 1 || 1)),
+      );
     }
     return [...new Set(indices)].sort((a, b) => a - b);
   }
@@ -254,6 +320,7 @@ Rules:
   }
 
   async generateCompletionNotes(
+    userId: string,
     planDay: any,
     session: any,
   ): Promise<string> {
@@ -266,7 +333,9 @@ Rules:
           if (sets.length === 0) return `- ${e.name}: no sets logged`;
           const setDetails = sets
             .map((s: any) => {
-              const weight = s.weight ? `${Number(s.weight)} ${s.weight_unit}` : 'BW';
+              const weight = s.weight
+                ? `${Number(s.weight)} ${s.weight_unit}`
+                : 'BW';
               return `${weight} × ${s.reps}`;
             })
             .join(', ');
@@ -293,6 +362,16 @@ Rules:
         max_tokens: 100,
         temperature: 0.6,
       });
+
+      if (response.usage) {
+        this.aiUsage.trackUsage({
+          userId,
+          feature: 'completion_notes',
+          model,
+          promptTokens: response.usage.prompt_tokens,
+          completionTokens: response.usage.completion_tokens,
+        });
+      }
 
       return response.choices[0]?.message?.content ?? 'Session completed.';
     } catch {

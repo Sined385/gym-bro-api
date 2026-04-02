@@ -1,8 +1,8 @@
-import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
-import { AppException } from '../common/exceptions/app.exception';
+import { AiUsageService } from '../analytics/ai-usage.service';
 
 interface HistorySummary {
   totalSessions: number;
@@ -21,7 +21,6 @@ interface HistorySummary {
   volumeTrend: 'increasing' | 'stable' | 'decreasing';
 }
 
-
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface CacheEntry {
@@ -37,6 +36,7 @@ export class CommunityAiService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   private getCacheKey(userA: string, userB: string): string {
@@ -129,6 +129,7 @@ export class CommunityAiService {
 
     try {
       const comparison = await this.generateComparison(
+        currentUserId,
         enrichedCurrentUser,
         enrichedOtherUser,
         currentUserHistory,
@@ -177,7 +178,7 @@ export class CommunityAiService {
         orderBy: { weight: 'desc' },
       });
 
-      const key = lift.toLowerCase().replace(' ', '') as string;
+      const key = lift.toLowerCase().replace(' ', '');
       liftStats[key] = maxSet?.weight ? Number(maxSet.weight) : null;
     }
 
@@ -263,7 +264,8 @@ export class CommunityAiService {
         // Muscle groups
         if (exercise.muscle_group) {
           const mg = exercise.muscle_group.toLowerCase();
-          muscleGroupCounts[mg] = (muscleGroupCounts[mg] ?? 0) + exercise.exercise_sets.length;
+          muscleGroupCounts[mg] =
+            (muscleGroupCounts[mg] ?? 0) + exercise.exercise_sets.length;
         }
 
         // Exercise stats
@@ -305,11 +307,12 @@ export class CommunityAiService {
         avgWeight:
           data.weights.length > 0
             ? Math.round(
-                (data.weights.reduce((a, b) => a + b, 0) / data.weights.length) * 10,
+                (data.weights.reduce((a, b) => a + b, 0) /
+                  data.weights.length) *
+                  10,
               ) / 10
             : null,
-        maxWeight:
-          data.weights.length > 0 ? Math.max(...data.weights) : null,
+        maxWeight: data.weights.length > 0 ? Math.max(...data.weights) : null,
         avgReps:
           data.reps.length > 0
             ? Math.round(
@@ -328,7 +331,9 @@ export class CommunityAiService {
       .filter((e): e is number => e != null);
     const avgEffortLevel =
       efforts.length > 0
-        ? Math.round((efforts.reduce((a, b) => a + b, 0) / efforts.length) * 10) / 10
+        ? Math.round(
+            (efforts.reduce((a, b) => a + b, 0) / efforts.length) * 10,
+          ) / 10
         : null;
 
     // Volume trend: compare first 4 weeks avg vs last 4 weeks
@@ -383,6 +388,7 @@ export class CommunityAiService {
   }
 
   private async generateComparison(
+    userId: string,
     currentUser: any,
     otherUser: any,
     currentHistory: HistorySummary,
@@ -454,6 +460,16 @@ Return the analysis as a JSON object.`;
       max_tokens: 1500,
       temperature: 0.7,
     });
+
+    if (response.usage) {
+      this.aiUsage.trackUsage({
+        userId,
+        feature: 'user_comparison',
+        model,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      });
+    }
 
     const content = response.choices[0]?.message?.content;
     if (!content) {

@@ -7,6 +7,7 @@ import { PlansService } from '../plans/plans.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { SendMessageDto } from './dto/coach.dto';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { AiUsageService } from '../analytics/ai-usage.service';
 
 interface SSEEvent {
   type: string;
@@ -20,7 +21,10 @@ function safeParseToolArgs(raw: string): Record<string, any> {
   try {
     return JSON.parse(raw);
   } catch (firstErr) {
-    console.warn('[safeParseToolArgs] Raw tool args failed to parse, attempting repair. Raw:', raw);
+    console.warn(
+      '[safeParseToolArgs] Raw tool args failed to parse, attempting repair. Raw:',
+      raw,
+    );
 
     // Strategy 1: trailing garbage after valid JSON — find the closing brace
     const firstBrace = raw.indexOf('{');
@@ -30,16 +34,27 @@ function safeParseToolArgs(raw: string): Record<string, any> {
       let escape = false;
       for (let i = firstBrace; i < raw.length; i++) {
         const ch = raw[i];
-        if (escape) { escape = false; continue; }
-        if (ch === '\\') { escape = true; continue; }
-        if (ch === '"') { inString = !inString; continue; }
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escape = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = !inString;
+          continue;
+        }
         if (inString) continue;
         if (ch === '{') depth++;
         if (ch === '}') depth--;
         if (depth === 0) {
           try {
             return JSON.parse(raw.slice(firstBrace, i + 1));
-          } catch { break; }
+          } catch {
+            break;
+          }
         }
       }
     }
@@ -60,7 +75,10 @@ function safeParseToolArgs(raw: string): Record<string, any> {
     try {
       return JSON.parse(repaired);
     } catch (repairErr) {
-      console.error('[safeParseToolArgs] Repair also failed. Repaired:', repaired);
+      console.error(
+        '[safeParseToolArgs] Repair also failed. Repaired:',
+        repaired,
+      );
       throw firstErr;
     }
   }
@@ -81,6 +99,7 @@ export class CoachService {
     private readonly homeService: HomeService,
     private readonly plansService: PlansService,
     private readonly analytics: AnalyticsService,
+    private readonly aiUsage: AiUsageService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
   ) {}
 
@@ -137,9 +156,7 @@ export class CoachService {
 
     const limit = Math.min(pagination.limit || 50, 100);
 
-    const cursor = pagination.before
-      ? { id: pagination.before }
-      : undefined;
+    const cursor = pagination.before ? { id: pagination.before } : undefined;
 
     const messages = await this.prisma.coachMessage.findMany({
       where: { conversation_id: conversationId },
@@ -229,21 +246,31 @@ export class CoachService {
     });
 
     // 3. Build context
-    const [user, onboarding, recentSessions, weekStats, exerciseLibrary, history, activePlanData] =
-      await Promise.all([
-        this.prisma.user.findUnique({ where: { id: userId }, select: { full_name: true } }),
-        this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
-        this.getRecentSessions(userId, 14),
-        this.getWeekStats(userId),
-        this.getExerciseLibrary(userId),
-        this.prisma.coachMessage.findMany({
-          where: { conversation_id: conversationId },
-          orderBy: { created_at: 'asc' },
-          take: 20,
-          select: { role: true, content: true },
-        }),
-        this.plansService.getActivePlan(userId),
-      ]);
+    const [
+      user,
+      onboarding,
+      recentSessions,
+      weekStats,
+      exerciseLibrary,
+      history,
+      activePlanData,
+    ] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { full_name: true },
+      }),
+      this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
+      this.getRecentSessions(userId, 14),
+      this.getWeekStats(userId),
+      this.getExerciseLibrary(userId),
+      this.prisma.coachMessage.findMany({
+        where: { conversation_id: conversationId },
+        orderBy: { created_at: 'asc' },
+        take: 20,
+        select: { role: true, content: true },
+      }),
+      this.plansService.getActivePlan(userId),
+    ]);
 
     const quickWorkout = await this.prisma.workoutSession.findFirst({
       where: { user_id: userId, status: 'proposed' },
@@ -318,7 +345,7 @@ export class CoachService {
         function: {
           name: 'modify_plan_days',
           description:
-            'Modify one or more days in the user\'s weekly training plan. Use this when the user asks to change, swap, or adjust days in their plan — supports single day or bulk changes.',
+            "Modify one or more days in the user's weekly training plan. Use this when the user asks to change, swap, or adjust days in their plan — supports single day or bulk changes.",
           parameters: {
             type: 'object',
             properties: {
@@ -330,12 +357,14 @@ export class CoachService {
                   properties: {
                     day_of_week: {
                       type: 'number',
-                      description: 'Day of week to modify: 0=Monday, 1=Tuesday, ..., 6=Sunday',
+                      description:
+                        'Day of week to modify: 0=Monday, 1=Tuesday, ..., 6=Sunday',
                     },
                     day_type: {
                       type: 'string',
                       enum: ['training', 'rest'],
-                      description: 'Whether this should be a training or rest day',
+                      description:
+                        'Whether this should be a training or rest day',
                     },
                     session_title: {
                       type: 'string',
@@ -343,7 +372,13 @@ export class CoachService {
                     },
                     session_type: {
                       type: 'string',
-                      enum: ['strength', 'cardio', 'mobility', 'hiit', 'custom'],
+                      enum: [
+                        'strength',
+                        'cardio',
+                        'mobility',
+                        'hiit',
+                        'custom',
+                      ],
                     },
                     muscle_groups: {
                       type: 'array',
@@ -382,6 +417,7 @@ export class CoachService {
       messages,
       tools,
       stream: true,
+      stream_options: { include_usage: true },
       max_tokens: 2000,
       temperature: 0.4,
     });
@@ -391,6 +427,10 @@ export class CoachService {
     let toolCallName = '';
     let toolCallArgs = '';
     let sessionId: string | null = null;
+    let streamUsage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+    } | null = null;
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta;
@@ -408,6 +448,13 @@ export class CoachService {
           if (tc.function?.name) toolCallName = tc.function.name;
           if (tc.function?.arguments) toolCallArgs += tc.function.arguments;
         }
+      }
+
+      if (chunk.usage) {
+        streamUsage = {
+          prompt_tokens: chunk.usage.prompt_tokens,
+          completion_tokens: chunk.usage.completion_tokens,
+        };
       }
 
       // Stream finished — check finish_reason regardless of delta
@@ -477,9 +524,15 @@ export class CoachService {
                 },
               ],
               stream: true,
+              stream_options: { include_usage: true },
               max_tokens: 200,
               temperature: 0.7,
             });
+
+            let followUpUsage: {
+              prompt_tokens: number;
+              completion_tokens: number;
+            } | null = null;
 
             for await (const followChunk of followUp) {
               const followDelta = followChunk.choices[0]?.delta;
@@ -490,6 +543,22 @@ export class CoachService {
                   data: { content: followDelta.content },
                 };
               }
+              if (followChunk.usage) {
+                followUpUsage = {
+                  prompt_tokens: followChunk.usage.prompt_tokens,
+                  completion_tokens: followChunk.usage.completion_tokens,
+                };
+              }
+            }
+
+            if (followUpUsage) {
+              this.aiUsage.trackUsage({
+                userId,
+                feature: 'coach_chat',
+                model,
+                promptTokens: followUpUsage.prompt_tokens,
+                completionTokens: followUpUsage.completion_tokens,
+              });
             }
           } catch (error) {
             console.error('Tool execution failed:', error);
@@ -499,151 +568,211 @@ export class CoachService {
             yield { type: 'text_delta', data: { content: errMsg } };
           }
         } else if (toolCallName === 'modify_plan_days') {
-            try {
-              const args = safeParseToolArgs(toolCallArgs);
-              console.log('[modify_plan_days] User message:', dto.content);
-              console.log('[modify_plan_days] Tool args:', JSON.stringify(args, null, 2));
+          try {
+            const args = safeParseToolArgs(toolCallArgs);
+            console.log('[modify_plan_days] User message:', dto.content);
+            console.log(
+              '[modify_plan_days] Tool args:',
+              JSON.stringify(args, null, 2),
+            );
 
-              // Guard: detect when tool args contradict the user's request
-              const mismatch = this.detectMuscleGroupMismatch(dto.content, args);
-              if (mismatch) {
-                console.warn('[modify_plan_days] Mismatch detected:', mismatch);
-                // Retry with explicit correction
-                const retryStream = await this.openai.chat.completions.create({
-                  model,
-                  messages: [
-                    ...messages,
-                    {
-                      role: 'system',
-                      content: `CORRECTION: The user asked "${dto.content}" but you generated tool args targeting "${mismatch.got}" instead of "${mismatch.expected}". Redo the tool call with the correct muscle group: ${mismatch.expected}. Do NOT use ${mismatch.got}.`,
-                    },
-                  ],
-                  tools,
-                  max_tokens: 1000,
-                  temperature: 0.2,
-                });
-                const retryChoice = retryStream.choices[0];
-                if (retryChoice?.message?.tool_calls?.[0]) {
-                  const retryTc = retryChoice.message.tool_calls[0] as any;
-                  toolCallId = retryTc.id ?? toolCallId;
-                  toolCallArgs = retryTc.function?.arguments ?? toolCallArgs;
-                  console.log('[modify_plan_days] Retry args:', toolCallArgs);
-                }
-              }
-
-              const retryArgs = safeParseToolArgs(toolCallArgs);
-              const daysToModify = retryArgs.days as any[];
-              const plan = await this.prisma.trainingPlan.findFirst({
-                where: { user_id: userId, is_active: true },
-                orderBy: { created_at: 'desc' },
-                include: { days: true },
+            // Guard: detect when tool args contradict the user's request
+            const mismatch = this.detectMuscleGroupMismatch(dto.content, args);
+            if (mismatch) {
+              console.warn('[modify_plan_days] Mismatch detected:', mismatch);
+              // Retry with explicit correction
+              const retryStream = await this.openai.chat.completions.create({
+                model,
+                messages: [
+                  ...messages,
+                  {
+                    role: 'system',
+                    content: `CORRECTION: The user asked "${dto.content}" but you generated tool args targeting "${mismatch.got}" instead of "${mismatch.expected}". Redo the tool call with the correct muscle group: ${mismatch.expected}. Do NOT use ${mismatch.got}.`,
+                  },
+                ],
+                tools,
+                max_tokens: 1000,
+                temperature: 0.2,
               });
-
-              if (!plan) {
-                const errMsg = "You don't have an active training plan yet. Ask me to build one first!";
-                fullContent += errMsg;
-                yield { type: 'text_delta', data: { content: errMsg } };
-              } else if (!daysToModify?.length) {
-                const errMsg = "I couldn't determine which days to modify. Could you be more specific?";
-                fullContent += errMsg;
-                yield { type: 'text_delta', data: { content: errMsg } };
-              } else if (plan && daysToModify?.length > 0) {
-                const dayLabels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-                const modifiedSummary: { day: string; day_type: string; session_title?: string; muscle_groups?: string[] }[] = [];
-
-                await this.prisma.$transaction(async (tx) => {
-                  for (const dayArgs of daysToModify) {
-                    const planDay = plan.days.find(
-                      (d) => d.day_of_week === dayArgs.day_of_week,
-                    );
-                    if (planDay && planDay.status !== 'completed') {
-                      const updateData: any = {
-                        day_type: dayArgs.day_type,
-                        session_title: dayArgs.session_title ?? null,
-                        session_type: dayArgs.session_type ?? null,
-                        muscle_groups: dayArgs.muscle_groups ?? [],
-                        status: 'pending',
-                      };
-                      // Only overwrite exercises if explicitly provided; preserve existing otherwise
-                      if (dayArgs.exercises && dayArgs.exercises.length > 0) {
-                        updateData.exercises_json = dayArgs.exercises;
-                      } else if (dayArgs.day_type === 'rest') {
-                        updateData.exercises_json = [];
-                      }
-                      await tx.planDay.update({
-                        where: { id: planDay.id },
-                        data: updateData,
-                      });
-                      modifiedSummary.push({
-                        day: dayLabels[dayArgs.day_of_week] ?? 'Day',
-                        day_type: dayArgs.day_type,
-                        session_title: dayArgs.session_title,
-                        muscle_groups: dayArgs.muscle_groups,
-                      });
-                    }
-                  }
-                });
-
-                // Feed tool result back
-                const followUp = await this.openai.chat.completions.create({
+              if (retryStream.usage) {
+                this.aiUsage.trackUsage({
+                  userId,
+                  feature: 'coach_chat',
                   model,
-                  messages: [
-                    ...messages,
-                    {
-                      role: 'assistant',
-                      content: fullContent || null,
-                      tool_calls: [
-                        {
-                          id: toolCallId,
-                          type: 'function',
-                          function: {
-                            name: toolCallName,
-                            arguments: toolCallArgs,
-                          },
-                        },
-                      ],
-                    },
-                    {
-                      role: 'tool',
-                      tool_call_id: toolCallId,
-                      content: JSON.stringify({
-                        success: true,
-                        user_request: dto.content,
-                        days_modified: modifiedSummary,
-                        days_count: modifiedSummary.length,
-                      }),
-                    },
-                  ],
-                  stream: true,
-                  max_tokens: 300,
-                  temperature: 0.7,
+                  promptTokens: retryStream.usage.prompt_tokens,
+                  completionTokens: retryStream.usage.completion_tokens,
                 });
-
-                for await (const followChunk of followUp) {
-                  const followDelta = followChunk.choices[0]?.delta;
-                  if (followDelta?.content) {
-                    fullContent += followDelta.content;
-                    yield {
-                      type: 'text_delta',
-                      data: { content: followDelta.content },
-                    };
-                  }
-                }
-
-                // Notify iOS to reload plan/home data
-                yield {
-                  type: 'plan_modified',
-                  data: { days_count: modifiedSummary.length },
-                };
               }
-            } catch (error) {
-              console.error('Plan modification failed:', error);
-              const errMsg = "Sorry, I couldn't modify the plan right now. Try again.";
+              const retryChoice = retryStream.choices[0];
+              if (retryChoice?.message?.tool_calls?.[0]) {
+                const retryTc = retryChoice.message.tool_calls[0] as any;
+                toolCallId = retryTc.id ?? toolCallId;
+                toolCallArgs = retryTc.function?.arguments ?? toolCallArgs;
+                console.log('[modify_plan_days] Retry args:', toolCallArgs);
+              }
+            }
+
+            const retryArgs = safeParseToolArgs(toolCallArgs);
+            const daysToModify = retryArgs.days as any[];
+            const plan = await this.prisma.trainingPlan.findFirst({
+              where: { user_id: userId, is_active: true },
+              orderBy: { created_at: 'desc' },
+              include: { days: true },
+            });
+
+            if (!plan) {
+              const errMsg =
+                "You don't have an active training plan yet. Ask me to build one first!";
               fullContent += errMsg;
               yield { type: 'text_delta', data: { content: errMsg } };
+            } else if (!daysToModify?.length) {
+              const errMsg =
+                "I couldn't determine which days to modify. Could you be more specific?";
+              fullContent += errMsg;
+              yield { type: 'text_delta', data: { content: errMsg } };
+            } else if (plan && daysToModify?.length > 0) {
+              const dayLabels = [
+                'Monday',
+                'Tuesday',
+                'Wednesday',
+                'Thursday',
+                'Friday',
+                'Saturday',
+                'Sunday',
+              ];
+              const modifiedSummary: {
+                day: string;
+                day_type: string;
+                session_title?: string;
+                muscle_groups?: string[];
+              }[] = [];
+
+              await this.prisma.$transaction(async (tx) => {
+                for (const dayArgs of daysToModify) {
+                  const planDay = plan.days.find(
+                    (d) => d.day_of_week === dayArgs.day_of_week,
+                  );
+                  if (planDay && planDay.status !== 'completed') {
+                    const updateData: any = {
+                      day_type: dayArgs.day_type,
+                      session_title: dayArgs.session_title ?? null,
+                      session_type: dayArgs.session_type ?? null,
+                      muscle_groups: dayArgs.muscle_groups ?? [],
+                      status: 'pending',
+                    };
+                    // Only overwrite exercises if explicitly provided; preserve existing otherwise
+                    if (dayArgs.exercises && dayArgs.exercises.length > 0) {
+                      updateData.exercises_json = dayArgs.exercises;
+                    } else if (dayArgs.day_type === 'rest') {
+                      updateData.exercises_json = [];
+                    }
+                    await tx.planDay.update({
+                      where: { id: planDay.id },
+                      data: updateData,
+                    });
+                    modifiedSummary.push({
+                      day: dayLabels[dayArgs.day_of_week] ?? 'Day',
+                      day_type: dayArgs.day_type,
+                      session_title: dayArgs.session_title,
+                      muscle_groups: dayArgs.muscle_groups,
+                    });
+                  }
+                }
+              });
+
+              // Feed tool result back
+              const followUp = await this.openai.chat.completions.create({
+                model,
+                messages: [
+                  ...messages,
+                  {
+                    role: 'assistant',
+                    content: fullContent || null,
+                    tool_calls: [
+                      {
+                        id: toolCallId,
+                        type: 'function',
+                        function: {
+                          name: toolCallName,
+                          arguments: toolCallArgs,
+                        },
+                      },
+                    ],
+                  },
+                  {
+                    role: 'tool',
+                    tool_call_id: toolCallId,
+                    content: JSON.stringify({
+                      success: true,
+                      user_request: dto.content,
+                      days_modified: modifiedSummary,
+                      days_count: modifiedSummary.length,
+                    }),
+                  },
+                ],
+                stream: true,
+                stream_options: { include_usage: true },
+                max_tokens: 300,
+                temperature: 0.7,
+              });
+
+              let modifyFollowUpUsage: {
+                prompt_tokens: number;
+                completion_tokens: number;
+              } | null = null;
+
+              for await (const followChunk of followUp) {
+                const followDelta = followChunk.choices[0]?.delta;
+                if (followDelta?.content) {
+                  fullContent += followDelta.content;
+                  yield {
+                    type: 'text_delta',
+                    data: { content: followDelta.content },
+                  };
+                }
+                if (followChunk.usage) {
+                  modifyFollowUpUsage = {
+                    prompt_tokens: followChunk.usage.prompt_tokens,
+                    completion_tokens: followChunk.usage.completion_tokens,
+                  };
+                }
+              }
+
+              if (modifyFollowUpUsage) {
+                this.aiUsage.trackUsage({
+                  userId,
+                  feature: 'coach_chat',
+                  model,
+                  promptTokens: modifyFollowUpUsage.prompt_tokens,
+                  completionTokens: modifyFollowUpUsage.completion_tokens,
+                });
+              }
+
+              // Notify iOS to reload plan/home data
+              yield {
+                type: 'plan_modified',
+                data: { days_count: modifiedSummary.length },
+              };
             }
+          } catch (error) {
+            console.error('Plan modification failed:', error);
+            const errMsg =
+              "Sorry, I couldn't modify the plan right now. Try again.";
+            fullContent += errMsg;
+            yield { type: 'text_delta', data: { content: errMsg } };
           }
+        }
       }
+    }
+
+    if (streamUsage) {
+      this.aiUsage.trackUsage({
+        userId,
+        feature: 'coach_chat',
+        model,
+        promptTokens: streamUsage.prompt_tokens,
+        completionTokens: streamUsage.completion_tokens,
+      });
     }
 
     // 5. Save assistant message (skip empty — prevents polluting history)
@@ -874,7 +1003,10 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
       cappedLibrary = [];
       const groups = [...byGroup.keys()];
       let idx = 0;
-      while (cappedLibrary.length < MAX_EXERCISES && idx < exerciseLibrary.length) {
+      while (
+        cappedLibrary.length < MAX_EXERCISES &&
+        idx < exerciseLibrary.length
+      ) {
         for (const g of groups) {
           const arr = byGroup.get(g)!;
           if (idx < arr.length) cappedLibrary.push(arr[idx]);

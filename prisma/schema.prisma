@@ -304,3 +304,20 @@ model AnalyticsEvent {
   @@index([user_id, created_at(sort: Desc)])
   @@map("analytics_events")
 }
+
+model AiUsage {
+  id                String   @id @default(uuid())
+  user_id           String
+  feature           String
+  model             String
+  prompt_tokens     Int
+  completion_tokens Int
+  total_tokens      Int
+  estimated_cost    Decimal  @db.Decimal(10, 6)
+  created_at        DateTime @default(now())
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@index([feature, created_at(sort: Desc)])
+  @@index([created_at(sort: Desc)])
+  @@map("ai_usage")
+}

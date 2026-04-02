@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACCENT_COLORS } from './session-exercise.service';
 import { WeightSuggestionService } from './weight-suggestion.service';
+import { AiUsageService } from '../analytics/ai-usage.service';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [], // empty means all equipment allowed
@@ -27,6 +28,7 @@ export class HomeAiService {
     private readonly configService: ConfigService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
     private readonly weightSuggestionService: WeightSuggestionService,
+    private readonly aiUsage: AiUsageService,
   ) {}
 
   // ── AI Motivation ───────────────────────────────────────
@@ -48,7 +50,10 @@ export class HomeAiService {
     try {
       return await this.generateAIMotivation(userId);
     } catch (error) {
-      console.error('AI motivation generation failed, returning fallback:', error);
+      console.error(
+        'AI motivation generation failed, returning fallback:',
+        error,
+      );
       return this.generateFallbackMotivation(userId);
     }
   }
@@ -77,13 +82,23 @@ export class HomeAiService {
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: 'Generate today\'s motivation message.',
+          content: "Generate today's motivation message.",
         },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 300,
       temperature: 0.6,
     });
+
+    if (response.usage) {
+      this.aiUsage.trackUsage({
+        userId,
+        feature: 'motivation',
+        model,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      });
+    }
 
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error('Empty OpenAI response');
@@ -129,7 +144,9 @@ export class HomeAiService {
         improve_endurance: 'boosting endurance',
         stay_healthy: 'staying healthy',
       };
-      const goalLabel = goalLabels[onboarding?.primary_goals?.[0] ?? ''] || 'your fitness goals';
+      const goalLabel =
+        goalLabels[onboarding?.primary_goals?.[0] ?? ''] ||
+        'your fitness goals';
 
       return this.prisma.motivationInsight.create({
         data: {
@@ -164,7 +181,11 @@ export class HomeAiService {
   private buildMotivationPrompt(
     onboarding: any,
     recentSessions: any[],
-    weekStats: { completedThisWeek: number; targetPerWeek: number; daysLeftInWeek: number },
+    weekStats: {
+      completedThisWeek: number;
+      targetPerWeek: number;
+      daysLeftInWeek: number;
+    },
   ): string {
     const profile = onboarding
       ? `User profile:
@@ -247,7 +268,10 @@ Rules:
     try {
       return await this.generateAISession(userId, onboarding);
     } catch (error) {
-      console.error('AI session generation failed, falling back to round-robin:', error);
+      console.error(
+        'AI session generation failed, falling back to round-robin:',
+        error,
+      );
       return this.generateFallbackSession(userId, onboarding);
     }
   }
@@ -275,9 +299,12 @@ Rules:
 
     // Pre-filter: pick target muscle groups and limit exercises per group
     const targetMuscleGroups = this.pickTargetMuscleGroups(recentSessions);
-    const filtered = targetMuscleGroups.length > 0
-      ? allExercises.filter((e) => targetMuscleGroups.includes(e.muscle_group))
-      : allExercises;
+    const filtered =
+      targetMuscleGroups.length > 0
+        ? allExercises.filter((e) =>
+            targetMuscleGroups.includes(e.muscle_group),
+          )
+        : allExercises;
     const exercises = this.limitExercisesPerGroup(
       filtered.length > 0 ? filtered : allExercises,
       10,
@@ -297,13 +324,23 @@ Rules:
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
-          content: 'Generate today\'s workout session.',
+          content: "Generate today's workout session.",
         },
       ],
       response_format: { type: 'json_object' },
       max_tokens: 500,
       temperature: 0.7,
     });
+
+    if (response.usage) {
+      this.aiUsage.trackUsage({
+        userId,
+        feature: 'quick_workout',
+        model,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      });
+    }
 
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error('Empty OpenAI response');
@@ -384,10 +421,17 @@ Rules:
     onboarding: any,
     exercises: any[],
     recentSessions: any[],
-    weekStats: { completedThisWeek: number; targetPerWeek: number; daysLeftInWeek: number },
+    weekStats: {
+      completedThisWeek: number;
+      targetPerWeek: number;
+      daysLeftInWeek: number;
+    },
   ): string {
     const exerciseList = exercises
-      .map((e) => `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`)
+      .map(
+        (e) =>
+          `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
+      )
       .join('\n');
 
     const sessionsContext = this.formatRecentSessions(recentSessions);
@@ -475,7 +519,9 @@ Rules:
     while (picked.length < targetCount && picked.length < exercises.length) {
       const mg = muscleGroups[mgIndex % muscleGroups.length];
       const available = byMuscle.get(mg)!;
-      const unused = available.filter((e) => !picked.some((p) => p.id === e.id));
+      const unused = available.filter(
+        (e) => !picked.some((p) => p.id === e.id),
+      );
       if (unused.length > 0) {
         const dayOfYear = Math.floor(
           (Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) /
@@ -509,7 +555,8 @@ Rules:
       improve_endurance: 'endurance',
       stay_healthy: 'general fitness',
     };
-    const goalLabel = goalLabels[onboarding.primary_goals?.[0] ?? ''] || 'fitness';
+    const goalLabel =
+      goalLabels[onboarding.primary_goals?.[0] ?? ''] || 'fitness';
 
     const session = await this.prisma.workoutSession.create({
       data: {
@@ -547,7 +594,15 @@ Rules:
   // ── Exercise Pre-filtering ──────────────────────────────────
 
   private pickTargetMuscleGroups(recentSessions: any[]): string[] {
-    const allGroups = ['Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Other'];
+    const allGroups = [
+      'Chest',
+      'Back',
+      'Legs',
+      'Shoulders',
+      'Arms',
+      'Core',
+      'Other',
+    ];
 
     if (recentSessions.length === 0) return [];
 
@@ -645,14 +700,21 @@ Rules:
       const date = s.completed_at
         ? new Date(s.completed_at).toISOString().split('T')[0]
         : 'unknown';
-      const duration = s.duration_minutes ? `${s.duration_minutes} min` : 'unknown duration';
+      const duration = s.duration_minutes
+        ? `${s.duration_minutes} min`
+        : 'unknown duration';
       const exerciseLines = s.exercises.map((e: any) => {
         const sets = e.exercise_sets;
-        if (!sets || sets.length === 0) return `  - ${e.name} (${e.muscle_group}): no sets logged`;
-        const setDetails = sets.map((set: any) => {
-          const weight = set.weight ? `${Number(set.weight)} ${set.weight_unit}` : 'BW';
-          return `${weight} × ${set.reps}`;
-        }).join(', ');
+        if (!sets || sets.length === 0)
+          return `  - ${e.name} (${e.muscle_group}): no sets logged`;
+        const setDetails = sets
+          .map((set: any) => {
+            const weight = set.weight
+              ? `${Number(set.weight)} ${set.weight_unit}`
+              : 'BW';
+            return `${weight} × ${set.reps}`;
+          })
+          .join(', ');
         return `  - ${e.name} (${e.muscle_group}): ${setDetails}`;
       });
       return `${date} — "${s.title}" (${duration})\n${exerciseLines.join('\n')}`;
