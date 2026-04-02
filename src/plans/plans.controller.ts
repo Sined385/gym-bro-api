@@ -35,10 +35,7 @@ export class PlansController {
 
   @Post('days/:dayId/start')
   @HttpCode(HttpStatus.OK)
-  async startPlanSession(
-    @Req() req: Request,
-    @Param('dayId') dayId: string,
-  ) {
+  async startPlanSession(@Req() req: Request, @Param('dayId') dayId: string) {
     return this.plansService.startPlanSession(req.user!.id, dayId);
   }
 }

@@ -6,6 +6,9 @@ import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 
+const IMAGE_BASE_URL =
+  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
   dumbbells_only: ['Dumbbells', 'Bodyweight'],
@@ -84,36 +87,41 @@ export class PlansService {
         primaryGoals: onboarding?.primary_goals ?? ['build_muscle'],
         experienceLevel: onboarding?.experience_level ?? 'intermediate',
       },
-      days: plan.days.map((day) => {
-        const exercises = day.exercises_json as any[];
-        return {
-          id: day.id,
-          dayOfWeek: day.day_of_week,
-          dayLabel: DAY_LABELS[day.day_of_week] ?? 'Day',
-          dayType: day.day_type,
-          status: day.status,
-          sessionTitle: day.session_title,
-          sessionType: day.session_type,
-          muscleGroups: day.muscle_groups,
-          exercises: exercises.map((e: any, i: number) => ({
-            name: e.name,
-            muscleGroup: e.muscle_group,
-            setsDisplay: e.sets_display,
-            libraryExerciseId: e.library_exercise_id ?? null,
-            accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
-            suggestedWeight: e.suggested_weight ?? null,
-          })),
-          workoutSession: day.workout_session
-            ? {
-                id: day.workout_session.id,
-                durationMinutes: day.workout_session.duration_minutes,
-                completedAt:
-                  day.workout_session.completed_at?.toISOString() ?? null,
-              }
-            : null,
-          aiNotes: day.ai_notes,
-        };
-      }),
+      days: await Promise.all(
+        plan.days.map(async (day) => {
+          const exercises = day.exercises_json as any[];
+          const libIds = exercises.map((e: any) => e.library_exercise_id);
+          const imageMap = await this.resolveExerciseImages(libIds);
+          return {
+            id: day.id,
+            dayOfWeek: day.day_of_week,
+            dayLabel: DAY_LABELS[day.day_of_week] ?? 'Day',
+            dayType: day.day_type,
+            status: day.status,
+            sessionTitle: day.session_title,
+            sessionType: day.session_type,
+            muscleGroups: day.muscle_groups,
+            exercises: exercises.map((e: any, i: number) => ({
+              name: e.name,
+              muscleGroup: e.muscle_group,
+              setsDisplay: e.sets_display,
+              libraryExerciseId: e.library_exercise_id ?? null,
+              accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
+              suggestedWeight: e.suggested_weight ?? null,
+              imageUrl: imageMap.get(e.library_exercise_id) ?? null,
+            })),
+            workoutSession: day.workout_session
+              ? {
+                  id: day.workout_session.id,
+                  durationMinutes: day.workout_session.duration_minutes,
+                  completedAt:
+                    day.workout_session.completed_at?.toISOString() ?? null,
+                }
+              : null,
+            aiNotes: day.ai_notes,
+          };
+        }),
+      ),
       todayIndex,
     };
   }
@@ -269,7 +277,7 @@ export class PlansService {
         include: { exercises: { orderBy: { step_number: 'asc' } } },
       });
       if (existing && existing.status === 'active') {
-        return this.formatSessionResponse(existing);
+        return await this.formatSessionResponse(existing);
       }
     }
 
@@ -310,8 +318,7 @@ export class PlansService {
         user_id: userId,
         title: planDay.session_title ?? 'Training Session',
         type: planDay.session_type ?? 'strength',
-        status: 'active',
-        started_at: new Date(),
+        status: 'proposed',
         ai_generated: true,
         ai_message: `Part of your Week ${planDay.plan.week_number} training plan`,
         updated_at: new Date(),
@@ -353,7 +360,7 @@ export class PlansService {
       session_id: session.id,
     });
 
-    return this.formatSessionResponse(session);
+    return await this.formatSessionResponse(session);
   }
 
   async onSessionCompleted(sessionId: string) {
@@ -396,7 +403,10 @@ export class PlansService {
     });
   }
 
-  private formatSessionResponse(session: any) {
+  private async formatSessionResponse(session: any) {
+    const imageMap = await this.resolveExerciseImages(
+      session.exercises.map((e: any) => e.library_exercise_id),
+    );
     return {
       id: session.id,
       user_id: session.user_id,
@@ -420,8 +430,32 @@ export class PlansService {
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
+        image_url: imageMap.get(e.library_exercise_id) ?? null,
       })),
     };
+  }
+
+  /**
+   * Batch-resolve library_exercise_id → imageUrl
+   */
+  private async resolveExerciseImages(
+    libraryExerciseIds: (string | null | undefined)[],
+  ): Promise<Map<string, string>> {
+    const ids = libraryExerciseIds.filter((id): id is string => !!id);
+    if (ids.length === 0) return new Map();
+
+    const rows = await this.prisma.exerciseLibrary.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, external_id: true },
+    });
+
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      if (row.external_id) {
+        map.set(row.id, `${IMAGE_BASE_URL}/${row.external_id}/0.jpg`);
+      }
+    }
+    return map;
   }
 
   private getWeekStart(date: Date): Date {

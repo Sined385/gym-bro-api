@@ -321,3 +321,18 @@ model AiUsage {
   @@index([created_at(sort: Desc)])
   @@map("ai_usage")
 }
+
+model WorkoutTemplate {
+  id             String   @id @default(uuid())
+  user_id        String
+  name           String
+  type           String   @default("custom")
+  exercises_json Json     @default("[]")
+  share_code     String?  @unique
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@index([user_id, updated_at(sort: Desc)])
+  @@index([share_code])
+  @@map("workout_templates")
+}

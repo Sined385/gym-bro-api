@@ -16,6 +16,7 @@ import { CommunityModule } from './community/community.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { UserModule } from './user/user.module';
+import { ShareModule } from './share/share.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { UserModule } from './user/user.module';
     NotificationsModule,
     AnalyticsModule,
     UserModule,
+    ShareModule,
   ],
   controllers: [AppController],
   providers: [AppService],

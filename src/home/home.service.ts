@@ -10,6 +10,9 @@ import { ACCENT_COLORS } from './session-exercise.service';
 import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 
+const IMAGE_BASE_URL =
+  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+
 @Injectable()
 export class HomeService {
   constructor(
@@ -17,6 +20,29 @@ export class HomeService {
     private readonly homeAiService: HomeAiService,
     private readonly analytics: AnalyticsService,
   ) {}
+
+  /**
+   * Batch-resolve library_exercise_id → imageUrl
+   */
+  private async resolveExerciseImages(
+    libraryExerciseIds: (string | null | undefined)[],
+  ): Promise<Map<string, string>> {
+    const ids = libraryExerciseIds.filter((id): id is string => !!id);
+    if (ids.length === 0) return new Map();
+
+    const rows = await this.prisma.exerciseLibrary.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, external_id: true },
+    });
+
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      if (row.external_id) {
+        map.set(row.id, `${IMAGE_BASE_URL}/${row.external_id}/0.jpg`);
+      }
+    }
+    return map;
+  }
 
   // ── Dashboard ────────────────────────────────────────────
 
@@ -27,40 +53,46 @@ export class HomeService {
 
     const todayStr = now.toISOString().split('T')[0];
 
-    const [profile, completedSessions, quickWorkout, todayHistory, motivation, activePlan] =
-      await Promise.all([
-        this.prisma.user.findUnique({
-          where: { id: userId },
-          select: { full_name: true, email: true, avatar_url: true },
-        }),
-        this.prisma.workoutSession.findMany({
-          where: {
-            user_id: userId,
-            status: 'completed',
-            completed_at: { gte: weekStart, lt: weekEnd },
+    const [
+      profile,
+      completedSessions,
+      quickWorkout,
+      todayHistory,
+      motivation,
+      activePlan,
+    ] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { full_name: true, email: true, avatar_url: true },
+      }),
+      this.prisma.workoutSession.findMany({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: weekStart, lt: weekEnd },
+        },
+        include: {
+          exercises: {
+            include: { exercise_sets: true },
           },
-          include: {
-            exercises: {
-              include: { exercise_sets: true },
-            },
+        },
+      }),
+      this.prisma.workoutSession.findFirst({
+        where: { user_id: userId, status: 'proposed' },
+        orderBy: { created_at: 'desc' },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
           },
-        }),
-        this.prisma.workoutSession.findFirst({
-          where: { user_id: userId, status: 'proposed' },
-          orderBy: { created_at: 'desc' },
-          include: {
-            exercises: {
-              orderBy: { step_number: 'asc' },
-            },
-          },
-        }),
-        this.getSessionHistory(userId, todayStr),
-        this.homeAiService.getOrGenerateMotivation(userId),
-        this.prisma.trainingPlan.findFirst({
-          where: { user_id: userId, is_active: true },
-          include: { days: { orderBy: { day_of_week: 'asc' } } },
-        }),
-      ]);
+        },
+      }),
+      this.getSessionHistory(userId, todayStr),
+      this.homeAiService.getOrGenerateMotivation(userId),
+      this.prisma.trainingPlan.findFirst({
+        where: { user_id: userId, is_active: true },
+        include: { days: { orderBy: { day_of_week: 'asc' } } },
+      }),
+    ]);
 
     const name = profile?.full_name ?? profile?.email?.split('@')[0] ?? '';
 
@@ -72,7 +104,7 @@ export class HomeService {
       ),
     ];
 
-    let finalQuickWorkout = quickWorkout;
+    const finalQuickWorkout = quickWorkout;
     if (!finalQuickWorkout) {
       // Generate in background — will be available on next dashboard load
       this.homeAiService.generateQuickWorkout(userId).catch(() => {});
@@ -101,6 +133,8 @@ export class HomeService {
         plannedWorkout = { type: 'rest' };
       } else {
         const exercises = todayPlanDay.exercises_json as any[];
+        const libIds = exercises.map((e: any) => e.library_exercise_id);
+        const imageMap = await this.resolveExerciseImages(libIds);
         plannedWorkout = {
           type: 'training',
           plan_day_id: todayPlanDay.id,
@@ -115,6 +149,7 @@ export class HomeService {
             library_exercise_id: e.library_exercise_id ?? null,
             accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
             suggested_weight: e.suggested_weight ?? null,
+            image_url: imageMap.get(e.library_exercise_id) ?? null,
           })),
         };
       }
@@ -189,17 +224,23 @@ export class HomeService {
             type: finalQuickWorkout.type,
             duration_minutes: finalQuickWorkout.duration_minutes,
             ai_message: finalQuickWorkout.ai_message,
-            exercises: finalQuickWorkout.exercises.map((e: any) => ({
-              id: e.id,
-              name: e.name,
-              step_number: e.step_number,
-              sets_display: e.sets_display,
-              accent_color: e.accent_color,
-              library_exercise_id: e.library_exercise_id ?? null,
-              muscle_group: e.muscle_group ?? null,
-              equipment: e.equipment ?? null,
-              suggested_weight: e.suggested_weight ?? null,
-            })),
+            exercises: await (async () => {
+              const qwImageMap = await this.resolveExerciseImages(
+                finalQuickWorkout.exercises.map((e: any) => e.library_exercise_id),
+              );
+              return finalQuickWorkout.exercises.map((e: any) => ({
+                id: e.id,
+                name: e.name,
+                step_number: e.step_number,
+                sets_display: e.sets_display,
+                accent_color: e.accent_color,
+                library_exercise_id: e.library_exercise_id ?? null,
+                muscle_group: e.muscle_group ?? null,
+                equipment: e.equipment ?? null,
+                suggested_weight: e.suggested_weight ?? null,
+                image_url: qwImageMap.get(e.library_exercise_id) ?? null,
+              }));
+            })(),
           }
         : null,
       planned_workout: plannedWorkout,
@@ -281,7 +322,7 @@ export class HomeService {
       type: updated.type,
     });
 
-    return this.formatSession(updated);
+    return await this.formatSession(updated);
   }
 
   async createSession(userId: string, dto: CreateSessionDto) {
@@ -290,8 +331,7 @@ export class HomeService {
         user_id: userId,
         title: dto.title,
         type: dto.type,
-        status: 'active',
-        started_at: new Date(),
+        status: 'proposed',
         duration_minutes: dto.duration_minutes ?? null,
         ai_generated: false,
         updated_at: new Date(),
@@ -301,14 +341,7 @@ export class HomeService {
       },
     });
 
-    this.analytics.track(userId, 'session_started', {
-      session_id: session.id,
-      title: session.title,
-      type: session.type,
-      source: 'manual',
-    });
-
-    return this.formatSession(session);
+    return await this.formatSession(session);
   }
 
   async completeSession(
@@ -318,124 +351,128 @@ export class HomeService {
   ) {
     try {
       const session = await this.prisma.workoutSession.findFirst({
-      where: { id: sessionId, user_id: userId },
-    });
-
-    if (!session) {
-      throw new AppException(
-        'session_not_found',
-        'Session not found',
-        HttpStatus.NOT_FOUND,
-      );
-    }
-
-    if (session.status !== 'active') {
-      throw new AppException(
-        'invalid_session_status',
-        `Cannot complete a session with status '${session.status}'`,
-        HttpStatus.CONFLICT,
-      );
-    }
-
-    const completedAt = new Date();
-    const durationMinutes =
-      dto.duration_minutes ??
-      (session.started_at
-        ? Math.round(
-            (completedAt.getTime() - session.started_at.getTime()) / 60000,
-          )
-        : null);
-
-    // MET-based calorie estimation
-    let calories: number | null = null;
-    if (durationMinutes && dto.feedback?.effort_level) {
-      const effort = dto.feedback.effort_level;
-      let met: number;
-      if (effort <= 3) met = 3.5;
-      else if (effort <= 6) met = 5.0;
-      else if (effort <= 8) met = 6.0;
-      else met = 7.0;
-      calories = Math.round(met * 70 * (durationMinutes / 60));
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.workoutSession.update({
-        where: { id: sessionId },
-        data: {
-          status: 'completed',
-          completed_at: completedAt,
-          duration_minutes: durationMinutes,
-          calories,
-          updated_at: new Date(),
-        },
+        where: { id: sessionId, user_id: userId },
       });
 
-      if (dto.feedback) {
-        await tx.sessionFeedback.upsert({
-          where: { session_id: sessionId },
-          create: {
-            session_id: sessionId,
-            effort_level: dto.feedback.effort_level,
-            energy_level: dto.feedback.energy_level,
-            pain_discomfort: dto.feedback.pain_discomfort ?? 'None',
-          },
-          update: {
-            effort_level: dto.feedback.effort_level,
-            energy_level: dto.feedback.energy_level,
-            pain_discomfort: dto.feedback.pain_discomfort ?? 'None',
+      if (!session) {
+        throw new AppException(
+          'session_not_found',
+          'Session not found',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      if (session.status !== 'active') {
+        throw new AppException(
+          'invalid_session_status',
+          `Cannot complete a session with status '${session.status}'`,
+          HttpStatus.CONFLICT,
+        );
+      }
+
+      const completedAt = new Date();
+      const durationMinutes =
+        dto.duration_minutes ??
+        (session.started_at
+          ? Math.round(
+              (completedAt.getTime() - session.started_at.getTime()) / 60000,
+            )
+          : null);
+
+      // MET-based calorie estimation
+      let calories: number | null = null;
+      if (durationMinutes && dto.feedback?.effort_level) {
+        const effort = dto.feedback.effort_level;
+        let met: number;
+        if (effort <= 3) met = 3.5;
+        else if (effort <= 6) met = 5.0;
+        else if (effort <= 8) met = 6.0;
+        else met = 7.0;
+        calories = Math.round(met * 70 * (durationMinutes / 60));
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.workoutSession.update({
+          where: { id: sessionId },
+          data: {
+            status: 'completed',
+            completed_at: completedAt,
+            duration_minutes: durationMinutes,
+            calories,
+            updated_at: new Date(),
           },
         });
-      }
-    });
 
-    this.analytics.track(userId, 'session_completed', {
-      duration_minutes: durationMinutes,
-      calories,
-      effort_level: dto.feedback?.effort_level ?? null,
-    });
-
-    // Invalidate cached motivation so the next dashboard load regenerates it
-    // with the just-completed session included
-    await this.prisma.motivationInsight.deleteMany({
-      where: { user_id: userId },
-    });
-
-    // Update plan day status if this session is linked to a plan
-    const linkedPlanDay = await this.prisma.planDay.findFirst({
-      where: { workout_session_id: sessionId },
-    });
-    if (linkedPlanDay) {
-      await this.prisma.planDay.update({
-        where: { id: linkedPlanDay.id },
-        data: { status: 'completed' },
+        if (dto.feedback) {
+          await tx.sessionFeedback.upsert({
+            where: { session_id: sessionId },
+            create: {
+              session_id: sessionId,
+              effort_level: dto.feedback.effort_level,
+              energy_level: dto.feedback.energy_level,
+              pain_discomfort: dto.feedback.pain_discomfort ?? 'None',
+            },
+            update: {
+              effort_level: dto.feedback.effort_level,
+              energy_level: dto.feedback.energy_level,
+              pain_discomfort: dto.feedback.pain_discomfort ?? 'None',
+            },
+          });
+        }
       });
-    }
 
-    const fullSession = await this.prisma.workoutSession.findUniqueOrThrow({
-      where: { id: sessionId },
-      include: {
-        exercises: {
-          orderBy: { step_number: 'asc' },
+      this.analytics.track(userId, 'session_completed', {
+        duration_minutes: durationMinutes,
+        calories,
+        effort_level: dto.feedback?.effort_level ?? null,
+      });
+
+      // Invalidate cached motivation so the next dashboard load regenerates it
+      // with the just-completed session included
+      await this.prisma.motivationInsight.deleteMany({
+        where: { user_id: userId },
+      });
+
+      // Update plan day status if this session is linked to a plan
+      const linkedPlanDay = await this.prisma.planDay.findFirst({
+        where: { workout_session_id: sessionId },
+      });
+      if (linkedPlanDay) {
+        await this.prisma.planDay.update({
+          where: { id: linkedPlanDay.id },
+          data: { status: 'completed' },
+        });
+      }
+
+      const fullSession = await this.prisma.workoutSession.findUniqueOrThrow({
+        where: { id: sessionId },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+          },
+          feedback: true,
         },
-        feedback: true,
-      },
-    });
+      });
 
-    return {
-      ...this.formatSession(fullSession),
-      calories: fullSession.calories ?? null,
-      performance_score: fullSession.performance_score ?? null,
-      feedback: fullSession.feedback
-        ? {
-            effort_level: fullSession.feedback.effort_level,
-            energy_level: fullSession.feedback.energy_level,
-            pain_discomfort: fullSession.feedback.pain_discomfort,
-          }
-        : null,
-    };
+      return {
+        ...(await this.formatSession(fullSession)),
+        calories: fullSession.calories ?? null,
+        performance_score: fullSession.performance_score ?? null,
+        feedback: fullSession.feedback
+          ? {
+              effort_level: fullSession.feedback.effort_level,
+              energy_level: fullSession.feedback.energy_level,
+              pain_discomfort: fullSession.feedback.pain_discomfort,
+            }
+          : null,
+      };
     } catch (error) {
       if (error instanceof AppException) throw error;
-      throw new AppException('completion_failed', 'Failed to complete session', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new AppException(
+        'completion_failed',
+        'Failed to complete session',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
@@ -577,7 +614,7 @@ export class HomeService {
     return d;
   }
 
-  private formatSession(session: {
+  private async formatSession(session: {
     id: string;
     user_id: string;
     title: string;
@@ -602,6 +639,9 @@ export class HomeService {
       suggested_weight: number | null;
     }[];
   }) {
+    const imageMap = await this.resolveExerciseImages(
+      session.exercises.map((e) => e.library_exercise_id),
+    );
     return {
       id: session.id,
       user_id: session.user_id,
@@ -625,6 +665,7 @@ export class HomeService {
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
+        image_url: imageMap.get(e.library_exercise_id ?? '') ?? null,
       })),
     };
   }

@@ -12,7 +12,11 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
 import { NotificationsService } from './notifications.service';
-import { RegisterTokenDto, RemoveTokenDto, ListNotificationsQueryDto } from './dto/notifications.dto';
+import {
+  RegisterTokenDto,
+  RemoveTokenDto,
+  ListNotificationsQueryDto,
+} from './dto/notifications.dto';
 import { Request } from 'express';
 
 @Controller('api/v1/notifications')
@@ -23,7 +27,11 @@ export class NotificationsController {
   @Post('device-token')
   async registerToken(@Body() dto: RegisterTokenDto, @Req() req: Request) {
     const userId = req.user!.id;
-    await this.notificationsService.registerToken(userId, dto.token, dto.platform ?? 'ios');
+    await this.notificationsService.registerToken(
+      userId,
+      dto.token,
+      dto.platform ?? 'ios',
+    );
     return { success: true };
   }
 
@@ -34,9 +42,16 @@ export class NotificationsController {
   }
 
   @Get()
-  async listNotifications(@Query() query: ListNotificationsQueryDto, @Req() req: Request) {
+  async listNotifications(
+    @Query() query: ListNotificationsQueryDto,
+    @Req() req: Request,
+  ) {
     const userId = req.user!.id;
-    return this.notificationsService.getNotifications(userId, query.cursor, query.limit);
+    return this.notificationsService.getNotifications(
+      userId,
+      query.cursor,
+      query.limit,
+    );
   }
 
   @Get('unread-count')

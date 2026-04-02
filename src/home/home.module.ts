@@ -4,12 +4,19 @@ import { HomeController } from './home.controller';
 import { HomeService } from './home.service';
 import { HomeAiService } from './home-ai.service';
 import { SessionExerciseService } from './session-exercise.service';
+import { TemplateService } from './template.service';
 import { WeightSuggestionService } from './weight-suggestion.service';
 
 @Module({
   imports: [AuthModule],
   controllers: [HomeController],
-  providers: [HomeService, HomeAiService, SessionExerciseService, WeightSuggestionService],
-  exports: [HomeService, WeightSuggestionService],
+  providers: [
+    HomeService,
+    HomeAiService,
+    SessionExerciseService,
+    TemplateService,
+    WeightSuggestionService,
+  ],
+  exports: [HomeService, WeightSuggestionService, TemplateService],
 })
 export class HomeModule {}

@@ -117,17 +117,18 @@ export class CommunityController {
     @Query('limit') limit?: number,
     @Query('cursor') cursor?: string,
   ) {
-    return this.communityService.getWorkoutHistory(req.user!.id, limit ?? 10, cursor);
+    return this.communityService.getWorkoutHistory(
+      req.user!.id,
+      limit ?? 10,
+      cursor,
+    );
   }
 
   // ── User Profiles ─────────────────────────────────────────
 
   @Get('users/:userId/profile')
   @HttpCode(HttpStatus.OK)
-  async getUserProfile(
-    @Param('userId') userId: string,
-    @Req() req: Request,
-  ) {
+  async getUserProfile(@Param('userId') userId: string, @Req() req: Request) {
     return this.communityService.getUserProfile(req.user!.id, userId);
   }
 
@@ -143,10 +144,7 @@ export class CommunityController {
 
   @Get('users/:userId/compare')
   @HttpCode(HttpStatus.OK)
-  async compareWithUser(
-    @Param('userId') userId: string,
-    @Req() req: Request,
-  ) {
+  async compareWithUser(@Param('userId') userId: string, @Req() req: Request) {
     return this.communityAiService.compareUsers(req.user!.id, userId);
   }
 }

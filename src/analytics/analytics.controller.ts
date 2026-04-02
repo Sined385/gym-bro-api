@@ -11,7 +11,11 @@ export class AnalyticsController {
 
   @Post('events')
   async trackEvent(@Req() req: Request, @Body() dto: TrackEventDto) {
-    await this.analytics.track(req.user!.id, dto.event_name, dto.properties ?? {});
+    await this.analytics.track(
+      req.user!.id,
+      dto.event_name,
+      dto.properties ?? {},
+    );
     return { success: true };
   }
 }

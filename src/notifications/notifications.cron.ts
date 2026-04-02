@@ -46,7 +46,8 @@ export class NotificationsCronService {
         if (!lastSession?.completed_at) continue;
 
         const daysSinceLastWorkout = Math.floor(
-          (now.getTime() - lastSession.completed_at.getTime()) / (1000 * 60 * 60 * 24),
+          (now.getTime() - lastSession.completed_at.getTime()) /
+            (1000 * 60 * 60 * 24),
         );
 
         if (daysSinceLastWorkout >= 3 && daysSinceLastWorkout <= 14) {

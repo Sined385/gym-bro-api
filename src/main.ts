@@ -5,7 +5,13 @@ import { AppExceptionFilter } from './common/filters/app-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, transformOptions: { enableImplicitConversion: true } }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
   app.useGlobalFilters(new AppExceptionFilter());
 
   const logger = new Logger('HTTP');
@@ -26,11 +32,16 @@ async function bootstrap() {
     res.end = function (chunk: any, ...args: any[]) {
       const ms = Date.now() - start;
       if (res.statusCode >= 400) {
-        if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        if (chunk)
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         const body = Buffer.concat(chunks).toString('utf8');
-        logger.warn(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms body=${JSON.stringify(req.body)} resp=${body}`);
+        logger.warn(
+          `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms body=${JSON.stringify(req.body)} resp=${body}`,
+        );
       } else {
-        logger.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
+        logger.log(
+          `${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`,
+        );
       }
       return origEnd.apply(res, [chunk, ...args]);
     };

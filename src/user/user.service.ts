@@ -14,11 +14,21 @@ export class UserService {
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, full_name: true, username: true, avatar_url: true },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        username: true,
+        avatar_url: true,
+      },
     });
 
     if (!user) {
-      throw new AppException('USER_NOT_FOUND', 'User not found', HttpStatus.NOT_FOUND);
+      throw new AppException(
+        'USER_NOT_FOUND',
+        'User not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     return user;
@@ -61,7 +71,13 @@ export class UserService {
         ...(dto.username !== undefined && { username: dto.username }),
         ...(dto.avatar_url !== undefined && { avatar_url: dto.avatar_url }),
       },
-      select: { id: true, email: true, full_name: true, username: true, avatar_url: true },
+      select: {
+        id: true,
+        email: true,
+        full_name: true,
+        username: true,
+        avatar_url: true,
+      },
     });
 
     return user;

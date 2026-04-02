@@ -70,7 +70,9 @@ export class CoachController {
     try {
       const stream = this.coachService.chat(req.user!.id, dto);
       for await (const event of stream) {
-        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
+        res.write(
+          `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`,
+        );
       }
     } catch (error) {
       console.error('Coach chat stream error:', error);

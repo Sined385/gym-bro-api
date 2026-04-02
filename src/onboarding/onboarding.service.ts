@@ -41,10 +41,12 @@ export class OnboardingService {
     } = dto;
 
     // Normalize: accept both singular (primary_goal) and plural (primary_goals) formats
-    const goals = dto.primary_goals ?? (dto.primary_goal ? [dto.primary_goal] : []);
-    const sports = dto.primary_sports ?? (dto.primary_sport ? [dto.primary_sport] : []);
+    const goals =
+      dto.primary_goals ?? (dto.primary_goal ? [dto.primary_goal] : []);
+    const sports =
+      dto.primary_sports ?? (dto.primary_sport ? [dto.primary_sport] : []);
 
-    if (goals.length === 0 || !goals.every(g => PRIMARY_GOALS.includes(g))) {
+    if (goals.length === 0 || !goals.every((g) => PRIMARY_GOALS.includes(g))) {
       throw new AppException(
         'invalid_primary_goals',
         `primary_goal(s) must be one of: ${PRIMARY_GOALS.join(', ')}`,
@@ -52,7 +54,10 @@ export class OnboardingService {
       );
     }
 
-    if (sports.length === 0 || !sports.every(s => typeof s === 'string' && s.trim().length > 0)) {
+    if (
+      sports.length === 0 ||
+      !sports.every((s) => typeof s === 'string' && s.trim().length > 0)
+    ) {
       throw new AppException(
         'invalid_primary_sports',
         'primary_sport(s) must be a non-empty string',
@@ -88,7 +93,10 @@ export class OnboardingService {
       );
     }
 
-    if (preferred_rest_time !== undefined && !REST_TIMES.includes(preferred_rest_time)) {
+    if (
+      preferred_rest_time !== undefined &&
+      !REST_TIMES.includes(preferred_rest_time)
+    ) {
       throw new AppException(
         'invalid_rest_time',
         `preferred_rest_time must be one of: ${REST_TIMES.join(', ')}`,
@@ -108,7 +116,7 @@ export class OnboardingService {
 
     const data = {
       primary_goals: goals,
-      primary_sports: sports.map(s => s.trim()),
+      primary_sports: sports.map((s) => s.trim()),
       experience_level,
       training_frequency,
       workout_duration,

@@ -76,13 +76,23 @@ export class ExercisesService {
   async getExercise(userId: string, exerciseId: string) {
     const exercise = await this.prisma.exerciseLibrary.findFirst({
       where: { id: exerciseId, OR: [{ is_system: true }, { user_id: userId }] },
-      select: { id: true, name: true, muscle_group: true, equipment: true, is_system: true, external_id: true },
+      select: {
+        id: true,
+        name: true,
+        muscle_group: true,
+        equipment: true,
+        is_system: true,
+        external_id: true,
+      },
     });
     if (!exercise) return null;
     return {
       ...exercise,
       images: exercise.external_id
-        ? [`${IMAGE_BASE_URL}/${exercise.external_id}/0.jpg`, `${IMAGE_BASE_URL}/${exercise.external_id}/1.jpg`]
+        ? [
+            `${IMAGE_BASE_URL}/${exercise.external_id}/0.jpg`,
+            `${IMAGE_BASE_URL}/${exercise.external_id}/1.jpg`,
+          ]
         : [],
     };
   }

@@ -17,7 +17,7 @@ export class SessionExerciseService {
 
   // ── Verification Helpers ──────────────────────────────────
 
-  private async verifyActiveSession(userId: string, sessionId: string) {
+  private async verifySession(userId: string, sessionId: string) {
     const session = await this.prisma.workoutSession.findFirst({
       where: { id: sessionId, user_id: userId },
     });
@@ -29,6 +29,20 @@ export class SessionExerciseService {
         HttpStatus.NOT_FOUND,
       );
     }
+
+    if (session.status === 'completed') {
+      throw new AppException(
+        'invalid_session_status',
+        `Cannot modify a completed session`,
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    return session;
+  }
+
+  private async verifyActiveSession(userId: string, sessionId: string) {
+    const session = await this.verifySession(userId, sessionId);
 
     if (session.status !== 'active') {
       throw new AppException(
@@ -76,7 +90,7 @@ export class SessionExerciseService {
   // ── Exercise CRUD ─────────────────────────────────────────
 
   async addExercises(userId: string, sessionId: string, dto: AddExercisesDto) {
-    await this.verifyActiveSession(userId, sessionId);
+    await this.verifySession(userId, sessionId);
 
     const maxStep = await this.prisma.sessionExercise.aggregate({
       where: { session_id: sessionId },
@@ -89,21 +103,25 @@ export class SessionExerciseService {
     const candidateIds = dto.exercises
       .map((e) => e.library_exercise_id)
       .filter((id): id is string => !!id);
-    const validIds = candidateIds.length > 0
-      ? new Set(
-          (await this.prisma.exerciseLibrary.findMany({
-            where: { id: { in: candidateIds } },
-            select: { id: true },
-          })).map((e) => e.id),
-        )
-      : new Set<string>();
+    const validIds =
+      candidateIds.length > 0
+        ? new Set(
+            (
+              await this.prisma.exerciseLibrary.findMany({
+                where: { id: { in: candidateIds } },
+                select: { id: true },
+              })
+            ).map((e) => e.id),
+          )
+        : new Set<string>();
 
     const created: any[] = [];
     for (const item of dto.exercises) {
       currentStep++;
-      const libId = item.library_exercise_id && validIds.has(item.library_exercise_id)
-        ? item.library_exercise_id
-        : null;
+      const libId =
+        item.library_exercise_id && validIds.has(item.library_exercise_id)
+          ? item.library_exercise_id
+          : null;
       const exercise = await this.prisma.sessionExercise.create({
         data: {
           session_id: sessionId,
@@ -139,7 +157,7 @@ export class SessionExerciseService {
     sessionId: string,
     dto: CreateSupersetDto,
   ) {
-    await this.verifyActiveSession(userId, sessionId);
+    await this.verifySession(userId, sessionId);
 
     // Verify all exercise_ids belong to this session
     const exercises = await this.prisma.sessionExercise.findMany({
@@ -186,7 +204,7 @@ export class SessionExerciseService {
   }
 
   async removeExercise(userId: string, sessionId: string, exerciseId: string) {
-    await this.verifyActiveSession(userId, sessionId);
+    await this.verifySession(userId, sessionId);
     const exercise = await this.verifyExerciseOwnership(sessionId, exerciseId);
 
     await this.prisma.$transaction(async (tx) => {

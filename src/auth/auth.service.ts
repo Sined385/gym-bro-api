@@ -66,12 +66,14 @@ export class AuthService {
         id: supabaseUser.id,
         email: supabaseUser.email ?? '',
         full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
-        avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
+        avatar_url:
+          (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
       },
       update: {
         email: supabaseUser.email ?? '',
         full_name: (meta.full_name as string) ?? (meta.name as string) ?? null,
-        avatar_url: (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
+        avatar_url:
+          (meta.avatar_url as string) ?? (meta.picture as string) ?? null,
       },
     });
 

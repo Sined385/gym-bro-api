@@ -44,7 +44,10 @@ export class UserController {
   @Post('avatar')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadAvatar(@UploadedFile() file: Express.Multer.File, @Req() req: Request) {
+  async uploadAvatar(
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: Request,
+  ) {
     return this.userService.uploadAvatar(req.user!.id, file);
   }
 }

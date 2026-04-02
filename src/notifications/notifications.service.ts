@@ -94,7 +94,9 @@ export class NotificationsService {
             where: { token: { in: tokensToDeactivate } },
             data: { is_active: false },
           });
-          this.logger.log(`Deactivated ${tokensToDeactivate.length} invalid FCM tokens`);
+          this.logger.log(
+            `Deactivated ${tokensToDeactivate.length} invalid FCM tokens`,
+          );
         }
       }
     } catch (error) {
