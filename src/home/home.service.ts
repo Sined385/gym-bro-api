@@ -22,26 +22,56 @@ export class HomeService {
   ) {}
 
   /**
-   * Batch-resolve library_exercise_id → imageUrl
+   * Batch-resolve exercises → imageUrl (keyed by exercise name).
+   * Falls back to name-based lookup when library_exercise_id is stale.
    */
   private async resolveExerciseImages(
-    libraryExerciseIds: (string | null | undefined)[],
+    exercises: { library_exercise_id?: string | null; name: string }[],
   ): Promise<Map<string, string>> {
-    const ids = libraryExerciseIds.filter((id): id is string => !!id);
-    if (ids.length === 0) return new Map();
+    const imageMap = new Map<string, string>();
+    if (exercises.length === 0) return imageMap;
 
-    const rows = await this.prisma.exerciseLibrary.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, external_id: true },
-    });
+    const libraryIds = [
+      ...new Set(
+        exercises
+          .map((e) => e.library_exercise_id)
+          .filter((id): id is string => !!id),
+      ),
+    ];
 
-    const map = new Map<string, string>();
-    for (const row of rows) {
-      if (row.external_id) {
-        map.set(row.id, `${IMAGE_BASE_URL}/${row.external_id}/0.jpg`);
+    const resolvedNames = new Set<string>();
+    if (libraryIds.length > 0) {
+      const found = await this.prisma.exerciseLibrary.findMany({
+        where: { id: { in: libraryIds } },
+        select: { id: true, name: true, external_id: true },
+      });
+      for (const ex of found) {
+        if (ex.external_id) {
+          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
+          resolvedNames.add(ex.name);
+        }
       }
     }
-    return map;
+
+    const unresolvedNames = [
+      ...new Set(
+        exercises.map((e) => e.name).filter((n) => !resolvedNames.has(n)),
+      ),
+    ];
+
+    if (unresolvedNames.length > 0) {
+      const byName = await this.prisma.exerciseLibrary.findMany({
+        where: { name: { in: unresolvedNames }, is_system: true },
+        select: { name: true, external_id: true },
+      });
+      for (const ex of byName) {
+        if (ex.external_id) {
+          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
+        }
+      }
+    }
+
+    return imageMap;
   }
 
   // ── Dashboard ────────────────────────────────────────────
@@ -133,8 +163,7 @@ export class HomeService {
         plannedWorkout = { type: 'rest' };
       } else {
         const exercises = todayPlanDay.exercises_json as any[];
-        const libIds = exercises.map((e: any) => e.library_exercise_id);
-        const imageMap = await this.resolveExerciseImages(libIds);
+        const imageMap = await this.resolveExerciseImages(exercises);
         plannedWorkout = {
           type: 'training',
           plan_day_id: todayPlanDay.id,
@@ -149,7 +178,7 @@ export class HomeService {
             library_exercise_id: e.library_exercise_id ?? null,
             accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
             suggested_weight: e.suggested_weight ?? null,
-            image_url: imageMap.get(e.library_exercise_id) ?? null,
+            image_url: imageMap.get(e.name) ?? null,
           })),
         };
       }
@@ -226,7 +255,10 @@ export class HomeService {
             ai_message: finalQuickWorkout.ai_message,
             exercises: await (async () => {
               const qwImageMap = await this.resolveExerciseImages(
-                finalQuickWorkout.exercises.map((e: any) => e.library_exercise_id),
+                finalQuickWorkout.exercises.map((e: any) => ({
+                  library_exercise_id: e.library_exercise_id,
+                  name: e.name,
+                })),
               );
               return finalQuickWorkout.exercises.map((e: any) => ({
                 id: e.id,
@@ -238,7 +270,7 @@ export class HomeService {
                 muscle_group: e.muscle_group ?? null,
                 equipment: e.equipment ?? null,
                 suggested_weight: e.suggested_weight ?? null,
-                image_url: qwImageMap.get(e.library_exercise_id) ?? null,
+                image_url: qwImageMap.get(e.name) ?? null,
               }));
             })(),
           }
@@ -640,7 +672,10 @@ export class HomeService {
     }[];
   }) {
     const imageMap = await this.resolveExerciseImages(
-      session.exercises.map((e) => e.library_exercise_id),
+      session.exercises.map((e) => ({
+        library_exercise_id: e.library_exercise_id,
+        name: e.name,
+      })),
     );
     return {
       id: session.id,
@@ -665,7 +700,7 @@ export class HomeService {
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
-        image_url: imageMap.get(e.library_exercise_id ?? '') ?? null,
+        image_url: imageMap.get(e.name) ?? null,
       })),
     };
   }
