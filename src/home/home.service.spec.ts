@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { HomeService } from './home.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { HomeAiService } from './home-ai.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 const mockPrisma = {
   workoutSession: {
@@ -15,6 +16,10 @@ const mockHomeAiService = {
   generateQuickWorkout: jest.fn(),
 };
 
+const mockAnalytics = {
+  track: jest.fn(),
+};
+
 describe('HomeService', () => {
   let service: HomeService;
 
@@ -24,6 +29,7 @@ describe('HomeService', () => {
         HomeService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: HomeAiService, useValue: mockHomeAiService },
+        { provide: AnalyticsService, useValue: mockAnalytics },
       ],
     }).compile();
 

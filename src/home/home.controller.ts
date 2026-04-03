@@ -239,10 +239,7 @@ export class HomeController {
 
   @Post('templates/save-shared/:code')
   @HttpCode(HttpStatus.CREATED)
-  async saveSharedTemplate(
-    @Req() req: Request,
-    @Param('code') code: string,
-  ) {
+  async saveSharedTemplate(@Req() req: Request, @Param('code') code: string) {
     return this.templateService.saveSharedTemplate(req.user!.id, code);
   }
 }

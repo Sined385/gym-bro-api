@@ -5,9 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { ACCENT_COLORS } from './session-exercise.service';
-
-const IMAGE_BASE_URL =
-  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+import { exerciseImageUrl } from '../common/exercise-image';
 
 @Injectable()
 export class TemplateService {
@@ -20,63 +18,13 @@ export class TemplateService {
     return crypto.randomBytes(6).toString('base64url').slice(0, 8);
   }
 
-  private async resolveExerciseImages(
-    exercises: { library_exercise_id?: string | null; name: string }[],
-  ): Promise<Map<string, string>> {
-    const imageMap = new Map<string, string>();
-    if (exercises.length === 0) return imageMap;
-
-    // Phase 1: resolve by library_exercise_id
-    const libraryIds = [
-      ...new Set(
-        exercises
-          .map((e) => e.library_exercise_id)
-          .filter((id): id is string => !!id),
-      ),
-    ];
-
-    const resolvedNames = new Set<string>();
-    if (libraryIds.length > 0) {
-      const found = await this.prisma.exerciseLibrary.findMany({
-        where: { id: { in: libraryIds } },
-        select: { id: true, name: true, external_id: true },
-      });
-      for (const ex of found) {
-        if (ex.external_id) {
-          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-          resolvedNames.add(ex.name);
-        }
-      }
-    }
-
-    // Phase 2: fallback to name lookup for stale/missing library IDs
-    const unresolvedNames = [
-      ...new Set(
-        exercises.map((e) => e.name).filter((n) => !resolvedNames.has(n)),
-      ),
-    ];
-
-    if (unresolvedNames.length > 0) {
-      const byName = await this.prisma.exerciseLibrary.findMany({
-        where: { name: { in: unresolvedNames }, is_system: true },
-        select: { name: true, external_id: true },
-      });
-      for (const ex of byName) {
-        if (ex.external_id) {
-          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-        }
-      }
-    }
-
-    return imageMap;
-  }
-
   async createTemplate(userId: string, dto: CreateTemplateDto) {
     const session = await this.prisma.workoutSession.findFirst({
       where: { id: dto.session_id, user_id: userId },
       include: {
         exercises: {
           orderBy: { step_number: 'asc' },
+          include: { exercise_sets: true },
         },
       },
     });
@@ -97,15 +45,28 @@ export class TemplateService {
       );
     }
 
-    const exercisesJson = session.exercises.map((e) => ({
-      name: e.name,
-      muscle_group: e.muscle_group,
-      equipment: e.equipment,
-      sets_display: e.sets_display,
-      library_exercise_id: e.library_exercise_id,
-      superset_group_id: e.superset_group_id,
-      superset_order: e.superset_order,
-    }));
+    const exercisesJson = session.exercises.map((e: any) => {
+      let setsDisplay = e.sets_display;
+      if (!setsDisplay && e.exercise_sets?.length > 0) {
+        const totalSets = e.exercise_sets.length;
+        const totalReps = e.exercise_sets.reduce(
+          (sum: number, s: any) => sum + s.reps,
+          0,
+        );
+        const repsPerSet = Math.round(totalReps / totalSets);
+        setsDisplay = `${totalSets} × ${repsPerSet}`;
+      }
+      return {
+        name: e.name,
+        muscle_group: e.muscle_group,
+        equipment: e.equipment,
+        sets_display: setsDisplay || '',
+        library_exercise_id: e.library_exercise_id,
+        external_id: e.external_id ?? null,
+        superset_group_id: e.superset_group_id,
+        superset_order: e.superset_order,
+      };
+    });
 
     const template = await this.prisma.workoutTemplate.create({
       data: {
@@ -117,7 +78,6 @@ export class TemplateService {
     });
 
     const exercises = template.exercises_json as any[];
-    const imageMap = await this.resolveExerciseImages(exercises);
 
     return {
       id: template.id,
@@ -128,7 +88,7 @@ export class TemplateService {
         muscleGroup: e.muscle_group,
         equipment: e.equipment,
         setsDisplay: e.sets_display,
-        imageUrl: imageMap.get(e.name) ?? null,
+        imageUrl: exerciseImageUrl(e.external_id),
       })),
       createdAt: template.created_at.toISOString(),
     };
@@ -139,14 +99,6 @@ export class TemplateService {
       where: { user_id: userId },
       orderBy: { updated_at: 'desc' },
     });
-
-    const allExercises = templates.flatMap((t) =>
-      (t.exercises_json as any[]).map((e: any) => ({
-        library_exercise_id: e.library_exercise_id,
-        name: e.name,
-      })),
-    );
-    const imageMap = await this.resolveExerciseImages(allExercises);
 
     return templates.map((template) => {
       const exercises = template.exercises_json as any[];
@@ -159,7 +111,7 @@ export class TemplateService {
           muscleGroup: e.muscle_group,
           equipment: e.equipment,
           setsDisplay: e.sets_display,
-          imageUrl: imageMap.get(e.name) ?? null,
+          imageUrl: exerciseImageUrl(e.external_id),
         })),
         createdAt: template.created_at.toISOString(),
       };
@@ -185,7 +137,6 @@ export class TemplateService {
     });
 
     const exercises = updated.exercises_json as any[];
-    const imageMap = await this.resolveExerciseImages(exercises);
 
     return {
       id: updated.id,
@@ -196,7 +147,7 @@ export class TemplateService {
         muscleGroup: e.muscle_group,
         equipment: e.equipment,
         setsDisplay: e.sets_display,
-        imageUrl: imageMap.get(e.name) ?? null,
+        imageUrl: exerciseImageUrl(e.external_id),
       })),
       createdAt: updated.created_at.toISOString(),
     };
@@ -239,29 +190,44 @@ export class TemplateService {
     const libraryIds = exercises
       .map((ex: any) => ex.library_exercise_id)
       .filter((id: string | null): id is string => !!id);
-    const validIds = new Set<string>();
+    const validLibExercises = new Map<
+      string,
+      { id: string; external_id: string | null }
+    >();
     if (libraryIds.length > 0) {
       const existing = await this.prisma.exerciseLibrary.findMany({
         where: { id: { in: libraryIds } },
-        select: { id: true },
+        select: { id: true, external_id: true },
       });
-      for (const e of existing) validIds.add(e.id);
+      for (const e of existing)
+        validLibExercises.set(e.id, {
+          id: e.id,
+          external_id: e.external_id,
+        });
     }
 
     // Re-resolve stale IDs by exercise name from current library
-    const nameToLibraryId = new Map<string, string>();
+    const nameToLibExercise = new Map<
+      string,
+      { id: string; external_id: string | null }
+    >();
     const staleNames = exercises
       .filter(
         (ex: any) =>
-          ex.library_exercise_id && !validIds.has(ex.library_exercise_id),
+          ex.library_exercise_id &&
+          !validLibExercises.has(ex.library_exercise_id),
       )
       .map((ex: any) => ex.name as string);
     if (staleNames.length > 0) {
       const resolved = await this.prisma.exerciseLibrary.findMany({
         where: { name: { in: staleNames }, is_system: true },
-        select: { id: true, name: true },
+        select: { id: true, name: true, external_id: true },
       });
-      for (const e of resolved) nameToLibraryId.set(e.name, e.id);
+      for (const e of resolved)
+        nameToLibExercise.set(e.name, {
+          id: e.id,
+          external_id: e.external_id,
+        });
     }
 
     // Create WorkoutSession + SessionExercise rows
@@ -276,16 +242,22 @@ export class TemplateService {
         exercises: {
           create: exercises.map((ex: any, i: number) => {
             let libId: string | null = null;
+            let externalId: string | null = ex.external_id ?? null;
             if (
               ex.library_exercise_id &&
-              validIds.has(ex.library_exercise_id)
+              validLibExercises.has(ex.library_exercise_id)
             ) {
-              libId = ex.library_exercise_id;
-            } else if (ex.name && nameToLibraryId.has(ex.name)) {
-              libId = nameToLibraryId.get(ex.name)!;
+              const libEx = validLibExercises.get(ex.library_exercise_id)!;
+              libId = libEx.id;
+              externalId = libEx.external_id ?? externalId;
+            } else if (ex.name && nameToLibExercise.has(ex.name)) {
+              const libEx = nameToLibExercise.get(ex.name)!;
+              libId = libEx.id;
+              externalId = libEx.external_id ?? externalId;
             }
             return {
               library_exercise_id: libId,
+              external_id: externalId,
               name: ex.name,
               muscle_group: ex.muscle_group,
               equipment: ex.equipment ?? null,
@@ -327,8 +299,7 @@ export class TemplateService {
     }
 
     const shareDomain =
-      this.configService.get<string>('SHARE_DOMAIN') ||
-      'https://gyymjaam.com';
+      this.configService.get<string>('SHARE_DOMAIN') || 'https://gyymjaam.com';
 
     return {
       shareUrl: `${shareDomain}/s/${shareCode}`,
@@ -377,7 +348,6 @@ export class TemplateService {
       ]);
 
     const exercises = template.exercises_json as any[];
-    const imageMap = await this.resolveExerciseImages(exercises);
 
     return {
       name: template.name,
@@ -400,7 +370,7 @@ export class TemplateService {
         muscleGroup: e.muscle_group,
         equipment: e.equipment,
         setsDisplay: e.sets_display,
-        imageUrl: imageMap.get(e.name) ?? null,
+        imageUrl: exerciseImageUrl(e.external_id),
       })),
     };
   }
@@ -428,7 +398,6 @@ export class TemplateService {
     });
 
     const exercises = newTemplate.exercises_json as any[];
-    const imageMap = await this.resolveExerciseImages(exercises);
 
     return {
       id: newTemplate.id,
@@ -439,7 +408,7 @@ export class TemplateService {
         muscleGroup: e.muscle_group,
         equipment: e.equipment,
         setsDisplay: e.sets_display,
-        imageUrl: imageMap.get(e.name) ?? null,
+        imageUrl: exerciseImageUrl(e.external_id),
       })),
       createdAt: newTemplate.created_at.toISOString(),
     };
@@ -465,6 +434,7 @@ export class TemplateService {
       sets_display: string;
       accent_color: string;
       library_exercise_id: string | null;
+      external_id: string | null;
       muscle_group: string | null;
       equipment: string | null;
       suggested_weight: number | null;
@@ -493,6 +463,7 @@ export class TemplateService {
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
+        image_url: exerciseImageUrl(e.external_id),
       })),
     };
   }

@@ -56,6 +56,7 @@ model SessionExercise {
   equipment           String?
   suggested_weight    Float?
   library_exercise_id String?
+  external_id         String?
   superset_group_id   String?
   superset_order      String?
   created_at          DateTime         @default(now())

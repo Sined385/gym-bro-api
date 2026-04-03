@@ -5,9 +5,7 @@ import { PlansAiService } from './plans-ai.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-
-const IMAGE_BASE_URL =
-  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+import { exerciseImageUrl } from '../common/exercise-image';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
@@ -87,40 +85,37 @@ export class PlansService {
         primaryGoals: onboarding?.primary_goals ?? ['build_muscle'],
         experienceLevel: onboarding?.experience_level ?? 'intermediate',
       },
-      days: await Promise.all(
-        plan.days.map(async (day) => {
-          const exercises = day.exercises_json as any[];
-          const imageMap = await this.resolveExerciseImages(exercises);
-          return {
-            id: day.id,
-            dayOfWeek: day.day_of_week,
-            dayLabel: DAY_LABELS[day.day_of_week] ?? 'Day',
-            dayType: day.day_type,
-            status: day.status,
-            sessionTitle: day.session_title,
-            sessionType: day.session_type,
-            muscleGroups: day.muscle_groups,
-            exercises: exercises.map((e: any, i: number) => ({
-              name: e.name,
-              muscleGroup: e.muscle_group,
-              setsDisplay: e.sets_display,
-              libraryExerciseId: e.library_exercise_id ?? null,
-              accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
-              suggestedWeight: e.suggested_weight ?? null,
-              imageUrl: imageMap.get(e.name) ?? null,
-            })),
-            workoutSession: day.workout_session
-              ? {
-                  id: day.workout_session.id,
-                  durationMinutes: day.workout_session.duration_minutes,
-                  completedAt:
-                    day.workout_session.completed_at?.toISOString() ?? null,
-                }
-              : null,
-            aiNotes: day.ai_notes,
-          };
-        }),
-      ),
+      days: plan.days.map((day) => {
+        const exercises = day.exercises_json as any[];
+        return {
+          id: day.id,
+          dayOfWeek: day.day_of_week,
+          dayLabel: DAY_LABELS[day.day_of_week] ?? 'Day',
+          dayType: day.day_type,
+          status: day.status,
+          sessionTitle: day.session_title,
+          sessionType: day.session_type,
+          muscleGroups: day.muscle_groups,
+          exercises: exercises.map((e: any, i: number) => ({
+            name: e.name,
+            muscleGroup: e.muscle_group,
+            setsDisplay: e.sets_display,
+            libraryExerciseId: e.library_exercise_id ?? null,
+            accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
+            suggestedWeight: e.suggested_weight ?? null,
+            imageUrl: exerciseImageUrl(e.external_id),
+          })),
+          workoutSession: day.workout_session
+            ? {
+                id: day.workout_session.id,
+                durationMinutes: day.workout_session.duration_minutes,
+                completedAt:
+                  day.workout_session.completed_at?.toISOString() ?? null,
+              }
+            : null,
+          aiNotes: day.ai_notes,
+        };
+      }),
       todayIndex,
     };
   }
@@ -276,7 +271,7 @@ export class PlansService {
         include: { exercises: { orderBy: { step_number: 'asc' } } },
       });
       if (existing && existing.status === 'active') {
-        return await this.formatSessionResponse(existing);
+        return this.formatSessionResponse(existing);
       }
     }
 
@@ -286,29 +281,44 @@ export class PlansService {
     const libraryIds = exercises
       .map((ex: any) => ex.library_exercise_id)
       .filter((id: string | null): id is string => !!id);
-    const validIds = new Set<string>();
+    const validLibExercises = new Map<
+      string,
+      { id: string; external_id: string | null }
+    >();
     if (libraryIds.length > 0) {
       const existing = await this.prisma.exerciseLibrary.findMany({
         where: { id: { in: libraryIds } },
-        select: { id: true },
+        select: { id: true, external_id: true },
       });
-      for (const e of existing) validIds.add(e.id);
+      for (const e of existing)
+        validLibExercises.set(e.id, {
+          id: e.id,
+          external_id: e.external_id,
+        });
     }
 
     // Re-resolve stale IDs by exercise name from current library
-    const nameToLibraryId = new Map<string, string>();
+    const nameToLibExercise = new Map<
+      string,
+      { id: string; external_id: string | null }
+    >();
     const staleNames = exercises
       .filter(
         (ex: any) =>
-          ex.library_exercise_id && !validIds.has(ex.library_exercise_id),
+          ex.library_exercise_id &&
+          !validLibExercises.has(ex.library_exercise_id),
       )
       .map((ex: any) => ex.name as string);
     if (staleNames.length > 0) {
       const resolved = await this.prisma.exerciseLibrary.findMany({
         where: { name: { in: staleNames }, is_system: true },
-        select: { id: true, name: true },
+        select: { id: true, name: true, external_id: true },
       });
-      for (const e of resolved) nameToLibraryId.set(e.name, e.id);
+      for (const e of resolved)
+        nameToLibExercise.set(e.name, {
+          id: e.id,
+          external_id: e.external_id,
+        });
     }
 
     // Create WorkoutSession + SessionExercise rows
@@ -324,16 +334,22 @@ export class PlansService {
         exercises: {
           create: exercises.map((ex: any, i: number) => {
             let libId: string | null = null;
+            let externalId: string | null = ex.external_id ?? null;
             if (
               ex.library_exercise_id &&
-              validIds.has(ex.library_exercise_id)
+              validLibExercises.has(ex.library_exercise_id)
             ) {
-              libId = ex.library_exercise_id;
-            } else if (ex.name && nameToLibraryId.has(ex.name)) {
-              libId = nameToLibraryId.get(ex.name)!;
+              const libEx = validLibExercises.get(ex.library_exercise_id)!;
+              libId = libEx.id;
+              externalId = libEx.external_id ?? externalId;
+            } else if (ex.name && nameToLibExercise.has(ex.name)) {
+              const libEx = nameToLibExercise.get(ex.name)!;
+              libId = libEx.id;
+              externalId = libEx.external_id ?? externalId;
             }
             return {
               library_exercise_id: libId,
+              external_id: externalId,
               name: ex.name,
               muscle_group: ex.muscle_group,
               equipment: ex.equipment ?? null,
@@ -359,7 +375,7 @@ export class PlansService {
       session_id: session.id,
     });
 
-    return await this.formatSessionResponse(session);
+    return this.formatSessionResponse(session);
   }
 
   async onSessionCompleted(sessionId: string) {
@@ -402,13 +418,7 @@ export class PlansService {
     });
   }
 
-  private async formatSessionResponse(session: any) {
-    const imageMap = await this.resolveExerciseImages(
-      session.exercises.map((e: any) => ({
-        library_exercise_id: e.library_exercise_id,
-        name: e.name,
-      })),
-    );
+  private formatSessionResponse(session: any) {
     return {
       id: session.id,
       user_id: session.user_id,
@@ -432,62 +442,9 @@ export class PlansService {
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
-        image_url: imageMap.get(e.name) ?? null,
+        image_url: exerciseImageUrl(e.external_id),
       })),
     };
-  }
-
-  /**
-   * Batch-resolve exercises → imageUrl (keyed by exercise name).
-   * Falls back to name-based lookup when library_exercise_id is stale.
-   */
-  private async resolveExerciseImages(
-    exercises: { library_exercise_id?: string | null; name: string }[],
-  ): Promise<Map<string, string>> {
-    const imageMap = new Map<string, string>();
-    if (exercises.length === 0) return imageMap;
-
-    const libraryIds = [
-      ...new Set(
-        exercises
-          .map((e) => e.library_exercise_id)
-          .filter((id): id is string => !!id),
-      ),
-    ];
-
-    const resolvedNames = new Set<string>();
-    if (libraryIds.length > 0) {
-      const found = await this.prisma.exerciseLibrary.findMany({
-        where: { id: { in: libraryIds } },
-        select: { id: true, name: true, external_id: true },
-      });
-      for (const ex of found) {
-        if (ex.external_id) {
-          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-          resolvedNames.add(ex.name);
-        }
-      }
-    }
-
-    const unresolvedNames = [
-      ...new Set(
-        exercises.map((e) => e.name).filter((n) => !resolvedNames.has(n)),
-      ),
-    ];
-
-    if (unresolvedNames.length > 0) {
-      const byName = await this.prisma.exerciseLibrary.findMany({
-        where: { name: { in: unresolvedNames }, is_system: true },
-        select: { name: true, external_id: true },
-      });
-      for (const ex of byName) {
-        if (ex.external_id) {
-          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-        }
-      }
-    }
-
-    return imageMap;
   }
 
   private getWeekStart(date: Date): Date {

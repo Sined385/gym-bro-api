@@ -103,29 +103,30 @@ export class SessionExerciseService {
     const candidateIds = dto.exercises
       .map((e) => e.library_exercise_id)
       .filter((id): id is string => !!id);
-    const validIds =
+    const validLibExercises =
       candidateIds.length > 0
-        ? new Set(
+        ? new Map(
             (
               await this.prisma.exerciseLibrary.findMany({
                 where: { id: { in: candidateIds } },
-                select: { id: true },
+                select: { id: true, external_id: true },
               })
-            ).map((e) => e.id),
+            ).map((e) => [e.id, e]),
           )
-        : new Set<string>();
+        : new Map<string, { id: string; external_id: string | null }>();
 
     const created: any[] = [];
     for (const item of dto.exercises) {
       currentStep++;
-      const libId =
-        item.library_exercise_id && validIds.has(item.library_exercise_id)
-          ? item.library_exercise_id
-          : null;
+      const libEx = item.library_exercise_id
+        ? validLibExercises.get(item.library_exercise_id)
+        : undefined;
+      const libId = libEx ? item.library_exercise_id! : null;
       const exercise = await this.prisma.sessionExercise.create({
         data: {
           session_id: sessionId,
           library_exercise_id: libId,
+          external_id: libEx?.external_id ?? null,
           name: item.name,
           muscle_group: item.muscle_group,
           equipment: item.equipment ?? null,

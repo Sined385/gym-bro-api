@@ -133,6 +133,26 @@ Rules:
       if (!content) throw new Error('Empty OpenAI response');
 
       const parsed = JSON.parse(content) as { days: PlanDayGenerated[] };
+
+      // Enrich AI-parsed exercises with external_id from exercise library
+      const exerciseMap = new Map(exerciseLibrary.map((e) => [e.id, e]));
+      const nameMap = new Map(
+        exerciseLibrary
+          .filter((e) => e.external_id)
+          .map((e) => [e.name, e.external_id]),
+      );
+      for (const day of parsed.days) {
+        if (day.exercises) {
+          for (const ex of day.exercises) {
+            const libEx = ex.library_exercise_id
+              ? exerciseMap.get(ex.library_exercise_id)
+              : undefined;
+            (ex as any).external_id =
+              libEx?.external_id ?? nameMap.get(ex.name) ?? null;
+          }
+        }
+      }
+
       return parsed.days;
     } catch (error) {
       console.error('AI plan generation failed, using fallback:', error);
@@ -249,7 +269,8 @@ Rules:
               name: ex.name,
               muscle_group: ex.muscle_group,
               sets_display: setsDisplay,
-            });
+              external_id: ex.external_id ?? null,
+            } as any);
           }
           mgIdx++;
         }

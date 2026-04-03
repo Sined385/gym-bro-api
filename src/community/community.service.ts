@@ -9,9 +9,7 @@ import {
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-
-const IMAGE_BASE_URL =
-  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+import { exerciseImageUrl } from '../common/exercise-image';
 
 @Injectable()
 export class CommunityService {
@@ -845,6 +843,7 @@ export class CommunityService {
           muscle_group: e.muscle_group,
           accent_color: ACCENT_COLORS[index % ACCENT_COLORS.length],
           step_number: e.step_number,
+          image_url: exerciseImageUrl(e.external_id),
           sets: e.exercise_sets.map((set) => ({
             set_number: set.set_number,
             weight: set.weight ? Number(set.weight) : null,
@@ -887,29 +886,6 @@ export class CommunityService {
     });
 
     return follows.map((f) => f.following_id);
-  }
-
-  /**
-   * Batch-resolve exercise library images.
-   * Returns Map<library_exercise_id, imageUrl>.
-   */
-  private async resolveExerciseImages(
-    libraryExerciseIds: string[],
-  ): Promise<Map<string, string>> {
-    if (libraryExerciseIds.length === 0) return new Map();
-
-    const exercises = await this.prisma.exerciseLibrary.findMany({
-      where: { id: { in: libraryExerciseIds } },
-      select: { id: true, external_id: true },
-    });
-
-    const map = new Map<string, string>();
-    for (const ex of exercises) {
-      if (ex.external_id) {
-        map.set(ex.id, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-      }
-    }
-    return map;
   }
 
   private async enrichPostsBatch(posts: any[], currentUserId: string) {
@@ -967,19 +943,6 @@ export class CommunityService {
     const userLikeSet = new Set(userLikes.map((ul) => ul.post_id));
     const sessionMap = new Map((sessions as any[]).map((s) => [s.id, s]));
 
-    // Collect all library_exercise_ids from session exercises and resolve images
-    const allLibraryExerciseIds: string[] = [];
-    for (const session of sessions as any[]) {
-      for (const ex of session.exercises ?? []) {
-        if (ex.library_exercise_id) {
-          allLibraryExerciseIds.push(ex.library_exercise_id);
-        }
-      }
-    }
-    const imageMap = await this.resolveExerciseImages([
-      ...new Set(allLibraryExerciseIds),
-    ]);
-
     return posts.map((post) => {
       const postUser = userMap.get(post.user_id);
       const likeCount = likeCountMap.get(post.id) ?? 0;
@@ -997,22 +960,29 @@ export class CommunityService {
             exerciseCount: session.exercises.length,
             aiGenerated: session.ai_generated,
             rpe: session.feedback?.effort_level ?? null,
-            exercises: session.exercises.map((ex: any, index: number) => ({
-              name: ex.name,
-              muscleGroup: ex.muscle_group,
-              stepNumber: ex.step_number,
-              setsDisplay: ex.sets_display,
-              accentColor: ACCENT_COLORS[index % ACCENT_COLORS.length],
-              totalSets: ex.exercise_sets.length,
-              totalReps: ex.exercise_sets.reduce(
+            exercises: session.exercises.map((ex: any, index: number) => {
+              const totalSets = ex.exercise_sets.length;
+              const totalReps = ex.exercise_sets.reduce(
                 (sum: number, s: any) => sum + s.reps,
                 0,
-              ),
-              libraryExerciseId: ex.library_exercise_id ?? null,
-              imageUrl: ex.library_exercise_id
-                ? (imageMap.get(ex.library_exercise_id) ?? null)
-                : null,
-            })),
+              );
+              const repsPerSet =
+                totalSets > 0 ? Math.round(totalReps / totalSets) : 0;
+              const setsDisplay =
+                ex.sets_display ||
+                (totalSets > 0 ? `${totalSets} × ${repsPerSet}` : null);
+              return {
+                name: ex.name,
+                muscleGroup: ex.muscle_group,
+                stepNumber: ex.step_number,
+                setsDisplay,
+                accentColor: ACCENT_COLORS[index % ACCENT_COLORS.length],
+                totalSets,
+                totalReps,
+                libraryExerciseId: ex.library_exercise_id ?? null,
+                imageUrl: exerciseImageUrl(ex.external_id),
+              };
+            }),
           };
         }
       }
@@ -1075,41 +1045,36 @@ export class CommunityService {
         },
       });
       if (session) {
-        const sessionWithRelations = session as any;
-
-        // Resolve exercise images for this session
-        const libraryIds: string[] = sessionWithRelations.exercises
-          .map((ex: any) => ex.library_exercise_id)
-          .filter(Boolean);
-        const imageMap = await this.resolveExerciseImages([
-          ...new Set(libraryIds),
-        ]);
-
         workoutAttachment = {
-          sessionId: sessionWithRelations.id,
-          title: sessionWithRelations.title,
-          durationMinutes: sessionWithRelations.duration_minutes,
-          exerciseCount: sessionWithRelations.exercises.length,
-          aiGenerated: sessionWithRelations.ai_generated,
-          rpe: sessionWithRelations.feedback?.effort_level ?? null,
-          exercises: sessionWithRelations.exercises.map(
-            (ex: any, index: number) => ({
+          sessionId: session.id,
+          title: session.title,
+          durationMinutes: session.duration_minutes,
+          exerciseCount: session.exercises.length,
+          aiGenerated: session.ai_generated,
+          rpe: session.feedback?.effort_level ?? null,
+          exercises: session.exercises.map((ex: any, index: number) => {
+            const totalSets = ex.exercise_sets.length;
+            const totalReps = ex.exercise_sets.reduce(
+              (sum: number, s: any) => sum + s.reps,
+              0,
+            );
+            const repsPerSet =
+              totalSets > 0 ? Math.round(totalReps / totalSets) : 0;
+            const setsDisplay =
+              ex.sets_display ||
+              (totalSets > 0 ? `${totalSets} × ${repsPerSet}` : null);
+            return {
               name: ex.name,
               muscleGroup: ex.muscle_group,
               stepNumber: ex.step_number,
-              setsDisplay: ex.sets_display,
+              setsDisplay,
               accentColor: ACCENT_COLORS[index % ACCENT_COLORS.length],
-              totalSets: ex.exercise_sets.length,
-              totalReps: ex.exercise_sets.reduce(
-                (sum: number, s: any) => sum + s.reps,
-                0,
-              ),
+              totalSets,
+              totalReps,
               libraryExerciseId: ex.library_exercise_id ?? null,
-              imageUrl: ex.library_exercise_id
-                ? (imageMap.get(ex.library_exercise_id) ?? null)
-                : null,
-            }),
-          ),
+              imageUrl: exerciseImageUrl(ex.external_id),
+            };
+          }),
         };
       }
     }

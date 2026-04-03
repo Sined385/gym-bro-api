@@ -9,6 +9,8 @@ import { SendMessageDto } from './dto/coach.dto';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 
+import { exerciseImageUrl } from '../common/exercise-image';
+
 interface SSEEvent {
   type: string;
   data: Record<string, any>;
@@ -209,6 +211,7 @@ export class CoachService {
                   muscle_group: e.muscle_group,
                   equipment: e.equipment,
                   suggested_weight: e.suggested_weight ?? null,
+                  image_url: exerciseImageUrl(e.external_id),
                 })),
               }
             : null,
@@ -488,6 +491,7 @@ export class CoachService {
                     muscle_group: e.muscle_group,
                     equipment: e.equipment,
                     suggested_weight: e.suggested_weight ?? null,
+                    image_url: exerciseImageUrl(e.external_id),
                   })),
                 },
               },
@@ -662,7 +666,29 @@ export class CoachService {
                     };
                     // Only overwrite exercises if explicitly provided; preserve existing otherwise
                     if (dayArgs.exercises && dayArgs.exercises.length > 0) {
-                      updateData.exercises_json = dayArgs.exercises;
+                      // Enrich exercises with external_id from exercise library
+                      const exerciseMap = new Map(
+                        exerciseLibrary.map((e) => [e.id, e]),
+                      );
+                      const nameMap = new Map(
+                        exerciseLibrary
+                          .filter((e) => e.external_id)
+                          .map((e) => [e.name, e.external_id]),
+                      );
+                      updateData.exercises_json = dayArgs.exercises.map(
+                        (ex: any) => {
+                          const libEx = ex.library_exercise_id
+                            ? exerciseMap.get(ex.library_exercise_id)
+                            : null;
+                          return {
+                            ...ex,
+                            external_id:
+                              libEx?.external_id ??
+                              nameMap.get(ex.name) ??
+                              null,
+                          };
+                        },
+                      );
                     } else if (dayArgs.day_type === 'rest') {
                       updateData.exercises_json = [];
                     }
@@ -870,6 +896,7 @@ export class CoachService {
               : null;
             return {
               library_exercise_id: libEx ? ex.library_exercise_id : null,
+              external_id: libEx?.external_id ?? null,
               name: libEx?.name ?? ex.name,
               muscle_group: libEx?.muscle_group ?? ex.muscle_group,
               equipment: libEx?.equipment ?? null,

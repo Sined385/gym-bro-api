@@ -396,6 +396,7 @@ Rules:
             const libEx = exerciseMap.get(ex.library_exercise_id)!;
             return {
               library_exercise_id: ex.library_exercise_id,
+              external_id: libEx.external_id ?? null,
               name: libEx.name,
               muscle_group: libEx.muscle_group,
               equipment: libEx.equipment,
@@ -571,6 +572,7 @@ Rules:
         exercises: {
           create: picked.map((ex, i) => ({
             library_exercise_id: ex.id,
+            external_id: ex.external_id ?? null,
             name: ex.name,
             muscle_group: ex.muscle_group,
             equipment: ex.equipment,

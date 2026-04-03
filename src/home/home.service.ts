@@ -9,9 +9,7 @@ import {
 import { ACCENT_COLORS } from './session-exercise.service';
 import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-
-const IMAGE_BASE_URL =
-  'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
+import { exerciseImageUrl } from '../common/exercise-image';
 
 @Injectable()
 export class HomeService {
@@ -20,59 +18,6 @@ export class HomeService {
     private readonly homeAiService: HomeAiService,
     private readonly analytics: AnalyticsService,
   ) {}
-
-  /**
-   * Batch-resolve exercises → imageUrl (keyed by exercise name).
-   * Falls back to name-based lookup when library_exercise_id is stale.
-   */
-  private async resolveExerciseImages(
-    exercises: { library_exercise_id?: string | null; name: string }[],
-  ): Promise<Map<string, string>> {
-    const imageMap = new Map<string, string>();
-    if (exercises.length === 0) return imageMap;
-
-    const libraryIds = [
-      ...new Set(
-        exercises
-          .map((e) => e.library_exercise_id)
-          .filter((id): id is string => !!id),
-      ),
-    ];
-
-    const resolvedNames = new Set<string>();
-    if (libraryIds.length > 0) {
-      const found = await this.prisma.exerciseLibrary.findMany({
-        where: { id: { in: libraryIds } },
-        select: { id: true, name: true, external_id: true },
-      });
-      for (const ex of found) {
-        if (ex.external_id) {
-          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-          resolvedNames.add(ex.name);
-        }
-      }
-    }
-
-    const unresolvedNames = [
-      ...new Set(
-        exercises.map((e) => e.name).filter((n) => !resolvedNames.has(n)),
-      ),
-    ];
-
-    if (unresolvedNames.length > 0) {
-      const byName = await this.prisma.exerciseLibrary.findMany({
-        where: { name: { in: unresolvedNames }, is_system: true },
-        select: { name: true, external_id: true },
-      });
-      for (const ex of byName) {
-        if (ex.external_id) {
-          imageMap.set(ex.name, `${IMAGE_BASE_URL}/${ex.external_id}/0.jpg`);
-        }
-      }
-    }
-
-    return imageMap;
-  }
 
   // ── Dashboard ────────────────────────────────────────────
 
@@ -163,7 +108,6 @@ export class HomeService {
         plannedWorkout = { type: 'rest' };
       } else {
         const exercises = todayPlanDay.exercises_json as any[];
-        const imageMap = await this.resolveExerciseImages(exercises);
         plannedWorkout = {
           type: 'training',
           plan_day_id: todayPlanDay.id,
@@ -178,7 +122,7 @@ export class HomeService {
             library_exercise_id: e.library_exercise_id ?? null,
             accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
             suggested_weight: e.suggested_weight ?? null,
-            image_url: imageMap.get(e.name) ?? null,
+            image_url: exerciseImageUrl(e.external_id),
           })),
         };
       }
@@ -253,26 +197,18 @@ export class HomeService {
             type: finalQuickWorkout.type,
             duration_minutes: finalQuickWorkout.duration_minutes,
             ai_message: finalQuickWorkout.ai_message,
-            exercises: await (async () => {
-              const qwImageMap = await this.resolveExerciseImages(
-                finalQuickWorkout.exercises.map((e: any) => ({
-                  library_exercise_id: e.library_exercise_id,
-                  name: e.name,
-                })),
-              );
-              return finalQuickWorkout.exercises.map((e: any) => ({
-                id: e.id,
-                name: e.name,
-                step_number: e.step_number,
-                sets_display: e.sets_display,
-                accent_color: e.accent_color,
-                library_exercise_id: e.library_exercise_id ?? null,
-                muscle_group: e.muscle_group ?? null,
-                equipment: e.equipment ?? null,
-                suggested_weight: e.suggested_weight ?? null,
-                image_url: qwImageMap.get(e.name) ?? null,
-              }));
-            })(),
+            exercises: finalQuickWorkout.exercises.map((e: any) => ({
+              id: e.id,
+              name: e.name,
+              step_number: e.step_number,
+              sets_display: e.sets_display,
+              accent_color: e.accent_color,
+              library_exercise_id: e.library_exercise_id ?? null,
+              muscle_group: e.muscle_group ?? null,
+              equipment: e.equipment ?? null,
+              suggested_weight: e.suggested_weight ?? null,
+              image_url: exerciseImageUrl(e.external_id),
+            })),
           }
         : null,
       planned_workout: plannedWorkout,
@@ -354,26 +290,28 @@ export class HomeService {
       type: updated.type,
     });
 
-    return await this.formatSession(updated);
+    return this.formatSession(updated);
   }
 
   async createSession(userId: string, dto: CreateSessionDto) {
+    const now = new Date();
     const session = await this.prisma.workoutSession.create({
       data: {
         user_id: userId,
         title: dto.title,
         type: dto.type,
-        status: 'proposed',
+        status: 'active',
+        started_at: now,
         duration_minutes: dto.duration_minutes ?? null,
         ai_generated: false,
-        updated_at: new Date(),
+        updated_at: now,
       },
       include: {
         exercises: true,
       },
     });
 
-    return await this.formatSession(session);
+    return this.formatSession(session);
   }
 
   async completeSession(
@@ -487,7 +425,7 @@ export class HomeService {
       });
 
       return {
-        ...(await this.formatSession(fullSession)),
+        ...this.formatSession(fullSession),
         calories: fullSession.calories ?? null,
         performance_score: fullSession.performance_score ?? null,
         feedback: fullSession.feedback
@@ -554,12 +492,13 @@ export class HomeService {
     const startOfDay = new Date(`${date}T00:00:00.000Z`);
     const endOfDay = new Date(`${date}T23:59:59.999Z`);
 
-    const session = await this.prisma.workoutSession.findFirst({
+    const sessions = await this.prisma.workoutSession.findMany({
       where: {
         user_id: userId,
         status: 'completed',
         completed_at: { gte: startOfDay, lte: endOfDay },
       },
+      orderBy: { completed_at: 'asc' },
       include: {
         exercises: {
           orderBy: { step_number: 'asc' },
@@ -570,28 +509,56 @@ export class HomeService {
       },
     });
 
-    if (!session) {
+    if (sessions.length === 0) {
       return { date, session: null };
     }
+
+    // Merge all sessions into one summary
+    const totalDuration = sessions.reduce(
+      (sum, s) => sum + (s.duration_minutes ?? 0),
+      0,
+    );
+    const totalCalories = sessions.reduce(
+      (sum, s) => sum + (s.calories ?? 0),
+      0,
+    );
+    const scores = sessions
+      .map((s) => s.performance_score)
+      .filter((s): s is number => s !== null);
+    const avgScore =
+      scores.length > 0
+        ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+        : null;
+
+    // Flatten all exercises with continuous step numbering and accent colors
+    const allExercises = sessions.flatMap((s) => s.exercises);
+
+    const first = sessions[0];
+    const last = sessions[sessions.length - 1];
+    const title =
+      sessions.length === 1
+        ? first.title
+        : `${sessions.length} Workouts`;
 
     return {
       date,
       session: {
-        id: session.id,
-        title: session.title,
-        type: session.type,
-        status: session.status,
-        duration_minutes: session.duration_minutes,
-        calories: session.calories,
-        performance_score: session.performance_score,
-        started_at: session.started_at?.toISOString() ?? null,
-        completed_at: session.completed_at?.toISOString() ?? null,
-        exercises: session.exercises.map((e, index) => ({
+        id: first.id,
+        title,
+        type: first.type,
+        status: 'completed',
+        duration_minutes: totalDuration || null,
+        calories: totalCalories || null,
+        performance_score: avgScore,
+        started_at: first.started_at?.toISOString() ?? null,
+        completed_at: last.completed_at?.toISOString() ?? null,
+        exercises: allExercises.map((e, index) => ({
           id: e.id,
           name: e.name,
           muscle_group: e.muscle_group,
           accent_color: ACCENT_COLORS[index % ACCENT_COLORS.length],
-          step_number: e.step_number,
+          step_number: index + 1,
+          image_url: exerciseImageUrl(e.external_id),
           sets: e.exercise_sets.map((s) => ({
             set_number: s.set_number,
             weight: s.weight ? Number(s.weight) : null,
@@ -646,7 +613,7 @@ export class HomeService {
     return d;
   }
 
-  private async formatSession(session: {
+  private formatSession(session: {
     id: string;
     user_id: string;
     title: string;
@@ -666,17 +633,12 @@ export class HomeService {
       sets_display: string;
       accent_color: string;
       library_exercise_id: string | null;
+      external_id: string | null;
       muscle_group: string | null;
       equipment: string | null;
       suggested_weight: number | null;
     }[];
   }) {
-    const imageMap = await this.resolveExerciseImages(
-      session.exercises.map((e) => ({
-        library_exercise_id: e.library_exercise_id,
-        name: e.name,
-      })),
-    );
     return {
       id: session.id,
       user_id: session.user_id,
@@ -700,7 +662,7 @@ export class HomeService {
         muscle_group: e.muscle_group ?? null,
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
-        image_url: imageMap.get(e.name) ?? null,
+        image_url: exerciseImageUrl(e.external_id),
       })),
     };
   }

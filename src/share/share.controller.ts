@@ -1,4 +1,11 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Res,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { TemplateService } from '../home/template.service';
