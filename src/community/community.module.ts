@@ -9,5 +9,6 @@ import { CommunityAiService } from './community-ai.service';
   imports: [AuthModule, NotificationsModule],
   controllers: [CommunityController],
   providers: [CommunityService, CommunityAiService],
+  exports: [CommunityService],
 })
 export class CommunityModule {}

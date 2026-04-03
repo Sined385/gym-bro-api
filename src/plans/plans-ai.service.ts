@@ -3,27 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
-
-const EQUIPMENT_MAP: Record<string, string[]> = {
-  full_gym: [],
-  dumbbells_only: ['Dumbbells', 'Bodyweight'],
-  bodyweight: ['Bodyweight'],
-  home_gym: ['Dumbbells', 'Bodyweight', 'Bands'],
-};
-
-interface PlanDayGenerated {
-  day_of_week: number;
-  day_type: 'training' | 'rest';
-  session_title?: string;
-  session_type?: string;
-  muscle_groups: string[];
-  exercises: {
-    library_exercise_id?: string;
-    name: string;
-    muscle_group: string;
-    sets_display: string;
-  }[];
-}
+import { SkeletonDay } from './exercise-matcher';
 
 @Injectable()
 export class PlansAiService {
@@ -37,9 +17,8 @@ export class PlansAiService {
   async generateWeeklyPlan(
     userId: string,
     onboarding: any,
-    exerciseLibrary: any[],
     startDayOfWeek: number = 0,
-  ): Promise<PlanDayGenerated[]> {
+  ): Promise<SkeletonDay[]> {
     const dayNames = [
       'Monday',
       'Tuesday',
@@ -54,17 +33,7 @@ export class PlansAiService {
       (onboarding.training_frequency || 3) * (totalDays / 7),
     );
 
-    // Limit exercises per muscle group to keep prompt token count low
-    const limited = this.limitExercisesPerGroup(exerciseLibrary, 8);
-
-    const exerciseList = limited
-      .map(
-        (e) =>
-          `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
-      )
-      .join('\n');
-
-    const prompt = `You are a fitness coach AI. Generate a ${totalDays}-day training plan from ${dayNames[startDayOfWeek]} through Sunday.
+    const prompt = `You are a fitness coach AI. Generate a ${totalDays}-day training plan skeleton from ${dayNames[startDayOfWeek]} through Sunday.
 
 User profile:
 - Goal: ${onboarding.primary_goals?.[0]}
@@ -75,9 +44,6 @@ User profile:
 - Equipment: ${onboarding.available_equipment}
 - Injuries: ${JSON.stringify(onboarding.injuries)}
 
-Available exercises (use these library_exercise_id values):
-${exerciseList}
-
 Respond with a JSON object:
 {
   "days": [
@@ -86,9 +52,9 @@ Respond with a JSON object:
       "day_type": "training",
       "session_title": "Upper Body Power",
       "session_type": "strength",
-      "muscle_groups": ["Chest", "Back", "Shoulders"],
-      "exercises": [
-        { "library_exercise_id": "uuid", "name": "Bench Press", "muscle_group": "Chest", "sets_display": "4 × 8" }
+      "exercise_slots": [
+        { "muscle_group": "Chest", "rep_scheme": "4 × 8", "focus": "compound" },
+        { "muscle_group": "Back", "rep_scheme": "3 × 10", "focus": "isolation" }
       ]
     }
   ]
@@ -97,11 +63,12 @@ Respond with a JSON object:
 Rules:
 - day_of_week: 0=Monday, 1=Tuesday, ..., 6=Sunday
 - Exactly ${scaledFrequency} training days, rest are "rest" type
-- Rest days: day_type="rest", no exercises, empty muscle_groups
-- Training days: 4-6 exercises each, varied muscle groups across the week
+- Rest days: day_type="rest", empty exercise_slots
+- Training days: 4-6 exercise_slots each, varied muscle groups across the week
+- muscle_group MUST be one of: Chest, Back, Legs, Shoulders, Arms, Core
+- focus: "compound" or "isolation" or null
 - Match rep scheme to goal (build_muscle: 3-4×8-10, lose_fat: 3×12-15, get_stronger: 4-5×5-6, improve_endurance: 3×15-20, stay_healthy: 3×10-12)
-- Avoid exercises that aggravate listed injuries
-- ONLY use library_exercise_id values from the available exercises list
+- Avoid muscle groups that aggravate listed injuries
 - Distribute training days evenly through the partial week
 - Return exactly ${totalDays} days (${startDayOfWeek} through 6)`;
 
@@ -112,10 +79,13 @@ Rules:
         model,
         messages: [
           { role: 'system', content: prompt },
-          { role: 'user', content: 'Generate the weekly training plan.' },
+          {
+            role: 'user',
+            content: 'Generate the weekly training plan skeleton.',
+          },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 2000,
+        max_tokens: 1200,
         temperature: 0.7,
       });
 
@@ -132,66 +102,28 @@ Rules:
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error('Empty OpenAI response');
 
-      const parsed = JSON.parse(content) as { days: PlanDayGenerated[] };
-
-      // Enrich AI-parsed exercises with external_id from exercise library
-      const exerciseMap = new Map(exerciseLibrary.map((e) => [e.id, e]));
-      const nameMap = new Map(
-        exerciseLibrary
-          .filter((e) => e.external_id)
-          .map((e) => [e.name, e.external_id]),
-      );
-      for (const day of parsed.days) {
-        if (day.exercises) {
-          for (const ex of day.exercises) {
-            const libEx = ex.library_exercise_id
-              ? exerciseMap.get(ex.library_exercise_id)
-              : undefined;
-            (ex as any).external_id =
-              libEx?.external_id ?? nameMap.get(ex.name) ?? null;
-          }
-        }
-      }
-
+      const parsed = JSON.parse(content) as { days: SkeletonDay[] };
       return parsed.days;
     } catch (error) {
       console.error('AI plan generation failed, using fallback:', error);
-      return this.generateFallbackPlan(
-        onboarding,
-        exerciseLibrary,
-        startDayOfWeek,
-      );
+      return this.generateFallbackPlan(onboarding, startDayOfWeek);
     }
   }
 
-  private generateFallbackPlan(
+  generateFallbackPlan(
     onboarding: any,
-    exerciseLibrary: any[],
     startDayOfWeek: number = 0,
-  ): PlanDayGenerated[] {
+  ): SkeletonDay[] {
     const totalDays = 7 - startDayOfWeek;
     const scaledFrequency = Math.round(
       ((onboarding.training_frequency || 3) * totalDays) / 7,
     );
-    const days: PlanDayGenerated[] = [];
+    const days: SkeletonDay[] = [];
 
-    // Distribute training days evenly within the partial week
     const trainingDays = this.getTrainingDayIndices(
       scaledFrequency,
       startDayOfWeek,
     );
-
-    // Limit exercises per group for faster deterministic selection
-    const limitedLibrary = this.limitExercisesPerGroup(exerciseLibrary, 10);
-
-    // Group exercises by muscle group
-    const byMuscle = new Map<string, typeof exerciseLibrary>();
-    for (const ex of limitedLibrary) {
-      const group = byMuscle.get(ex.muscle_group) ?? [];
-      group.push(ex);
-      byMuscle.set(ex.muscle_group, group);
-    }
-    const muscleGroups = [...byMuscle.keys()];
 
     const setsMap: Record<string, string> = {
       build_muscle: '3 × 10',
@@ -200,8 +132,7 @@ Rules:
       improve_endurance: '3 × 15',
       stay_healthy: '3 × 10',
     };
-    const setsDisplay =
-      setsMap[onboarding.primary_goals?.[0] ?? ''] ?? '3 × 10';
+    const repScheme = setsMap[onboarding.primary_goals?.[0] ?? ''] ?? '3 × 10';
 
     const sessionTemplates = [
       {
@@ -212,17 +143,17 @@ Rules:
       {
         title: 'Lower Body Strength',
         type: 'strength',
-        groups: ['Legs', 'Glutes', 'Core'],
+        groups: ['Legs', 'Legs', 'Core'],
       },
       {
         title: 'Push Day',
         type: 'strength',
-        groups: ['Chest', 'Shoulders', 'Triceps'],
+        groups: ['Chest', 'Shoulders', 'Arms'],
       },
       {
         title: 'Pull Day',
         type: 'strength',
-        groups: ['Back', 'Biceps', 'Core'],
+        groups: ['Back', 'Arms', 'Core'],
       },
       {
         title: 'Full Body',
@@ -237,7 +168,7 @@ Rules:
       {
         title: 'Lower Hypertrophy',
         type: 'strength',
-        groups: ['Legs', 'Glutes', 'Core'],
+        groups: ['Legs', 'Legs', 'Core'],
       },
     ];
 
@@ -248,49 +179,42 @@ Rules:
           sessionTemplates[templateIdx % sessionTemplates.length];
         templateIdx++;
 
-        // Pick exercises from relevant muscle groups
-        const exercises: PlanDayGenerated['exercises'] = [];
-        const targetCount = 5;
-        let mgIdx = 0;
-
-        while (
-          exercises.length < targetCount &&
-          mgIdx < muscleGroups.length * 2
-        ) {
-          const mg = muscleGroups[mgIdx % muscleGroups.length];
-          const available = byMuscle.get(mg) ?? [];
-          const unused = available.filter(
-            (e) => !exercises.some((ex) => ex.library_exercise_id === e.id),
-          );
-          if (unused.length > 0) {
-            const ex = unused[(dow + mgIdx) % unused.length];
-            exercises.push({
-              library_exercise_id: ex.id,
-              name: ex.name,
-              muscle_group: ex.muscle_group,
-              sets_display: setsDisplay,
-              external_id: ex.external_id ?? null,
-            } as any);
-          }
-          mgIdx++;
+        // Build exercise slots: first per group = compound, rest = null
+        const slots: {
+          muscle_group: string;
+          rep_scheme: string;
+          focus: 'compound' | 'isolation' | null;
+        }[] = [];
+        const seenGroups = new Set<string>();
+        for (const group of template.groups) {
+          const focus = seenGroups.has(group) ? null : 'compound';
+          seenGroups.add(group);
+          slots.push({ muscle_group: group, rep_scheme: repScheme, focus });
         }
-
-        const usedGroups = [...new Set(exercises.map((e) => e.muscle_group))];
+        // Pad to 5 slots by repeating groups
+        let padIdx = 0;
+        while (slots.length < 5) {
+          const group = template.groups[padIdx % template.groups.length];
+          slots.push({
+            muscle_group: group,
+            rep_scheme: repScheme,
+            focus: 'isolation',
+          });
+          padIdx++;
+        }
 
         days.push({
           day_of_week: dow,
           day_type: 'training',
           session_title: template.title,
           session_type: template.type,
-          muscle_groups: usedGroups,
-          exercises,
+          exercise_slots: slots,
         });
       } else {
         days.push({
           day_of_week: dow,
           day_type: 'rest',
-          muscle_groups: [],
-          exercises: [],
+          exercise_slots: [],
         });
       }
     }
@@ -310,7 +234,6 @@ Rules:
       return Array.from({ length: totalDays }, (_, i) => startDow + i);
     }
 
-    // Distribute training days evenly within the range [startDow, 6]
     const indices: number[] = [];
     for (let i = 0; i < clamped; i++) {
       indices.push(
@@ -318,26 +241,6 @@ Rules:
       );
     }
     return [...new Set(indices)].sort((a, b) => a - b);
-  }
-
-  private limitExercisesPerGroup(exercises: any[], maxPerGroup: number): any[] {
-    const groups = new Map<string, any[]>();
-    for (const ex of exercises) {
-      const g = groups.get(ex.muscle_group) ?? [];
-      g.push(ex);
-      groups.set(ex.muscle_group, g);
-    }
-    const result: any[] = [];
-    for (const [, group] of groups) {
-      // Compound exercises first, then isolation
-      group.sort(
-        (a, b) =>
-          (a.mechanic === 'compound' ? -1 : 1) -
-          (b.mechanic === 'compound' ? -1 : 1),
-      );
-      result.push(...group.slice(0, maxPerGroup));
-    }
-    return result;
   }
 
   async generateCompletionNotes(

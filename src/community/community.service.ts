@@ -103,6 +103,28 @@ export class CommunityService {
     return this.enrichPost(post, userId);
   }
 
+  async getPostById(currentUserId: string, postId: string) {
+    const post = await this.prisma.post.findUnique({ where: { id: postId } });
+    if (!post) {
+      throw new AppException(
+        'POST_NOT_FOUND',
+        'Post not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const followingIds = await this.getFollowingIds(currentUserId);
+    return this.enrichPost(post, currentUserId, new Set(followingIds));
+  }
+
+  async getPostPublic(postId: string) {
+    const post = await this.prisma.post.findUnique({ where: { id: postId } });
+    if (!post) return null;
+    const user = await this.prisma.user.findUnique({
+      where: { id: post.user_id },
+    });
+    return { post, user };
+  }
+
   async deletePost(userId: string, postId: string) {
     const post = await this.prisma.post.findUnique({ where: { id: postId } });
     if (!post) {
@@ -146,11 +168,12 @@ export class CommunityService {
         const liker = await this.prisma.user.findUnique({
           where: { id: userId },
         });
+        const likerName = liker?.full_name ?? 'Someone';
         this.notificationsService.sendToUser(post.user_id, {
           type: 'like',
-          title: 'New Like',
-          body: `${liker?.full_name ?? 'Someone'} liked your post`,
-          data: { postId },
+          title: `${likerName} liked your post`,
+          body: `${likerName} liked your post`,
+          data: { postId, userId },
         });
       }
     }
@@ -236,11 +259,12 @@ export class CommunityService {
 
     // Notify post author about new comment
     if (post.user_id !== userId) {
+      const commenterName = user?.full_name ?? 'Someone';
       this.notificationsService.sendToUser(post.user_id, {
         type: 'comment',
-        title: 'New Comment',
-        body: `${user?.full_name ?? 'Someone'} commented on your post`,
-        data: { postId },
+        title: `${commenterName} commented on your post`,
+        body: `${commenterName} commented on your post`,
+        data: { postId, userId },
       });
     }
 
@@ -319,10 +343,11 @@ export class CommunityService {
     const follower = await this.prisma.user.findUnique({
       where: { id: followerId },
     });
+    const followerName = follower?.full_name ?? 'Someone';
     this.notificationsService.sendToUser(followingId, {
       type: 'follow',
-      title: 'New Follower',
-      body: `${follower?.full_name ?? 'Someone'} started following you`,
+      title: `${followerName} started following you`,
+      body: `${followerName} started following you`,
       data: { userId: followerId },
     });
 
@@ -867,12 +892,13 @@ export class CommunityService {
       const followers = await this.prisma.follow.findMany({
         where: { following_id: authorId },
       });
+      const authorName = author?.full_name ?? 'Someone';
       for (const f of followers) {
         this.notificationsService.sendToUser(f.follower_id, {
           type: 'new_post',
-          title: 'New Post',
-          body: `${author?.full_name ?? 'Someone'} shared a new post`,
-          data: { postId },
+          title: `${authorName} shared a new post`,
+          body: `${authorName} shared a new post`,
+          data: { postId, userId: authorId },
         });
       }
     } catch {

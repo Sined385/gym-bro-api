@@ -334,6 +334,11 @@ export class CoachService {
                   required: ['name', 'muscle_group', 'sets_display'],
                 },
               },
+              duration_minutes: {
+                type: 'number',
+                description:
+                  'Target workout duration in minutes. Use the value the user requested (e.g. 30 for a "30 min workout"). If the user did not specify, omit this field.',
+              },
               ai_message: {
                 type: 'string',
                 description: 'Short explanation of why you chose this workout',
@@ -407,6 +412,24 @@ export class CoachService {
               },
             },
             required: ['days'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'generate_training_plan',
+          description:
+            "Generate a full weekly training plan for the user. Use this when the user asks to build, create, or generate their training plan (e.g. 'Build my plan', 'Create a weekly plan', 'Generate my training plan'). This creates a complete 7-day plan with rest days and training days. Do NOT use create_workout_session for this — that tool is only for single ad-hoc workouts.",
+          parameters: {
+            type: 'object',
+            properties: {
+              force: {
+                type: 'boolean',
+                description:
+                  'If true, replaces the current active plan. Set to true when the user already has a plan and wants a new one.',
+              },
+            },
           },
         },
       },
@@ -787,6 +810,90 @@ export class CoachService {
             fullContent += errMsg;
             yield { type: 'text_delta', data: { content: errMsg } };
           }
+        } else if (toolCallName === 'generate_training_plan') {
+          try {
+            const args = safeParseToolArgs(toolCallArgs);
+            const force = args.force === true || !!activePlanData?.plan;
+            const result = await this.plansService.generatePlan(userId, force);
+
+            yield {
+              type: 'plan_generated',
+              data: { plan_id: (result as any).planId ?? null },
+            };
+
+            // Feed tool result back and get final message
+            const followUp = await this.openai.chat.completions.create({
+              model,
+              messages: [
+                ...messages,
+                {
+                  role: 'assistant',
+                  content: fullContent || null,
+                  tool_calls: [
+                    {
+                      id: toolCallId,
+                      type: 'function',
+                      function: {
+                        name: toolCallName,
+                        arguments: toolCallArgs,
+                      },
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  tool_call_id: toolCallId,
+                  content: JSON.stringify({
+                    success: true,
+                    message: (result as any).message,
+                    plan_id: (result as any).planId ?? null,
+                  }),
+                },
+              ],
+              stream: true,
+              stream_options: { include_usage: true },
+              max_tokens: 300,
+              temperature: 0.7,
+            });
+
+            let planFollowUpUsage: {
+              prompt_tokens: number;
+              completion_tokens: number;
+            } | null = null;
+
+            for await (const followChunk of followUp) {
+              const followDelta = followChunk.choices[0]?.delta;
+              if (followDelta?.content) {
+                fullContent += followDelta.content;
+                yield {
+                  type: 'text_delta',
+                  data: { content: followDelta.content },
+                };
+              }
+              if (followChunk.usage) {
+                planFollowUpUsage = {
+                  prompt_tokens: followChunk.usage.prompt_tokens,
+                  completion_tokens: followChunk.usage.completion_tokens,
+                };
+              }
+            }
+
+            if (planFollowUpUsage) {
+              this.aiUsage.trackUsage({
+                userId,
+                feature: 'coach_chat',
+                model,
+                promptTokens: planFollowUpUsage.prompt_tokens,
+                completionTokens: planFollowUpUsage.completion_tokens,
+              });
+            }
+          } catch (error) {
+            console.error('Plan generation failed:', error);
+            const errMsg =
+              "Sorry, I couldn't generate your plan right now. Try again.";
+            fullContent += errMsg;
+            yield { type: 'text_delta', data: { content: errMsg } };
+          }
         }
       }
     }
@@ -869,6 +976,7 @@ export class CoachService {
         sets_display: string;
       }[];
       ai_message: string;
+      duration_minutes?: number;
     },
     exerciseLibrary: any[],
   ) {
@@ -885,7 +993,8 @@ export class CoachService {
         title: args.title || "Today's Session",
         type: args.type || 'strength',
         status: 'proposed',
-        duration_minutes: onboarding?.workout_duration ?? null,
+        duration_minutes:
+          args.duration_minutes ?? onboarding?.workout_duration ?? null,
         ai_generated: true,
         ai_message: args.ai_message,
         updated_at: new Date(),
@@ -1057,31 +1166,44 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
       : 'No current quick workout.';
 
     const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const dayFullNames = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
     const now = new Date();
     const todayDow = now.getDay() === 0 ? 6 : now.getDay() - 1;
+    const todayDate = now.toISOString().split('T')[0];
 
     let planContext = 'No active training plan.';
     if (activePlanData?.plan && activePlanData.days?.length > 0) {
       const weekNum = activePlanData.plan.weekNumber;
       const dayLines = activePlanData.days.map((d: any) => {
         const label = d.dayLabel ?? dayLabels[d.dayOfWeek] ?? 'Day';
+        const fullName = dayFullNames[d.dayOfWeek] ?? 'Day';
         const isToday = d.dayOfWeek === todayDow;
         const todayMarker = isToday ? ' ← TODAY' : '';
         if (d.dayType === 'rest') {
-          return `- ${label}: Rest Day${todayMarker} — ${d.status}`;
+          return `- ${fullName} (day_of_week=${d.dayOfWeek}): Rest Day${todayMarker} — ${d.status}`;
         }
         const muscles = d.muscleGroups?.join(', ') ?? '';
-        return `- ${label}: ${d.sessionTitle ?? 'Training'} (${muscles})${todayMarker} — ${d.status}`;
+        return `- ${fullName} (day_of_week=${d.dayOfWeek}): ${d.sessionTitle ?? 'Training'} (${muscles})${todayMarker} — ${d.status}`;
       });
-      planContext = `Current training plan (Week ${weekNum}):\n${dayLines.join('\n')}`;
+      planContext = `Current training plan (Week ${weekNum}):\nDay mapping: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6\n${dayLines.join('\n')}`;
     }
 
     return `You are a no-nonsense strength coach for the GymBro app.
+Today is ${dayFullNames[todayDow]} ${todayDate} (day_of_week=${todayDow}).
 You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.
 
 Tool usage rules:
-- When the user asks to "create a workout", "build me a workout", "give me a workout for today", or anything about generating a new session → call create_workout_session immediately. Do NOT ask clarifying questions — just pick exercises that match their profile and goal.
-- Use modify_plan_days for any plan changes — single day or bulk. When the user asks to change their plan (e.g. "swap Tuesday to chest", "focus this week on arms", "make Friday a rest day"), use this tool.
+- "Build my plan" / "Create a weekly plan" / "Generate my training plan" → call generate_training_plan. This creates a full 7-day plan. Do NOT use create_workout_session for plan requests.
+- "Create a workout" / "Build me a workout" / "Give me a workout for today" → call create_workout_session. This is for single ad-hoc workout sessions only.
+- "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
 - Reference the training plan context above when user asks about their plan.
 - NEVER list exercises as plain text. Always use the tool so the session is saved.
@@ -1102,7 +1224,8 @@ ${currentSession}
 ${exerciseList}
 
 Rules:
-- Pick 4-6 exercises when creating workouts
+- Pick 4-6 exercises when creating workouts (fewer for short durations: 3-4 for ≤30 min)
+- When the user requests a specific duration (e.g. "30 min workout"), pass that duration_minutes in the tool call and scale the exercise count accordingly
 - Vary muscle groups for balanced sessions
 - Avoid exercises that would aggravate listed injuries
 - Match rep scheme to the user's goal

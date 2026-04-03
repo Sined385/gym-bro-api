@@ -6,6 +6,7 @@ import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
+import { matchSkeletonToDays } from './exercise-matcher';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
@@ -147,37 +148,40 @@ export class PlansService {
       );
     }
 
-    const allowedEquipment = EQUIPMENT_MAP[onboarding.available_equipment];
-    const equipmentFilter =
-      allowedEquipment && allowedEquipment.length > 0
-        ? { equipment: { in: allowedEquipment } }
-        : {};
-
-    const exerciseLibrary = await this.prisma.exerciseLibrary.findMany({
-      where: {
-        OR: [{ is_system: true }, { user_id: userId }],
-        ...equipmentFilter,
-      },
-      orderBy: { name: 'asc' },
-    });
-
-    // Get previous plan's week number
-    const previousPlan = await this.prisma.trainingPlan.findFirst({
-      where: { user_id: userId },
-      orderBy: { week_number: 'desc' },
-    });
-    const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
+    const allowedEquipment =
+      EQUIPMENT_MAP[onboarding.available_equipment] ?? [];
 
     // Calculate start day of week (0=Mon..6=Sun)
     const now = new Date();
     const jsDay = now.getDay(); // 0=Sun, 1=Mon..6=Sat
     const startDow = force ? 0 : jsDay === 0 ? 6 : jsDay - 1;
 
-    const generatedDays = await this.plansAiService.generateWeeklyPlan(
-      userId,
-      onboarding,
+    // Fetch skeleton, exercise library, recent exercises, and previous week number in parallel
+    const [skeleton, exerciseLibrary, recentExerciseIds, previousPlan] =
+      await Promise.all([
+        this.plansAiService.generateWeeklyPlan(userId, onboarding, startDow),
+        this.prisma.exerciseLibrary.findMany({
+          where: {
+            OR: [{ is_system: true }, { user_id: userId }],
+            ...(allowedEquipment.length > 0
+              ? { equipment: { in: allowedEquipment } }
+              : {}),
+          },
+          orderBy: { name: 'asc' },
+        }),
+        this.getRecentExerciseIds(userId),
+        this.prisma.trainingPlan.findFirst({
+          where: { user_id: userId },
+          orderBy: { week_number: 'desc' },
+        }),
+      ]);
+    const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
+
+    const generatedDays = matchSkeletonToDays(
+      skeleton,
       exerciseLibrary,
-      startDow,
+      recentExerciseIds,
+      onboarding.experience_level ?? null,
     );
 
     // Enrich exercises with suggested weights
@@ -445,6 +449,29 @@ export class PlansService {
         image_url: exerciseImageUrl(e.external_id),
       })),
     };
+  }
+
+  private async getRecentExerciseIds(userId: string): Promise<Set<string>> {
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+
+    const recentExercises = await this.prisma.sessionExercise.findMany({
+      where: {
+        library_exercise_id: { not: null },
+        session: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: twoWeeksAgo },
+        },
+      },
+      select: { library_exercise_id: true },
+    });
+
+    return new Set(
+      recentExercises
+        .map((e) => e.library_exercise_id)
+        .filter((id): id is string => id !== null),
+    );
   }
 
   private getWeekStart(date: Date): Date {

@@ -46,6 +46,12 @@ export class CommunityController {
     return this.communityService.createPost(req.user!.id, dto);
   }
 
+  @Get('posts/:id')
+  @HttpCode(HttpStatus.OK)
+  async getPost(@Param('id') postId: string, @Req() req: Request) {
+    return this.communityService.getPostById(req.user!.id, postId);
+  }
+
   @Delete('posts/:id')
   @HttpCode(HttpStatus.OK)
   async deletePost(@Param('id') postId: string, @Req() req: Request) {

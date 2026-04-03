@@ -536,9 +536,7 @@ export class HomeService {
     const first = sessions[0];
     const last = sessions[sessions.length - 1];
     const title =
-      sessions.length === 1
-        ? first.title
-        : `${sessions.length} Workouts`;
+      sessions.length === 1 ? first.title : `${sessions.length} Workouts`;
 
     return {
       date,
