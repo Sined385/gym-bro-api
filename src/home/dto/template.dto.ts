@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateTemplateDto {
   @IsString()
@@ -9,8 +9,14 @@ export class CreateTemplateDto {
   @IsString()
   type?: string;
 
+  @IsOptional()
   @IsString()
-  session_id!: string;
+  session_id?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  session_ids?: string[];
 }
 
 export class UpdateTemplateDto {

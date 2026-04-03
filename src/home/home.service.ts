@@ -544,6 +544,7 @@ export class HomeService {
       date,
       session: {
         id: first.id,
+        session_ids: sessions.map((s) => s.id),
         title,
         type: first.type,
         status: 'completed',

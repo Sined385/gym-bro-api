@@ -19,8 +19,11 @@ export class TemplateService {
   }
 
   async createTemplate(userId: string, dto: CreateTemplateDto) {
-    const session = await this.prisma.workoutSession.findFirst({
-      where: { id: dto.session_id, user_id: userId },
+    const ids = dto.session_ids ?? (dto.session_id ? [dto.session_id] : []);
+
+    const sessions = await this.prisma.workoutSession.findMany({
+      where: { id: { in: ids }, user_id: userId },
+      orderBy: { completed_at: 'asc' },
       include: {
         exercises: {
           orderBy: { step_number: 'asc' },
@@ -29,7 +32,7 @@ export class TemplateService {
       },
     });
 
-    if (!session) {
+    if (sessions.length === 0) {
       throw new AppException(
         'session_not_found',
         'Session not found',
@@ -37,7 +40,9 @@ export class TemplateService {
       );
     }
 
-    if (!session.exercises || session.exercises.length === 0) {
+    const allExercises = sessions.flatMap((s) => s.exercises);
+
+    if (allExercises.length === 0) {
       throw new AppException(
         'no_exercises',
         'Cannot save a template from a session with no exercises',
@@ -45,7 +50,7 @@ export class TemplateService {
       );
     }
 
-    const exercisesJson = session.exercises.map((e: any) => {
+    const exercisesJson = allExercises.map((e: any) => {
       let setsDisplay = e.sets_display;
       if (!setsDisplay && e.exercise_sets?.length > 0) {
         const totalSets = e.exercise_sets.length;
