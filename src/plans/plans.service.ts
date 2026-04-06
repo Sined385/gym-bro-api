@@ -6,7 +6,12 @@ import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
-import { matchSkeletonToDays } from './exercise-matcher';
+import {
+  matchSkeletonToDays,
+  matchExercisesToSlots,
+  normalizeMuscleGroup,
+  ExerciseSlot,
+} from './exercise-matcher';
 
 const EQUIPMENT_MAP: Record<string, string[]> = {
   full_gym: [],
@@ -27,7 +32,7 @@ export class PlansService {
   ) {}
 
   async getActivePlan(userId: string) {
-    const plan = await this.prisma.trainingPlan.findFirst({
+    let plan = await this.prisma.trainingPlan.findFirst({
       where: { user_id: userId, is_active: true },
       include: {
         days: {
@@ -72,6 +77,35 @@ export class PlansService {
 
     // Calculate today's index as position within the returned days array
     const absoluteTodayDow = now.getDay() === 0 ? 6 : now.getDay() - 1;
+
+    // Adapt skipped days — mark past pending training days as skipped and redistribute
+    const adapted = await this.adaptSkippedDays(
+      plan,
+      absoluteTodayDow,
+      userId,
+      onboarding,
+    );
+    if (adapted) {
+      // Re-fetch to reflect adaptations
+      plan = (await this.prisma.trainingPlan.findFirst({
+        where: { user_id: userId, is_active: true },
+        include: {
+          days: {
+            orderBy: { day_of_week: 'asc' },
+            include: {
+              workout_session: {
+                select: {
+                  id: true,
+                  duration_minutes: true,
+                  completed_at: true,
+                },
+              },
+            },
+          },
+        },
+      }))!;
+    }
+
     let todayIndex = plan.days.findIndex(
       (d) => d.day_of_week === absoluteTodayDow,
     );
@@ -264,6 +298,14 @@ export class PlansService {
       throw new AppException(
         'day_already_completed',
         'This day has already been completed',
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    if (planDay.status === 'skipped') {
+      throw new AppException(
+        'day_skipped',
+        'This day was skipped and its exercises were redistributed',
         HttpStatus.CONFLICT,
       );
     }
@@ -481,5 +523,260 @@ export class PlansService {
     d.setDate(d.getDate() + diff);
     d.setHours(0, 0, 0, 0);
     return d;
+  }
+
+  /**
+   * Detects past pending training days, marks them as skipped, and
+   * redistributes missed muscle groups into remaining future days.
+   * Returns true if any changes were made.
+   */
+  private async adaptSkippedDays(
+    plan: any,
+    todayDow: number,
+    userId: string,
+    onboarding: any | null,
+  ): Promise<boolean> {
+    // 1. Find skipped days — pending training days before today with no prior adaptation
+    const skippedDays = plan.days.filter(
+      (d: any) =>
+        d.status === 'pending' &&
+        d.day_type === 'training' &&
+        d.day_of_week < todayDow &&
+        !d.adapted_at,
+    );
+
+    // 2. Fast path — nothing to adapt
+    if (skippedDays.length === 0) return false;
+
+    // 3. Find future pending training days (after today)
+    const futureDays = plan.days.filter(
+      (d: any) =>
+        d.status === 'pending' &&
+        d.day_type === 'training' &&
+        d.day_of_week > todayDow,
+    );
+
+    // Include today if it's a pending training day
+    const todayDay = plan.days.find(
+      (d: any) =>
+        d.day_of_week === todayDow &&
+        d.status === 'pending' &&
+        d.day_type === 'training',
+    );
+
+    // 4. Collect missed muscle groups from skipped days
+    const missedGroups: string[] = [];
+    for (const day of skippedDays) {
+      missedGroups.push(...(day.muscle_groups ?? []));
+    }
+
+    // 5. Collect already-planned muscle groups (today + future)
+    const plannedGroups: string[] = [];
+    if (todayDay) plannedGroups.push(...(todayDay.muscle_groups ?? []));
+    for (const day of futureDays) {
+      plannedGroups.push(...(day.muscle_groups ?? []));
+    }
+
+    // 6. Compute deficit
+    const deficit = this.computeMuscleGroupDeficit(missedGroups, plannedGroups);
+
+    const now = new Date();
+    const skippedIds = skippedDays.map((d: any) => d.id);
+
+    // 7. No deficit — just mark skipped, no redistribution needed
+    if (deficit.length === 0 || futureDays.length === 0) {
+      await this.prisma.planDay.updateMany({
+        where: { id: { in: skippedIds } },
+        data: { status: 'skipped', adapted_at: now },
+      });
+      this.analytics.track(userId, 'plan_adapted', {
+        plan_id: plan.id,
+        skipped_days: skippedDays.map((d: any) => d.day_of_week),
+        adapted_days: [],
+      });
+      return true;
+    }
+
+    // 8. Distribute deficit across future days
+    const allowedEquipment =
+      EQUIPMENT_MAP[onboarding?.available_equipment ?? ''] ?? [];
+
+    const [exerciseLibrary, recentExerciseIds] = await Promise.all([
+      this.prisma.exerciseLibrary.findMany({
+        where: {
+          OR: [{ is_system: true }, { user_id: userId }],
+          ...(allowedEquipment.length > 0
+            ? { equipment: { in: allowedEquipment } }
+            : {}),
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.getRecentExerciseIds(userId),
+    ]);
+
+    const repScheme = this.getRepScheme(onboarding?.primary_goals ?? []);
+    const userLevel = onboarding?.experience_level ?? null;
+
+    const adaptedDayIds: string[] = [];
+    let remainingDeficit = [...deficit];
+
+    // Persist everything in a single transaction
+    await this.prisma.$transaction(async (tx) => {
+      // Distribute to existing future training days (max +2 groups per day)
+      for (const day of futureDays) {
+        if (remainingDeficit.length === 0) break;
+
+        const toAdd = remainingDeficit.splice(0, 2);
+
+        const slots: ExerciseSlot[] = toAdd.map((group) => ({
+          muscle_group: group,
+          rep_scheme: repScheme,
+          focus: null,
+        }));
+
+        const picks = matchExercisesToSlots(
+          slots,
+          exerciseLibrary,
+          recentExerciseIds,
+          userLevel,
+        );
+
+        const newExercises = picks.map((pick, i) => ({
+          library_exercise_id: pick.id,
+          external_id: pick.external_id,
+          name: pick.name,
+          muscle_group: pick.muscle_group,
+          equipment: pick.equipment,
+          sets_display: slots[i].rep_scheme,
+        }));
+
+        const existingExercises = day.exercises_json as any[];
+        const updatedExercises = [...existingExercises, ...newExercises];
+
+        const existingGroups = day.muscle_groups as string[];
+        const addedGroups = [
+          ...new Set(newExercises.map((e) => e.muscle_group)),
+        ];
+        const mergedGroups = [...new Set([...existingGroups, ...addedGroups])];
+
+        const updatedTitle = mergedGroups.join(' & ') + ' Day';
+
+        await tx.planDay.update({
+          where: { id: day.id },
+          data: {
+            exercises_json: updatedExercises,
+            muscle_groups: mergedGroups,
+            session_title: updatedTitle,
+            adapted_at: now,
+          },
+        });
+
+        adaptedDayIds.push(day.id);
+      }
+
+      // 9. If deficit remains — convert earliest future rest day to training
+      if (remainingDeficit.length > 0) {
+        const futureRestDays = plan.days.filter(
+          (d: any) =>
+            d.day_type === 'rest' &&
+            d.day_of_week > todayDow &&
+            d.status === 'pending',
+        );
+
+        if (futureRestDays.length > 0) {
+          const restDay = futureRestDays[0];
+          const slots: ExerciseSlot[] = remainingDeficit.map((group) => ({
+            muscle_group: group,
+            rep_scheme: repScheme,
+            focus: null,
+          }));
+
+          const picks = matchExercisesToSlots(
+            slots,
+            exerciseLibrary,
+            recentExerciseIds,
+            userLevel,
+          );
+
+          const exercises = picks.map((pick, i) => ({
+            library_exercise_id: pick.id,
+            external_id: pick.external_id,
+            name: pick.name,
+            muscle_group: pick.muscle_group,
+            equipment: pick.equipment,
+            sets_display: slots[i].rep_scheme,
+          }));
+
+          const muscleGroups = [
+            ...new Set(exercises.map((e) => e.muscle_group)),
+          ];
+          const title = muscleGroups.join(' & ') + ' Day';
+
+          await tx.planDay.update({
+            where: { id: restDay.id },
+            data: {
+              day_type: 'training',
+              session_title: title,
+              session_type: 'strength',
+              muscle_groups: muscleGroups,
+              exercises_json: exercises,
+              adapted_at: now,
+            },
+          });
+
+          adaptedDayIds.push(restDay.id);
+          remainingDeficit = [];
+        }
+      }
+
+      // Mark skipped days
+      await tx.planDay.updateMany({
+        where: { id: { in: skippedIds } },
+        data: { status: 'skipped', adapted_at: now },
+      });
+    });
+
+    // 10. Track analytics
+    this.analytics.track(userId, 'plan_adapted', {
+      plan_id: plan.id,
+      skipped_days: skippedDays.map((d: any) => d.day_of_week),
+      adapted_days: adaptedDayIds,
+      deficit_groups: deficit,
+    });
+
+    return true;
+  }
+
+  private computeMuscleGroupDeficit(
+    missed: string[],
+    planned: string[],
+  ): string[] {
+    const missedCounts = new Map<string, number>();
+    for (const g of missed) {
+      const norm = normalizeMuscleGroup(g);
+      missedCounts.set(norm, (missedCounts.get(norm) ?? 0) + 1);
+    }
+
+    const plannedCounts = new Map<string, number>();
+    for (const g of planned) {
+      const norm = normalizeMuscleGroup(g);
+      plannedCounts.set(norm, (plannedCounts.get(norm) ?? 0) + 1);
+    }
+
+    const deficit: string[] = [];
+    for (const [group, count] of missedCounts) {
+      const diff = count - (plannedCounts.get(group) ?? 0);
+      for (let i = 0; i < diff; i++) {
+        deficit.push(group);
+      }
+    }
+
+    return deficit;
+  }
+
+  private getRepScheme(goals: string[]): string {
+    if (goals.includes('get_stronger')) return '4 \u00D7 6';
+    if (goals.includes('lose_fat')) return '3 \u00D7 12';
+    return '3 \u00D7 10';
   }
 }

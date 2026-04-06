@@ -193,6 +193,7 @@ model PlanDay {
   status             String          @default("pending")
   workout_session_id String?         @unique
   ai_notes           String?
+  adapted_at         DateTime?
   created_at         DateTime        @default(now())
   updated_at         DateTime        @updatedAt
   plan               TrainingPlan    @relation(fields: [plan_id], references: [id], onDelete: Cascade)
