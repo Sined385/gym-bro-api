@@ -10,6 +10,11 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 
 import { exerciseImageUrl } from '../common/exercise-image';
+import {
+  matchExercisesToSlots,
+  normalizeMuscleGroup,
+  ExerciseSlot,
+} from '../plans/exercise-matcher';
 
 interface SSEEvent {
   type: string;
@@ -266,12 +271,14 @@ export class CoachService {
       this.getRecentSessions(userId, 14),
       this.getWeekStats(userId),
       this.getExerciseLibrary(userId),
-      this.prisma.coachMessage.findMany({
-        where: { conversation_id: conversationId },
-        orderBy: { created_at: 'asc' },
-        take: 20,
-        select: { role: true, content: true },
-      }),
+      this.prisma.coachMessage
+        .findMany({
+          where: { conversation_id: conversationId },
+          orderBy: { created_at: 'desc' },
+          take: 30,
+          select: { role: true, content: true },
+        })
+        .then((msgs) => msgs.reverse()),
       this.plansService.getActivePlan(userId),
     ]);
 
@@ -687,9 +694,13 @@ export class CoachService {
                       muscle_groups: dayArgs.muscle_groups ?? [],
                       status: 'pending',
                     };
-                    // Only overwrite exercises if explicitly provided; preserve existing otherwise
-                    if (dayArgs.exercises && dayArgs.exercises.length > 0) {
-                      // Enrich exercises with external_id from exercise library
+                    if (dayArgs.day_type === 'rest') {
+                      updateData.exercises_json = [];
+                    } else if (
+                      dayArgs.exercises &&
+                      dayArgs.exercises.length > 0
+                    ) {
+                      // AI provided explicit exercises — enrich with external_id
                       const exerciseMap = new Map(
                         exerciseLibrary.map((e) => [e.id, e]),
                       );
@@ -712,8 +723,56 @@ export class CoachService {
                           };
                         },
                       );
-                    } else if (dayArgs.day_type === 'rest') {
-                      updateData.exercises_json = [];
+                    } else if (
+                      dayArgs.muscle_groups &&
+                      dayArgs.muscle_groups.length > 0
+                    ) {
+                      // AI provided muscle groups but no exercises — auto-pick from library
+                      const repScheme =
+                        onboarding?.primary_goals?.[0] === 'get_stronger'
+                          ? '4 × 6'
+                          : onboarding?.primary_goals?.[0] === 'lose_fat'
+                            ? '3 × 12'
+                            : '3 × 10';
+                      const slots: ExerciseSlot[] = [];
+                      for (const mg of dayArgs.muscle_groups) {
+                        const normalized = normalizeMuscleGroup(mg);
+                        slots.push({
+                          muscle_group: normalized,
+                          rep_scheme: repScheme,
+                          focus: slots.some(
+                            (s) => s.muscle_group === normalized,
+                          )
+                            ? 'isolation'
+                            : 'compound',
+                        });
+                      }
+                      // Pad to 5 exercises if fewer muscle groups
+                      while (slots.length < 5) {
+                        const mg =
+                          dayArgs.muscle_groups[
+                            slots.length % dayArgs.muscle_groups.length
+                          ];
+                        slots.push({
+                          muscle_group: normalizeMuscleGroup(mg),
+                          rep_scheme: repScheme,
+                          focus: 'isolation',
+                        });
+                      }
+                      const picks = matchExercisesToSlots(
+                        slots,
+                        exerciseLibrary as any,
+                        new Set(),
+                        onboarding?.experience_level ?? null,
+                      );
+                      updateData.exercises_json = picks.map((pick, i) => ({
+                        library_exercise_id: pick.id,
+                        external_id: pick.external_id,
+                        name: pick.name,
+                        muscle_group: pick.muscle_group,
+                        equipment: pick.equipment,
+                        sets_display: slots[i]?.rep_scheme ?? repScheme,
+                      }));
                     }
                     await tx.planDay.update({
                       where: { id: planDay.id },
@@ -1206,8 +1265,8 @@ Tool usage rules:
 - "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
 - Reference the training plan context above when user asks about their plan.
-- NEVER list exercises as plain text. Always use the tool so the session is saved.
-When giving advice or answering questions — respond in text only.
+- When creating workouts, ALWAYS use the tool — never list exercises as plain text.
+- For greetings, questions, advice, or general conversation — respond in text only. Do NOT call any tool unless the user explicitly asks for a workout, plan, or plan change.
 
 Keep responses concise (2-3 sentences max for text replies).
 

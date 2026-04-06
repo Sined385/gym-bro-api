@@ -101,6 +101,7 @@ export class UserService {
     });
 
     if (error) {
+      console.error('Avatar upload error:', JSON.stringify(error));
       throw new AppException(
         'AVATAR_UPLOAD_FAILED',
         `Failed to upload avatar: ${error.message}`,
