@@ -340,14 +340,19 @@ export class HomeService {
         );
       }
 
+      const MAX_SESSION_DURATION = 240; // 4 hours — cap unrealistic durations
       const completedAt = new Date();
-      const durationMinutes =
+      const rawDuration =
         dto.duration_minutes ??
         (session.started_at
           ? Math.round(
               (completedAt.getTime() - session.started_at.getTime()) / 60000,
             )
           : null);
+      const durationMinutes =
+        rawDuration !== null
+          ? Math.min(rawDuration, MAX_SESSION_DURATION)
+          : null;
 
       // MET-based calorie estimation
       let calories: number | null = null;

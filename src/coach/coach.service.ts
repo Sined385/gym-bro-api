@@ -33,13 +33,17 @@ function safeParseToolArgs(raw: string): Record<string, any> {
       raw,
     );
 
-    // Strategy 1: trailing garbage after valid JSON — find the closing brace
-    const firstBrace = raw.indexOf('{');
-    if (firstBrace >= 0) {
+    // Strategy 1: extract all top-level JSON objects and merge them
+    const objects: Record<string, any>[] = [];
+    let pos = 0;
+    while (pos < raw.length) {
+      const braceIdx = raw.indexOf('{', pos);
+      if (braceIdx < 0) break;
       let depth = 0;
       let inString = false;
       let escape = false;
-      for (let i = firstBrace; i < raw.length; i++) {
+      let endIdx = -1;
+      for (let i = braceIdx; i < raw.length; i++) {
         const ch = raw[i];
         if (escape) {
           escape = false;
@@ -57,13 +61,42 @@ function safeParseToolArgs(raw: string): Record<string, any> {
         if (ch === '{') depth++;
         if (ch === '}') depth--;
         if (depth === 0) {
-          try {
-            return JSON.parse(raw.slice(firstBrace, i + 1));
-          } catch {
-            break;
+          endIdx = i;
+          break;
+        }
+      }
+      if (endIdx >= 0) {
+        try {
+          objects.push(JSON.parse(raw.slice(braceIdx, endIdx + 1)));
+        } catch {
+          // skip malformed object
+        }
+        pos = endIdx + 1;
+      } else {
+        break;
+      }
+    }
+    if (objects.length === 1) {
+      return objects[0];
+    }
+    if (objects.length > 1) {
+      // Merge: concatenate array values with the same key
+      const merged: Record<string, any> = { ...objects[0] };
+      for (let i = 1; i < objects.length; i++) {
+        for (const [key, val] of Object.entries(objects[i])) {
+          if (Array.isArray(merged[key]) && Array.isArray(val)) {
+            merged[key] = [...merged[key], ...val];
+          } else if (!(key in merged)) {
+            merged[key] = val;
           }
         }
       }
+      console.log(
+        '[safeParseToolArgs] Merged',
+        objects.length,
+        'concatenated JSON objects',
+      );
+      return merged;
     }
 
     // Strategy 2: truncated JSON — close open strings, arrays, objects
@@ -596,6 +629,7 @@ export class CoachService {
             }
           } catch (error) {
             console.error('Tool execution failed:', error);
+            console.error('Tool args were:', toolCallArgs);
             const errMsg =
               "Sorry, I couldn't create that workout right now. Try again.";
             fullContent += errMsg;
@@ -1046,6 +1080,11 @@ export class CoachService {
       },
     });
 
+    const exercises = args.exercises ?? [];
+    if (exercises.length === 0) {
+      throw new Error('No exercises provided for workout session');
+    }
+
     const session = await this.prisma.workoutSession.create({
       data: {
         user_id: userId,
@@ -1058,7 +1097,7 @@ export class CoachService {
         ai_message: args.ai_message,
         updated_at: new Date(),
         exercises: {
-          create: args.exercises.map((ex, i) => {
+          create: exercises.map((ex, i) => {
             const libEx = ex.library_exercise_id
               ? exerciseMap.get(ex.library_exercise_id)
               : null;
