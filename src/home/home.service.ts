@@ -101,9 +101,7 @@ export class HomeService {
         (d) => d.day_type === 'training',
       );
       weekWorkoutsTotal = trainingDays.length;
-      weekWorkoutsCompleted = activePlan.days.filter(
-        (d) => d.status === 'completed',
-      ).length;
+      weekWorkoutsCompleted = completedSessions.length;
 
       if (todayPlanDay.day_type === 'rest') {
         plannedWorkout = { type: 'rest' };
