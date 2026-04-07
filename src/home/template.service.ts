@@ -94,6 +94,7 @@ export class TemplateService {
         equipment: e.equipment,
         setsDisplay: e.sets_display,
         imageUrl: exerciseImageUrl(e.external_id),
+        externalId: e.external_id ?? null,
       })),
       createdAt: template.created_at.toISOString(),
     };
@@ -117,6 +118,7 @@ export class TemplateService {
           equipment: e.equipment,
           setsDisplay: e.sets_display,
           imageUrl: exerciseImageUrl(e.external_id),
+          externalId: e.external_id ?? null,
         })),
         createdAt: template.created_at.toISOString(),
       };
@@ -153,6 +155,7 @@ export class TemplateService {
         equipment: e.equipment,
         setsDisplay: e.sets_display,
         imageUrl: exerciseImageUrl(e.external_id),
+        externalId: e.external_id ?? null,
       })),
       createdAt: updated.created_at.toISOString(),
     };
@@ -376,6 +379,7 @@ export class TemplateService {
         equipment: e.equipment,
         setsDisplay: e.sets_display,
         imageUrl: exerciseImageUrl(e.external_id),
+        externalId: e.external_id ?? null,
       })),
     };
   }
@@ -414,6 +418,7 @@ export class TemplateService {
         equipment: e.equipment,
         setsDisplay: e.sets_display,
         imageUrl: exerciseImageUrl(e.external_id),
+        externalId: e.external_id ?? null,
       })),
       createdAt: newTemplate.created_at.toISOString(),
     };
@@ -469,6 +474,7 @@ export class TemplateService {
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
         image_url: exerciseImageUrl(e.external_id),
+        external_id: e.external_id ?? null,
       })),
     };
   }

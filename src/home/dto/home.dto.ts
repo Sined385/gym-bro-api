@@ -124,6 +124,87 @@ export class CompleteSessionDto {
   feedback?: FeedbackDto;
 }
 
+class CompleteSetItemDto {
+  @IsInt()
+  @Min(1)
+  set_number!: number;
+
+  @IsOptional()
+  @IsNumber()
+  weight?: number;
+
+  @IsOptional()
+  @IsString()
+  weight_unit?: string;
+
+  @IsInt()
+  @Min(0)
+  reps!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  is_completed?: boolean;
+}
+
+class CompleteExerciseItemDto {
+  @IsOptional()
+  @IsString()
+  library_exercise_id?: string;
+
+  @IsString()
+  @MinLength(1)
+  name!: string;
+
+  @IsString()
+  muscle_group!: string;
+
+  @IsOptional()
+  @IsString()
+  equipment?: string;
+
+  @IsInt()
+  @Min(1)
+  step_number!: number;
+
+  @IsOptional()
+  @IsString()
+  accent_color?: string;
+
+  @IsOptional()
+  @IsString()
+  superset_group_id?: string;
+
+  @IsOptional()
+  @IsString()
+  superset_order?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CompleteSetItemDto)
+  sets!: CompleteSetItemDto[];
+}
+
+export class CompleteSessionFullDto {
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  duration_minutes?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FeedbackDto)
+  feedback?: FeedbackDto;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CompleteExerciseItemDto)
+  exercises!: CompleteExerciseItemDto[];
+}
+
 export class GetSessionHistoryDto {
   @IsString()
   date!: string; // YYYY-MM-DD

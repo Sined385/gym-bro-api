@@ -21,6 +21,7 @@ import { TemplateService } from './template.service';
 import {
   AddExercisesDto,
   CompleteSessionDto,
+  CompleteSessionFullDto,
   CreateSessionDto,
   CreateSupersetDto,
   FeedbackDto,
@@ -193,6 +194,16 @@ export class HomeController {
     @Body() body: CompleteSessionDto,
   ) {
     return this.homeService.completeSession(req.user!.id, sessionId, body);
+  }
+
+  @Post('sessions/:id/complete-full')
+  @HttpCode(HttpStatus.OK)
+  async completeSessionFull(
+    @Req() req: Request,
+    @Param('id') sessionId: string,
+    @Body() body: CompleteSessionFullDto,
+  ) {
+    return this.homeService.completeSessionFull(req.user!.id, sessionId, body);
   }
 
   // ── Templates ──────────────────────────────────────────

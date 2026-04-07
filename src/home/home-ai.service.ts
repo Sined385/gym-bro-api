@@ -151,7 +151,7 @@ export class HomeAiService {
       return this.prisma.motivationInsight.create({
         data: {
           user_id: userId,
-          title: 'Welcome to GymBro',
+          title: 'Welcome to GymJam',
           message: `Your profile is set up and ready for ${goalLabel}. Start your first workout to get personalized insights.`,
           workouts_this_week: 0,
           personal_records: [],
@@ -200,7 +200,7 @@ export class HomeAiService {
 
     const sessionsContext = this.formatRecentSessions(recentSessions);
 
-    return `You are a no-nonsense strength coach for the GymBro app.
+    return `You are a no-nonsense strength coach for the GymJam app.
 Your job is to give the user a brief, direct recap of their recent training and one actionable insight for today. No cheerleading, no fluff — just facts and what to do next.
 
 ${profile}
@@ -236,7 +236,7 @@ Rules:
 - Injuries: ${JSON.stringify(onboarding.injuries)}`
       : 'No onboarding profile available.';
 
-    return `You are a friendly strength coach for the GymBro app.
+    return `You are a friendly strength coach for the GymJam app.
 This is a brand new user who just signed up and hasn't done any workouts yet. Welcome them and get them excited to start their first session.
 
 ${profile}
@@ -437,7 +437,7 @@ Rules:
 
     const sessionsContext = this.formatRecentSessions(recentSessions);
 
-    return `You are a fitness coach AI for the GymBro app.
+    return `You are a fitness coach AI for the GymJam app.
 Create a workout session for this user by selecting exercises from their available exercise library.
 
 User profile:

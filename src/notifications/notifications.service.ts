@@ -63,7 +63,7 @@ export class NotificationsService {
           title: payload.title,
           body: payload.body,
         },
-        data: payload.data ?? {},
+        data: { ...(payload.data ?? {}), type: payload.type },
         apns: {
           payload: {
             aps: {

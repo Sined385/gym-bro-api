@@ -139,6 +139,7 @@ export class PlansService {
             accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
             suggestedWeight: e.suggested_weight ?? null,
             imageUrl: exerciseImageUrl(e.external_id),
+            externalId: e.external_id ?? null,
           })),
           workoutSession: day.workout_session
             ? {
@@ -489,6 +490,7 @@ export class PlansService {
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
         image_url: exerciseImageUrl(e.external_id),
+        external_id: e.external_id ?? null,
       })),
     };
   }

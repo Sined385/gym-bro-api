@@ -396,7 +396,7 @@ export class CommunityAiService {
   ) {
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
-    const systemPrompt = `You are a fitness comparison analyst for GymBro app. You will receive two users' training profiles including their key lift stats and 3-month workout history summaries.
+    const systemPrompt = `You are a fitness comparison analyst for GymJam app. You will receive two users' training profiles including their key lift stats and 3-month workout history summaries.
 
 Analyze and return a JSON object with these fields:
 - "summary": A brief 2-3 sentence overall comparison highlighting the most interesting differences and similarities.

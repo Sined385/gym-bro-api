@@ -8,6 +8,7 @@ import {
   LogSetDto,
   UpdateSetDto,
 } from './dto/home.dto';
+import { exerciseImageUrl } from '../common/exercise-image';
 
 export const ACCENT_COLORS = ['#E86A75', '#30C08D', '#7A82F6', '#F5A623'];
 
@@ -141,11 +142,13 @@ export class SessionExerciseService {
       created.push({
         id: exercise.id,
         library_exercise_id: exercise.library_exercise_id,
+        external_id: exercise.external_id ?? null,
         name: exercise.name,
         muscle_group: exercise.muscle_group,
         equipment: exercise.equipment,
         step_number: exercise.step_number,
         accent_color: exercise.accent_color,
+        image_url: exerciseImageUrl(exercise.external_id),
         sets: [],
       });
     }

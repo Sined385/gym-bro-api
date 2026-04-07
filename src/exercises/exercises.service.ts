@@ -41,6 +41,7 @@ export class ExercisesService {
       muscle_group: r.muscle_group,
       equipment: r.equipment,
       is_system: r.is_system,
+      external_id: r.external_id ?? null,
       images: r.external_id
         ? [
             `${IMAGE_BASE_URL}/${r.external_id}/0.jpg`,
@@ -88,6 +89,7 @@ export class ExercisesService {
     if (!exercise) return null;
     return {
       ...exercise,
+      external_id: exercise.external_id ?? null,
       images: exercise.external_id
         ? [
             `${IMAGE_BASE_URL}/${exercise.external_id}/0.jpg`,

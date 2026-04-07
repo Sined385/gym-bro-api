@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import {
   CompleteSessionDto,
+  CompleteSessionFullDto,
   CreateSessionDto,
   FeedbackDto,
 } from './dto/home.dto';
@@ -108,6 +109,22 @@ export class HomeService {
         plannedWorkout = { type: 'rest' };
       } else {
         const exercises = todayPlanDay.exercises_json as any[];
+
+        // Backfill missing external_id by looking up exercise library by name
+        const missingNames = exercises
+          .filter((e: any) => !e.external_id)
+          .map((e: any) => e.name);
+        let nameToExternalId: Record<string, string> = {};
+        if (missingNames.length > 0) {
+          const found = await this.prisma.exerciseLibrary.findMany({
+            where: { name: { in: missingNames }, is_system: true },
+            select: { name: true, external_id: true },
+          });
+          for (const f of found) {
+            if (f.external_id) nameToExternalId[f.name] = f.external_id;
+          }
+        }
+
         plannedWorkout = {
           type: 'training',
           plan_day_id: todayPlanDay.id,
@@ -115,15 +132,19 @@ export class HomeService {
           session_type: todayPlanDay.session_type,
           muscle_groups: todayPlanDay.muscle_groups,
           status: todayPlanDay.status,
-          exercises: exercises.map((e: any, i: number) => ({
-            name: e.name,
-            muscle_group: e.muscle_group,
-            sets_display: e.sets_display,
-            library_exercise_id: e.library_exercise_id ?? null,
-            accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
-            suggested_weight: e.suggested_weight ?? null,
-            image_url: exerciseImageUrl(e.external_id),
-          })),
+          exercises: exercises.map((e: any, i: number) => {
+            const extId = e.external_id ?? nameToExternalId[e.name] ?? null;
+            return {
+              name: e.name,
+              muscle_group: e.muscle_group,
+              sets_display: e.sets_display,
+              library_exercise_id: e.library_exercise_id ?? null,
+              accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+              suggested_weight: e.suggested_weight ?? null,
+              image_url: exerciseImageUrl(extId),
+              external_id: extId,
+            };
+          }),
         };
       }
     }
@@ -208,6 +229,7 @@ export class HomeService {
               equipment: e.equipment ?? null,
               suggested_weight: e.suggested_weight ?? null,
               image_url: exerciseImageUrl(e.external_id),
+              external_id: e.external_id ?? null,
             })),
           }
         : null,
@@ -451,6 +473,190 @@ export class HomeService {
     }
   }
 
+  async completeSessionFull(
+    userId: string,
+    sessionId: string,
+    dto: CompleteSessionFullDto,
+  ) {
+    const session = await this.prisma.workoutSession.findFirst({
+      where: { id: sessionId, user_id: userId },
+    });
+
+    if (!session) {
+      throw new AppException(
+        'session_not_found',
+        'Session not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (session.status !== 'active') {
+      throw new AppException(
+        'invalid_session_status',
+        `Cannot complete a session with status '${session.status}'`,
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const MAX_SESSION_DURATION = 240;
+    const completedAt = new Date();
+    const rawDuration =
+      dto.duration_minutes ??
+      (session.started_at
+        ? Math.round(
+            (completedAt.getTime() - session.started_at.getTime()) / 60000,
+          )
+        : null);
+    const durationMinutes =
+      rawDuration !== null
+        ? Math.min(rawDuration, MAX_SESSION_DURATION)
+        : null;
+
+    let calories: number | null = null;
+    if (durationMinutes && dto.feedback?.effort_level) {
+      const effort = dto.feedback.effort_level;
+      let met: number;
+      if (effort <= 3) met = 3.5;
+      else if (effort <= 6) met = 5.0;
+      else if (effort <= 8) met = 6.0;
+      else met = 7.0;
+      calories = Math.round(met * 70 * (durationMinutes / 60));
+    }
+
+    // Look up external_ids for library exercises
+    const libraryIds = dto.exercises
+      .map((e) => e.library_exercise_id)
+      .filter((id): id is string => !!id);
+    const libraryMap =
+      libraryIds.length > 0
+        ? new Map(
+            (
+              await this.prisma.exerciseLibrary.findMany({
+                where: { id: { in: libraryIds } },
+                select: { id: true, external_id: true },
+              })
+            ).map((e) => [e.id, e.external_id]),
+          )
+        : new Map<string, string | null>();
+
+    await this.prisma.$transaction(async (tx) => {
+      // Delete existing exercises and recreate from payload
+      await tx.exerciseSet.deleteMany({
+        where: { exercise: { session_id: sessionId } },
+      });
+      await tx.sessionExercise.deleteMany({
+        where: { session_id: sessionId },
+      });
+
+      for (const exDto of dto.exercises) {
+        const externalId = exDto.library_exercise_id
+          ? (libraryMap.get(exDto.library_exercise_id) ?? null)
+          : null;
+
+        const exercise = await tx.sessionExercise.create({
+          data: {
+            session_id: sessionId,
+            library_exercise_id: exDto.library_exercise_id ?? null,
+            external_id: externalId,
+            name: exDto.name,
+            muscle_group: exDto.muscle_group,
+            equipment: exDto.equipment ?? null,
+            step_number: exDto.step_number,
+            accent_color:
+              exDto.accent_color ??
+              ACCENT_COLORS[(exDto.step_number - 1) % ACCENT_COLORS.length],
+            superset_group_id: exDto.superset_group_id ?? null,
+            superset_order: exDto.superset_order ?? null,
+            sets_display: '',
+          },
+        });
+
+        if (exDto.sets?.length) {
+          await tx.exerciseSet.createMany({
+            data: exDto.sets.map((s) => ({
+              exercise_id: exercise.id,
+              set_number: s.set_number,
+              weight: s.weight ?? null,
+              weight_unit: s.weight_unit ?? 'kg',
+              reps: s.reps,
+              is_completed: s.is_completed ?? true,
+            })),
+          });
+        }
+      }
+
+      await tx.workoutSession.update({
+        where: { id: sessionId },
+        data: {
+          title: dto.title ?? session.title,
+          status: 'completed',
+          completed_at: completedAt,
+          duration_minutes: durationMinutes,
+          calories,
+          updated_at: new Date(),
+        },
+      });
+
+      if (dto.feedback) {
+        await tx.sessionFeedback.upsert({
+          where: { session_id: sessionId },
+          create: {
+            session_id: sessionId,
+            effort_level: dto.feedback.effort_level,
+            energy_level: dto.feedback.energy_level,
+            pain_discomfort: dto.feedback.pain_discomfort ?? 'None',
+          },
+          update: {
+            effort_level: dto.feedback.effort_level,
+            energy_level: dto.feedback.energy_level,
+            pain_discomfort: dto.feedback.pain_discomfort ?? 'None',
+          },
+        });
+      }
+    });
+
+    this.analytics.track(userId, 'session_completed', {
+      duration_minutes: durationMinutes,
+      calories,
+      effort_level: dto.feedback?.effort_level ?? null,
+    });
+
+    await this.prisma.motivationInsight.deleteMany({
+      where: { user_id: userId },
+    });
+
+    const linkedPlanDay = await this.prisma.planDay.findFirst({
+      where: { workout_session_id: sessionId },
+    });
+    if (linkedPlanDay) {
+      await this.prisma.planDay.update({
+        where: { id: linkedPlanDay.id },
+        data: { status: 'completed' },
+      });
+    }
+
+    const fullSession = await this.prisma.workoutSession.findUniqueOrThrow({
+      where: { id: sessionId },
+      include: {
+        exercises: { orderBy: { step_number: 'asc' } },
+        feedback: true,
+      },
+    });
+
+    return {
+      ...this.formatSession(fullSession),
+      calories: fullSession.calories ?? null,
+      performance_score: fullSession.performance_score ?? null,
+      feedback: fullSession.feedback
+        ? {
+            effort_level: fullSession.feedback.effort_level,
+            energy_level: fullSession.feedback.energy_level,
+            pain_discomfort: fullSession.feedback.pain_discomfort,
+          }
+        : null,
+    };
+  }
+
   // ── Feedback ─────────────────────────────────────────────
 
   async submitFeedback(userId: string, sessionId: string, dto: FeedbackDto) {
@@ -563,6 +769,7 @@ export class HomeService {
           accent_color: ACCENT_COLORS[index % ACCENT_COLORS.length],
           step_number: index + 1,
           image_url: exerciseImageUrl(e.external_id),
+          external_id: e.external_id ?? null,
           sets: e.exercise_sets.map((s) => ({
             set_number: s.set_number,
             weight: s.weight ? Number(s.weight) : null,
@@ -667,6 +874,7 @@ export class HomeService {
         equipment: e.equipment ?? null,
         suggested_weight: e.suggested_weight ?? null,
         image_url: exerciseImageUrl(e.external_id),
+        external_id: e.external_id ?? null,
       })),
     };
   }

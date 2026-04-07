@@ -250,6 +250,7 @@ export class CoachService {
                   equipment: e.equipment,
                   suggested_weight: e.suggested_weight ?? null,
                   image_url: exerciseImageUrl(e.external_id),
+                  external_id: e.external_id ?? null,
                 })),
               }
             : null,
@@ -555,6 +556,7 @@ export class CoachService {
                     equipment: e.equipment,
                     suggested_weight: e.suggested_weight ?? null,
                     image_url: exerciseImageUrl(e.external_id),
+                    external_id: e.external_id ?? null,
                   })),
                 },
               },
@@ -1294,7 +1296,7 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
       planContext = `Current training plan (Week ${weekNum}):\nDay mapping: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6\n${dayLines.join('\n')}`;
     }
 
-    return `You are a no-nonsense strength coach for the GymBro app.
+    return `You are a no-nonsense strength coach for the GymJam app.
 Today is ${dayFullNames[todayDow]} ${todayDate} (day_of_week=${todayDow}).
 You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.
 

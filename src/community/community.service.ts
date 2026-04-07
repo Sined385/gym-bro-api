@@ -869,6 +869,7 @@ export class CommunityService {
           accent_color: ACCENT_COLORS[index % ACCENT_COLORS.length],
           step_number: e.step_number,
           image_url: exerciseImageUrl(e.external_id),
+          external_id: e.external_id ?? null,
           sets: e.exercise_sets.map((set) => ({
             set_number: set.set_number,
             weight: set.weight ? Number(set.weight) : null,
@@ -950,7 +951,7 @@ export class CommunityService {
               include: {
                 exercises: {
                   orderBy: { step_number: 'asc' },
-                  include: { exercise_sets: true },
+                  include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
                 },
                 feedback: true,
               },
@@ -1007,6 +1008,19 @@ export class CommunityService {
                 totalReps,
                 libraryExerciseId: ex.library_exercise_id ?? null,
                 imageUrl: exerciseImageUrl(ex.external_id),
+                externalId: ex.external_id ?? null,
+                sets: ex.exercise_sets
+                  .sort(
+                    (a: any, b: any) => a.set_number - b.set_number,
+                  )
+                  .map((s: any) => ({
+                    setNumber: s.set_number,
+                    weight: s.weight ? Number(s.weight) : null,
+                    weightUnit: s.weight_unit ?? 'kg',
+                    reps: s.reps,
+                  })),
+                supersetGroupId: ex.superset_group_id ?? null,
+                supersetOrder: ex.superset_order ?? null,
               };
             }),
           };
@@ -1099,6 +1113,19 @@ export class CommunityService {
               totalReps,
               libraryExerciseId: ex.library_exercise_id ?? null,
               imageUrl: exerciseImageUrl(ex.external_id),
+              externalId: ex.external_id ?? null,
+              sets: ex.exercise_sets
+                .sort(
+                  (a: any, b: any) => a.set_number - b.set_number,
+                )
+                .map((s: any) => ({
+                  setNumber: s.set_number,
+                  weight: s.weight ? Number(s.weight) : null,
+                  weightUnit: s.weight_unit ?? 'kg',
+                  reps: s.reps,
+                })),
+              supersetGroupId: ex.superset_group_id ?? null,
+              supersetOrder: ex.superset_order ?? null,
             };
           }),
         };
