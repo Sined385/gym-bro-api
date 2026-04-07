@@ -5,20 +5,16 @@ import { PlansAiService } from './plans-ai.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { exerciseImageUrl } from '../common/exercise-image';
 import {
   matchSkeletonToDays,
   matchExercisesToSlots,
   normalizeMuscleGroup,
   ExerciseSlot,
 } from './exercise-matcher';
-
-const EQUIPMENT_MAP: Record<string, string[]> = {
-  full_gym: [],
-  dumbbells_only: ['Dumbbells', 'Bodyweight'],
-  bodyweight: ['Bodyweight'],
-  home_gym: ['Dumbbells', 'Bodyweight', 'Bands'],
-};
+import { exerciseImageUrl } from '../common/exercise-image';
+import { getWeekStart, toMondayDow } from '../common/date-utils';
+import { EQUIPMENT_MAP } from '../common/equipment';
+import { formatSessionResponse } from '../common/format-session';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -76,7 +72,7 @@ export class PlansService {
     });
 
     // Calculate today's index as position within the returned days array
-    const absoluteTodayDow = now.getDay() === 0 ? 6 : now.getDay() - 1;
+    const absoluteTodayDow = toMondayDow(now);
 
     // Adapt skipped days — mark past pending training days as skipped and redistribute
     const adapted = await this.adaptSkippedDays(
@@ -188,8 +184,7 @@ export class PlansService {
 
     // Calculate start day of week (0=Mon..6=Sun)
     const now = new Date();
-    const jsDay = now.getDay(); // 0=Sun, 1=Mon..6=Sat
-    const startDow = force ? 0 : jsDay === 0 ? 6 : jsDay - 1;
+    const startDow = force ? 0 : toMondayDow(now);
 
     // Fetch skeleton, exercise library, recent exercises, and previous week number in parallel
     const [skeleton, exerciseLibrary, recentExerciseIds, previousPlan] =
@@ -242,7 +237,7 @@ export class PlansService {
       }
     }
 
-    const weekStart = this.getWeekStart(now);
+    const weekStart = getWeekStart(now);
 
     const plan = await this.prisma.trainingPlan.create({
       data: {
@@ -318,7 +313,7 @@ export class PlansService {
         include: { exercises: { orderBy: { step_number: 'asc' } } },
       });
       if (existing && existing.status === 'active') {
-        return this.formatSessionResponse(existing);
+        return formatSessionResponse(existing);
       }
     }
 
@@ -422,7 +417,7 @@ export class PlansService {
       session_id: session.id,
     });
 
-    return this.formatSessionResponse(session);
+    return formatSessionResponse(session);
   }
 
   async onSessionCompleted(sessionId: string) {
@@ -465,36 +460,6 @@ export class PlansService {
     });
   }
 
-  private formatSessionResponse(session: any) {
-    return {
-      id: session.id,
-      user_id: session.user_id,
-      title: session.title,
-      type: session.type,
-      status: session.status,
-      started_at: session.started_at?.toISOString() ?? null,
-      completed_at: session.completed_at?.toISOString() ?? null,
-      duration_minutes: session.duration_minutes,
-      ai_generated: session.ai_generated,
-      ai_message: session.ai_message,
-      created_at: session.created_at.toISOString(),
-      updated_at: session.updated_at.toISOString(),
-      exercises: session.exercises.map((e: any) => ({
-        id: e.id,
-        name: e.name,
-        step_number: e.step_number,
-        sets_display: e.sets_display,
-        accent_color: e.accent_color,
-        library_exercise_id: e.library_exercise_id ?? null,
-        muscle_group: e.muscle_group ?? null,
-        equipment: e.equipment ?? null,
-        suggested_weight: e.suggested_weight ?? null,
-        image_url: exerciseImageUrl(e.external_id),
-        external_id: e.external_id ?? null,
-      })),
-    };
-  }
-
   private async getRecentExerciseIds(userId: string): Promise<Set<string>> {
     const twoWeeksAgo = new Date();
     twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
@@ -516,15 +481,6 @@ export class PlansService {
         .map((e) => e.library_exercise_id)
         .filter((id): id is string => id !== null),
     );
-  }
-
-  private getWeekStart(date: Date): Date {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
   }
 
   /**

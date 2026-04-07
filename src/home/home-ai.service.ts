@@ -5,13 +5,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ACCENT_COLORS } from './session-exercise.service';
 import { WeightSuggestionService } from './weight-suggestion.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
-
-const EQUIPMENT_MAP: Record<string, string[]> = {
-  full_gym: [], // empty means all equipment allowed
-  dumbbells_only: ['Dumbbells', 'Bodyweight'],
-  bodyweight: ['Bodyweight'],
-  home_gym: ['Dumbbells', 'Bodyweight', 'Bands'],
-};
+import { getWeekStart } from '../common/date-utils';
+import { EQUIPMENT_MAP } from '../common/equipment';
+import { formatRecentSessions } from '../common/format-sessions';
 
 const SETS_DISPLAY_BY_GOAL: Record<string, string> = {
   build_muscle: '3 × 10',
@@ -198,7 +194,7 @@ export class HomeAiService {
 - Injuries: ${JSON.stringify(onboarding.injuries)}`
       : 'No onboarding profile available.';
 
-    const sessionsContext = this.formatRecentSessions(recentSessions);
+    const sessionsContext = formatRecentSessions(recentSessions);
 
     return `You are a no-nonsense strength coach for the GymJam app.
 Your job is to give the user a brief, direct recap of their recent training and one actionable insight for today. No cheerleading, no fluff — just facts and what to do next.
@@ -435,7 +431,7 @@ Rules:
       )
       .join('\n');
 
-    const sessionsContext = this.formatRecentSessions(recentSessions);
+    const sessionsContext = formatRecentSessions(recentSessions);
 
     return `You are a fitness coach AI for the GymJam app.
 Create a workout session for this user by selecting exercises from their available exercise library.
@@ -668,7 +664,7 @@ Rules:
 
   private async getWeekStats(userId: string) {
     const now = new Date();
-    const weekStart = this.getWeekStart(now);
+    const weekStart = getWeekStart(now);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const [completedCount, onboarding] = await Promise.all([
@@ -695,48 +691,9 @@ Rules:
     };
   }
 
-  private formatRecentSessions(sessions: any[]): string {
-    if (sessions.length === 0) return 'No recent sessions in the last 14 days.';
-
-    const blocks = sessions.map((s) => {
-      const date = s.completed_at
-        ? new Date(s.completed_at).toISOString().split('T')[0]
-        : 'unknown';
-      const duration = s.duration_minutes
-        ? `${s.duration_minutes} min`
-        : 'unknown duration';
-      const exerciseLines = s.exercises.map((e: any) => {
-        const sets = e.exercise_sets;
-        if (!sets || sets.length === 0)
-          return `  - ${e.name} (${e.muscle_group}): no sets logged`;
-        const setDetails = sets
-          .map((set: any) => {
-            const weight = set.weight
-              ? `${Number(set.weight)} ${set.weight_unit}`
-              : 'BW';
-            return `${weight} × ${set.reps}`;
-          })
-          .join(', ');
-        return `  - ${e.name} (${e.muscle_group}): ${setDetails}`;
-      });
-      return `${date} — "${s.title}" (${duration})\n${exerciseLines.join('\n')}`;
-    });
-
-    return `Session log (last 14 days):\n${blocks.join('\n\n')}`;
-  }
-
   private endOfDay(): Date {
     const d = new Date();
     d.setHours(23, 59, 59, 999);
-    return d;
-  }
-
-  private getWeekStart(date: Date): Date {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    d.setHours(0, 0, 0, 0);
     return d;
   }
 }

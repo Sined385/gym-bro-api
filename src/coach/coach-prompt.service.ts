@@ -1,0 +1,222 @@
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { getWeekStart, toMondayDow } from '../common/date-utils';
+import { EQUIPMENT_MAP } from '../common/equipment';
+import { formatRecentSessions } from '../common/format-sessions';
+
+@Injectable()
+export class CoachPromptService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getExerciseLibrary(userId: string) {
+    const onboarding = await this.prisma.onboardingData.findUnique({
+      where: { user_id: userId },
+    });
+
+    const allowedEquipment = onboarding
+      ? EQUIPMENT_MAP[onboarding.available_equipment]
+      : undefined;
+    const equipmentFilter =
+      allowedEquipment && allowedEquipment.length > 0
+        ? { equipment: { in: allowedEquipment } }
+        : {};
+
+    return this.prisma.exerciseLibrary.findMany({
+      where: {
+        OR: [{ is_system: true }, { user_id: userId }],
+        ...equipmentFilter,
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async getRecentSessions(userId: string, days: number) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    return this.prisma.workoutSession.findMany({
+      where: {
+        user_id: userId,
+        status: 'completed',
+        completed_at: { gte: since },
+      },
+      orderBy: { completed_at: 'desc' },
+      include: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+        },
+      },
+    });
+  }
+
+  async getWeekStats(userId: string) {
+    const now = new Date();
+    const weekStart = getWeekStart(now);
+    const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const [completedCount, onboarding] = await Promise.all([
+      this.prisma.workoutSession.count({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: weekStart, lt: weekEnd },
+        },
+      }),
+      this.prisma.onboardingData.findUnique({
+        where: { user_id: userId },
+        select: { training_frequency: true },
+      }),
+    ]);
+
+    const dayOfWeek = now.getDay();
+    const daysLeftInWeek = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
+
+    return {
+      completedThisWeek: completedCount,
+      targetPerWeek: onboarding?.training_frequency ?? 3,
+      daysLeftInWeek,
+    };
+  }
+
+  buildSystemPrompt(
+    userName: string | null,
+    onboarding: any,
+    recentSessions: any[],
+    weekStats: {
+      completedThisWeek: number;
+      targetPerWeek: number;
+      daysLeftInWeek: number;
+    },
+    exerciseLibrary: any[],
+    quickWorkout: any,
+    activePlanData?: any,
+  ): string {
+    const nameLine = userName ? `User name: ${userName}` : '';
+
+    const profile = onboarding
+      ? `User profile:
+${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
+- Sport: ${onboarding.primary_sports?.[0]}
+- Experience: ${onboarding.experience_level}
+- Training frequency target: ${onboarding.training_frequency}x per week
+- Workout duration: ${onboarding.workout_duration} min
+- Equipment: ${onboarding.available_equipment}
+- Injuries: ${JSON.stringify(onboarding.injuries)}`
+      : 'No onboarding profile available.';
+
+    const sessionsContext = formatRecentSessions(recentSessions);
+
+    // Cap exercise list to avoid bloating the system prompt (~15K+ tokens with 700+ exercises)
+    // Diversify by muscle group so all groups are represented
+    const MAX_EXERCISES = 150;
+    let cappedLibrary = exerciseLibrary;
+    if (exerciseLibrary.length > MAX_EXERCISES) {
+      const byGroup = new Map<string, any[]>();
+      for (const e of exerciseLibrary) {
+        const group = e.muscle_group ?? 'Other';
+        if (!byGroup.has(group)) byGroup.set(group, []);
+        byGroup.get(group)!.push(e);
+      }
+      cappedLibrary = [];
+      const groups = [...byGroup.keys()];
+      let idx = 0;
+      while (
+        cappedLibrary.length < MAX_EXERCISES &&
+        idx < exerciseLibrary.length
+      ) {
+        for (const g of groups) {
+          const arr = byGroup.get(g)!;
+          if (idx < arr.length) cappedLibrary.push(arr[idx]);
+          if (cappedLibrary.length >= MAX_EXERCISES) break;
+        }
+        idx++;
+      }
+    }
+    const exerciseList =
+      cappedLibrary.length > 0
+        ? `Available exercises (use these library_exercise_id values when creating workouts — ${exerciseLibrary.length} total, showing ${cappedLibrary.length}):\n${cappedLibrary
+            .map(
+              (e) =>
+                `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
+            )
+            .join('\n')}`
+        : 'No exercise library available.';
+
+    const currentSession = quickWorkout
+      ? `Current quick workout: "${quickWorkout.title}" with ${quickWorkout.exercises.length} exercises: ${quickWorkout.exercises.map((e: any) => e.name).join(', ')}`
+      : 'No current quick workout.';
+
+    const dayFullNames = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    const now = new Date();
+    const todayDow = toMondayDow(now);
+    const todayDate = now.toISOString().split('T')[0];
+
+    let planContext = 'No active training plan.';
+    if (activePlanData?.plan && activePlanData.days?.length > 0) {
+      const weekNum = activePlanData.plan.weekNumber;
+      const dayLines = activePlanData.days.map((d: any) => {
+        const fullName = dayFullNames[d.dayOfWeek] ?? 'Day';
+        const isToday = d.dayOfWeek === todayDow;
+        const todayMarker = isToday ? ' ← TODAY' : '';
+        if (d.dayType === 'rest') {
+          return `- ${fullName} (day_of_week=${d.dayOfWeek}): Rest Day${todayMarker} — ${d.status}`;
+        }
+        const muscles = d.muscleGroups?.join(', ') ?? '';
+        const exercises = (d.exercises ?? [])
+          .map(
+            (e: any) =>
+              `    • ${e.name} (${e.muscleGroup}, ${e.setsDisplay}${e.suggestedWeight ? `, ${e.suggestedWeight}kg` : ''})`,
+          )
+          .join('\n');
+        const exerciseBlock = exercises ? `\n${exercises}` : '';
+        return `- ${fullName} (day_of_week=${d.dayOfWeek}): ${d.sessionTitle ?? 'Training'} (${muscles})${todayMarker} — ${d.status}${exerciseBlock}`;
+      });
+      planContext = `Current training plan (Week ${weekNum}):\nDay mapping: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6\n${dayLines.join('\n')}`;
+    }
+
+    return `You are a no-nonsense strength coach for the GymJam app.
+Today is ${dayFullNames[todayDow]} ${todayDate} (day_of_week=${todayDow}).
+You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.
+
+Tool usage rules:
+- "Build my plan" / "Create a weekly plan" / "Generate my training plan" → call generate_training_plan. This creates a full 7-day plan. Do NOT use create_workout_session for plan requests.
+- "Create a workout" / "Build me a workout" / "Give me a workout for today" → call create_workout_session. This is for single ad-hoc workout sessions only.
+- "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
+- CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
+- Reference the training plan context above when user asks about their plan.
+- When creating workouts, ALWAYS use the tool — never list exercises as plain text.
+- For greetings, questions, advice, or general conversation — respond in text only. Do NOT call any tool unless the user explicitly asks for a workout, plan, or plan change.
+
+Keep responses concise (2-3 sentences max for text replies).
+
+${profile}
+
+Week progress: ${weekStats.completedThisWeek}/${weekStats.targetPerWeek} workouts completed, ${weekStats.daysLeftInWeek} days left in the week.
+
+${planContext}
+
+${sessionsContext}
+
+${currentSession}
+
+${exerciseList}
+
+Rules:
+- Pick 4-6 exercises when creating workouts (fewer for short durations: 3-4 for ≤30 min)
+- When the user requests a specific duration (e.g. "30 min workout"), pass that duration_minutes in the tool call and scale the exercise count accordingly
+- Vary muscle groups for balanced sessions
+- Avoid exercises that would aggravate listed injuries
+- Match rep scheme to the user's goal
+- ONLY use library_exercise_id values from the available exercises list above when creating workouts
+- Be direct and concise — no cheerleading`;
+  }
+}
