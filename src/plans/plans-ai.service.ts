@@ -3,7 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
-import { SkeletonDay } from './exercise-matcher';
+import {
+  SkeletonDay,
+  AiExerciseSelection,
+  LibraryExercise,
+} from './exercise-matcher';
 
 @Injectable()
 export class PlansAiService {
@@ -241,6 +245,164 @@ Rules:
       );
     }
     return [...new Set(indices)].sort((a, b) => a - b);
+  }
+
+  /**
+   * Stage 3: AI picks specific exercises from curated candidate pools.
+   * Returns null on failure (signals fallback to deterministic matcher).
+   */
+  async selectExercises(
+    userId: string,
+    skeleton: SkeletonDay[],
+    candidatePools: Map<string, LibraryExercise[]>,
+    onboarding: any,
+    recentExerciseNames: string[],
+  ): Promise<AiExerciseSelection | null> {
+    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
+
+    // Build pool descriptions: "id | name | mechanic | equipment"
+    const poolLines: string[] = [];
+    for (const [group, exercises] of candidatePools) {
+      poolLines.push(`\n## ${group}`);
+      for (const ex of exercises) {
+        poolLines.push(
+          `${ex.id} | ${ex.name} | ${ex.mechanic ?? 'n/a'} | ${ex.equipment}`,
+        );
+      }
+    }
+
+    // Build training day descriptions
+    const trainingDays = skeleton.filter(
+      (d) => d.day_type === 'training' && d.exercise_slots.length > 0,
+    );
+    const dayDescriptions = trainingDays.map((day) => {
+      const slots = day.exercise_slots
+        .map(
+          (s, i) => `  Slot ${i + 1}: ${s.muscle_group} (${s.focus ?? 'any'})`,
+        )
+        .join('\n');
+      return `Day ${day.day_of_week} — "${day.session_title}":\n${slots}`;
+    });
+
+    const prompt = `You are a fitness coach. Pick the best exercises for each slot from the candidate pools below.
+
+User profile:
+- Goal: ${onboarding.primary_goals?.[0] ?? 'build_muscle'}
+- Experience: ${onboarding.experience_level ?? 'intermediate'}
+- Injuries: ${JSON.stringify(onboarding.injuries ?? [])}
+- Recently used exercises (avoid repeating): ${recentExerciseNames.slice(0, 20).join(', ') || 'none'}
+
+Training days:
+${dayDescriptions.join('\n\n')}
+
+Candidate pools:
+${poolLines.join('\n')}
+
+Rules:
+- Pick EXACTLY one exercise per slot from the matching muscle group pool
+- Prefer compound exercises for "compound" focus slots, isolation for "isolation" slots
+- Avoid exercises that aggravate listed injuries
+- Vary exercises — don't repeat the same exercise across days unless the pool is very small
+- Pick well-known, effective exercises over obscure ones
+- You MUST only use exercise IDs from the pools above
+
+Respond with JSON:
+{
+  "days": [
+    {
+      "day_of_week": <number>,
+      "exercises": [
+        { "library_exercise_id": "<uuid>", "name": "<exercise name>" }
+      ]
+    }
+  ]
+}`;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await this.openai.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: prompt },
+            {
+              role: 'user',
+              content: 'Select the best exercises for each training day.',
+            },
+          ],
+          response_format: { type: 'json_object' },
+          max_tokens: 800,
+          temperature: 0.4,
+        });
+
+        if (response.usage) {
+          this.aiUsage.trackUsage({
+            userId,
+            feature: 'exercise_selection',
+            model,
+            promptTokens: response.usage.prompt_tokens,
+            completionTokens: response.usage.completion_tokens,
+          });
+        }
+
+        const content = response.choices[0]?.message?.content;
+        if (!content) continue;
+
+        const parsed = JSON.parse(content) as AiExerciseSelection;
+
+        // Validate
+        if (!parsed.days || parsed.days.length !== trainingDays.length)
+          continue;
+
+        // Build set of all valid candidate IDs
+        const validIds = new Set<string>();
+        for (const exercises of candidatePools.values()) {
+          for (const ex of exercises) validIds.add(ex.id);
+        }
+
+        let valid = true;
+        for (let i = 0; i < trainingDays.length; i++) {
+          const aiDay = parsed.days[i];
+          const skelDay = trainingDays[i];
+
+          // Check day_of_week matches
+          if (aiDay.day_of_week !== skelDay.day_of_week) {
+            valid = false;
+            break;
+          }
+
+          // Check exercise count matches slot count
+          if (aiDay.exercises.length !== skelDay.exercise_slots.length) {
+            valid = false;
+            break;
+          }
+
+          // Check all IDs exist in pool and no within-day duplicates
+          const dayIds = new Set<string>();
+          for (const ex of aiDay.exercises) {
+            if (!validIds.has(ex.library_exercise_id)) {
+              valid = false;
+              break;
+            }
+            if (dayIds.has(ex.library_exercise_id)) {
+              valid = false;
+              break;
+            }
+            dayIds.add(ex.library_exercise_id);
+          }
+          if (!valid) break;
+        }
+
+        if (valid) return parsed;
+      } catch (error) {
+        console.error(
+          `AI exercise selection attempt ${attempt + 1} failed:`,
+          error,
+        );
+      }
+    }
+
+    // Both attempts failed — signal fallback
+    return null;
   }
 
   async generateCompletionNotes(

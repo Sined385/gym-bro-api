@@ -9,6 +9,8 @@ import {
   matchSkeletonToDays,
   matchExercisesToSlots,
   normalizeMuscleGroup,
+  filterCandidates,
+  assembleFromAiSelection,
   ExerciseSlot,
 } from './exercise-matcher';
 import { exerciseImageUrl } from '../common/exercise-image';
@@ -207,12 +209,32 @@ export class PlansService {
       ]);
     const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
 
-    const generatedDays = matchSkeletonToDays(
+    // Stage 2: Build curated candidate pools per muscle group
+    const candidatePools = filterCandidates(
       skeleton,
       exerciseLibrary,
       recentExerciseIds,
-      onboarding.experience_level ?? null,
     );
+
+    // Stage 3: AI picks specific exercises from candidates
+    const recentExerciseNames = await this.getRecentExerciseNames(userId);
+    const aiSelection = await this.plansAiService.selectExercises(
+      userId,
+      skeleton,
+      candidatePools,
+      onboarding,
+      recentExerciseNames,
+    );
+
+    // Use AI selection if valid, otherwise fall back to deterministic matcher
+    const generatedDays = aiSelection
+      ? assembleFromAiSelection(skeleton, aiSelection, candidatePools)
+      : matchSkeletonToDays(
+          skeleton,
+          exerciseLibrary,
+          recentExerciseIds,
+          onboarding.experience_level ?? null,
+        );
 
     // Enrich exercises with suggested weights
     const allExercises = generatedDays.flatMap((day: any) =>
@@ -481,6 +503,26 @@ export class PlansService {
         .map((e) => e.library_exercise_id)
         .filter((id): id is string => id !== null),
     );
+  }
+
+  private async getRecentExerciseNames(userId: string): Promise<string[]> {
+    const twoWeeksAgo = new Date();
+    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+
+    const recent = await this.prisma.sessionExercise.findMany({
+      where: {
+        session: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: twoWeeksAgo },
+        },
+      },
+      select: { name: true },
+      distinct: ['name'],
+      take: 20,
+    });
+
+    return recent.map((e) => e.name);
   }
 
   /**
