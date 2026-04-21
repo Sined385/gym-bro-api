@@ -5,6 +5,7 @@ import { PlansAiService } from './plans-ai.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import {
   matchSkeletonToDays,
   matchExercisesToSlots,
@@ -27,6 +28,7 @@ export class PlansService {
     private readonly plansAiService: PlansAiService,
     private readonly weightSuggestionService: WeightSuggestionService,
     private readonly analytics: AnalyticsService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   async getActivePlan(userId: string) {
@@ -65,8 +67,33 @@ export class PlansService {
       plan.week_start_date.getTime() + 7 * 24 * 60 * 60 * 1000,
     );
     if (now >= weekEnd) {
-      // Generate new week in background — return current plan for now
-      this.generatePlan(userId, true).catch(() => {});
+      // Generate new week and return it instead of stale plan
+      await this.generatePlan(userId, true);
+      plan = await this.prisma.trainingPlan.findFirst({
+        where: { user_id: userId, is_active: true },
+        include: {
+          days: {
+            orderBy: { day_of_week: 'asc' },
+            include: {
+              workout_session: {
+                select: {
+                  id: true,
+                  duration_minutes: true,
+                  completed_at: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!plan) {
+        return {
+          status: 'generating' as const,
+          plan: null,
+          days: [],
+          todayIndex: 0,
+        };
+      }
     }
 
     const onboarding = await this.prisma.onboardingData.findUnique({
@@ -155,6 +182,24 @@ export class PlansService {
   }
 
   async generatePlan(userId: string, force: boolean) {
+    // Premium check: first plan after onboarding is free; re-generation requires premium
+    if (force) {
+      const hasPlan = await this.subscriptionService.hasAnyPlan(userId);
+      if (hasPlan) {
+        const premium = await this.subscriptionService.isPremium(userId);
+        if (!premium) {
+          this.analytics.track(userId, 'paywall_feature_blocked', {
+            feature: 'plan_generation',
+          });
+          throw new AppException(
+            'PREMIUM_REQUIRED',
+            'Plan re-generation requires a premium subscription',
+            HttpStatus.FORBIDDEN,
+          );
+        }
+      }
+    }
+
     if (force) {
       await this.prisma.trainingPlan.updateMany({
         where: { user_id: userId, is_active: true },
@@ -391,7 +436,8 @@ export class PlansService {
         user_id: userId,
         title: planDay.session_title ?? 'Training Session',
         type: planDay.session_type ?? 'strength',
-        status: 'proposed',
+        status: 'active',
+        started_at: new Date(),
         ai_generated: true,
         ai_message: `Part of your Week ${planDay.plan.week_number} training plan`,
         updated_at: new Date(),

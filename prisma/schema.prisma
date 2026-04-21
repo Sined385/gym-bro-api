@@ -11,12 +11,20 @@ datasource db {
 }
 
 model User {
-  id         String   @id @default(uuid())
-  email      String   @unique
-  full_name  String?
-  username   String?  @unique
-  avatar_url String?
-  created_at DateTime @default(now())
+  id                      String    @id @default(uuid())
+  email                   String    @unique
+  full_name               String?
+  username                String?   @unique
+  avatar_url              String?
+  timezone                String?
+  preferred_workout_hour  Int?
+  is_premium              Boolean   @default(false)
+  premium_source          String?
+  premium_granted_at      DateTime?
+  premium_expires_at      DateTime?
+  storekit_transaction_id String?
+  storekit_product_id     String?
+  created_at              DateTime  @default(now())
 }
 
 model WorkoutSession {

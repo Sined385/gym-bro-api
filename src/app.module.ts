@@ -17,6 +17,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { UserModule } from './user/user.module';
 import { ShareModule } from './share/share.module';
+import { SubscriptionModule } from './subscription/subscription.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { ShareModule } from './share/share.module';
     AnalyticsModule,
     UserModule,
     ShareModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

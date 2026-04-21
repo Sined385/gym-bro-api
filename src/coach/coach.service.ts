@@ -11,6 +11,7 @@ import { exerciseImageUrl } from '../common/exercise-image';
 import { SSEEvent } from './coach-stream.helper';
 import { CoachPromptService } from './coach-prompt.service';
 import { CoachToolsService } from './coach-tools.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 
 @Injectable()
 export class CoachService {
@@ -23,6 +24,7 @@ export class CoachService {
     private readonly toolsService: CoachToolsService,
     private readonly analytics: AnalyticsService,
     private readonly aiUsage: AiUsageService,
+    private readonly subscriptionService: SubscriptionService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
   ) {}
 
@@ -143,6 +145,48 @@ export class CoachService {
   }
 
   async *chat(userId: string, dto: SendMessageDto): AsyncGenerator<SSEEvent> {
+    // 0. Check coach access (20-message limit for free users)
+    const access = await this.subscriptionService.checkCoachAccess(userId);
+    if (!access.allowed) {
+      this.analytics.track(userId, 'coach_limit_reached', {
+        messages_used: access.messages_used,
+      });
+
+      // Save the user message and limit-reached response to conversation history
+      let conversationId = dto.conversation_id;
+      if (conversationId) {
+        await this.prisma.coachMessage.create({
+          data: {
+            conversation_id: conversationId,
+            role: 'user',
+            content: dto.content,
+          },
+        });
+        await this.prisma.coachMessage.create({
+          data: {
+            conversation_id: conversationId,
+            role: 'assistant',
+            content:
+              "You've used all 20 free messages. Upgrade to Premium for unlimited AI coaching.",
+          },
+        });
+        await this.prisma.coachConversation.update({
+          where: { id: conversationId },
+          data: { updated_at: new Date() },
+        });
+      }
+
+      yield {
+        type: 'error',
+        data: {
+          code: 'COACH_LIMIT_REACHED',
+          messages_used: access.messages_used,
+          messages_limit: access.messages_limit,
+        },
+      };
+      return;
+    }
+
     // 1. Find or create conversation
     let conversationId = dto.conversation_id;
     if (!conversationId) {

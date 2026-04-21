@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
+import { PremiumGuard } from '../subscription/premium.guard';
 import { HomeService } from './home.service';
 import { SessionExerciseService } from './session-exercise.service';
 import { TemplateService } from './template.service';
@@ -99,6 +100,7 @@ export class HomeController {
   }
 
   @Post('sessions/:id/supersets')
+  @UseGuards(PremiumGuard)
   @HttpCode(HttpStatus.OK)
   async createSuperset(
     @Param('id') sessionId: string,

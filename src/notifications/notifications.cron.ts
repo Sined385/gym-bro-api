@@ -13,14 +13,18 @@ export class NotificationsCronService {
   ) {}
 
   /**
-   * Workout skip reminder — daily at 10 AM
-   * Notifies users who haven't worked out in 3-14 consecutive days.
+   * Smart workout skip reminder — runs every hour on the hour.
+   * Sends reminders to users at their preferred workout hour (in their local timezone).
+   * Falls back to 10 AM UTC for users without timezone/preferred hour data.
    */
-  @Cron('0 10 * * *')
-  async workoutSkipReminder() {
-    this.logger.log('Running workout skip reminder cron');
+  @Cron('0 * * * *')
+  async smartWorkoutReminder() {
+    this.logger.log('Running smart workout reminder cron');
 
     try {
+      const now = new Date();
+      const currentUtcHour = now.getUTCHours();
+
       // Get all users who have active device tokens
       const activeTokenUsers = await this.prisma.deviceToken.findMany({
         where: { is_active: true },
@@ -31,14 +35,31 @@ export class NotificationsCronService {
       const userIds = activeTokenUsers.map((t) => t.user_id);
       if (userIds.length === 0) return;
 
-      const now = new Date();
-      const fourteenDaysAgo = new Date(now);
-      fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+      // Fetch users with their timezone and preferred hour
+      const users = await this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: {
+          id: true,
+          timezone: true,
+          preferred_workout_hour: true,
+        },
+      });
 
-      for (const userId of userIds) {
-        // Find most recent completed session
+      const todayStart = new Date(now);
+      todayStart.setUTCHours(0, 0, 0, 0);
+
+      for (const user of users) {
+        const shouldSend = this.shouldSendReminder(
+          user,
+          currentUtcHour,
+          now,
+        );
+
+        if (!shouldSend) continue;
+
+        // Check last completed session is 3-14 days ago
         const lastSession = await this.prisma.workoutSession.findFirst({
-          where: { user_id: userId, status: 'completed' },
+          where: { user_id: user.id, status: 'completed' },
           orderBy: { completed_at: 'desc' },
           select: { completed_at: true },
         });
@@ -50,19 +71,64 @@ export class NotificationsCronService {
             (1000 * 60 * 60 * 24),
         );
 
-        if (daysSinceLastWorkout >= 3 && daysSinceLastWorkout <= 14) {
-          await this.notificationsService.sendToUser(userId, {
+        if (daysSinceLastWorkout < 3 || daysSinceLastWorkout > 14) continue;
+
+        // Dedup: don't send if we already sent a workout_skip today
+        const alreadySentToday = await this.prisma.notification.findFirst({
+          where: {
+            user_id: user.id,
             type: 'workout_skip',
-            title: 'Miss us?',
-            body: `You haven't worked out in ${daysSinceLastWorkout} days. Let's get back on track!`,
-          });
-        }
+            created_at: { gte: todayStart },
+          },
+        });
+
+        if (alreadySentToday) continue;
+
+        await this.notificationsService.sendToUser(user.id, {
+          type: 'workout_skip',
+          title: 'Miss us?',
+          body: `You haven't worked out in ${daysSinceLastWorkout} days. Let's get back on track!`,
+        });
       }
 
-      this.logger.log('Workout skip reminder cron completed');
+      this.logger.log('Smart workout reminder cron completed');
     } catch (error) {
-      this.logger.error('Workout skip reminder cron failed', error);
+      this.logger.error('Smart workout reminder cron failed', error);
     }
+  }
+
+  /**
+   * Determine whether to send the reminder to this user right now.
+   * - Users with timezone + preferred_workout_hour: send when their local hour matches.
+   * - Users without: fall back to 10 AM UTC.
+   */
+  private shouldSendReminder(
+    user: { timezone: string | null; preferred_workout_hour: number | null },
+    currentUtcHour: number,
+    now: Date,
+  ): boolean {
+    if (user.timezone && user.preferred_workout_hour !== null) {
+      const localHour = this.getLocalHour(now, user.timezone);
+      return localHour === user.preferred_workout_hour;
+    }
+
+    // Fallback: send at 10 AM UTC
+    return currentUtcHour === 10;
+  }
+
+  /**
+   * Get the current local hour for a given IANA timezone.
+   * Uses Intl.DateTimeFormat which handles DST automatically.
+   */
+  private getLocalHour(date: Date, timezone: string): number {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const hourPart = parts.find((p) => p.type === 'hour');
+    return parseInt(hourPart!.value, 10);
   }
 
   /**

@@ -13,6 +13,7 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { formatSessionResponse } from '../common/format-session';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class HomeService {
@@ -20,6 +21,7 @@ export class HomeService {
     private readonly prisma: PrismaService,
     private readonly homeAiService: HomeAiService,
     private readonly analytics: AnalyticsService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ── Dashboard ────────────────────────────────────────────
@@ -41,7 +43,7 @@ export class HomeService {
     ] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { full_name: true, email: true, avatar_url: true },
+        select: { full_name: true, email: true, avatar_url: true, is_premium: true },
       }),
       this.prisma.workoutSession.findMany({
         where: {
@@ -201,7 +203,7 @@ export class HomeService {
     }
 
     return {
-      user: { name, avatar_url: profile?.avatar_url ?? null },
+      user: { name, avatar_url: profile?.avatar_url ?? null, is_premium: profile?.is_premium ?? false },
       motivation: motivation
         ? {
             title: motivation.title,
@@ -603,6 +605,9 @@ export class HomeService {
         data: { status: 'completed' },
       });
     }
+
+    // Recalculate preferred workout hour for smart reminders
+    this.notificationsService.recalculatePreferredHour(userId).catch(() => {});
   }
 
   private async fetchCompletedSession(sessionId: string) {

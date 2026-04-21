@@ -108,6 +108,36 @@ export class CommunityController {
     return this.communityService.unfollowUser(req.user!.id, userId);
   }
 
+  // ── Followers / Following Lists ─────────────────────────────
+
+  @Get('me/followers')
+  @HttpCode(HttpStatus.OK)
+  async getMyFollowers(
+    @Req() req: Request,
+    @Query('limit') limit?: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.communityService.getMyFollowers(
+      req.user!.id,
+      limit ?? 20,
+      cursor,
+    );
+  }
+
+  @Get('me/following')
+  @HttpCode(HttpStatus.OK)
+  async getMyFollowing(
+    @Req() req: Request,
+    @Query('limit') limit?: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.communityService.getMyFollowing(
+      req.user!.id,
+      limit ?? 20,
+      cursor,
+    );
+  }
+
   // ── My Profile ───────────────────────────────────────────
 
   @Get('me/profile')

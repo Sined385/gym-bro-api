@@ -17,12 +17,24 @@ export class NotificationsService {
 
   // ── Device Tokens ────────────────────────────────────────
 
-  async registerToken(userId: string, token: string, platform: string = 'ios') {
+  async registerToken(
+    userId: string,
+    token: string,
+    platform: string = 'ios',
+    timezone?: string,
+  ) {
     await this.prisma.deviceToken.upsert({
       where: { token },
       update: { user_id: userId, platform, is_active: true },
       create: { user_id: userId, token, platform },
     });
+
+    if (timezone) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { timezone },
+      });
+    }
   }
 
   async removeToken(token: string) {
@@ -160,5 +172,61 @@ export class NotificationsService {
       data: { is_read: true },
     });
     return { success: true };
+  }
+
+  // ── Preferred Workout Hour ────────────────────────────────
+
+  async recalculatePreferredHour(userId: string): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { timezone: true },
+      });
+
+      if (!user?.timezone) return;
+
+      const sessions = await this.prisma.workoutSession.findMany({
+        where: { user_id: userId, status: 'completed', started_at: { not: null } },
+        orderBy: { started_at: 'desc' },
+        take: 10,
+        select: { started_at: true },
+      });
+
+      if (sessions.length < 3) return;
+
+      // Convert each started_at to the user's local hour
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: user.timezone,
+        hour: 'numeric',
+        hour12: false,
+      });
+
+      const hours = sessions.map((s) => {
+        const parts = formatter.formatToParts(s.started_at!);
+        const hourPart = parts.find((p) => p.type === 'hour');
+        return parseInt(hourPart!.value, 10);
+      });
+
+      // Compute mode (most frequent hour). On tie, pick the hour from the most recent session.
+      const freq = new Map<number, number>();
+      for (const h of hours) {
+        freq.set(h, (freq.get(h) ?? 0) + 1);
+      }
+
+      let maxCount = 0;
+      for (const count of freq.values()) {
+        if (count > maxCount) maxCount = count;
+      }
+
+      // Among hours with maxCount, pick the one that appears first (most recent)
+      const preferredHour = hours.find((h) => freq.get(h) === maxCount)!;
+
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { preferred_workout_hour: preferredHour },
+      });
+    } catch (error) {
+      this.logger.error('Failed to recalculate preferred hour', error);
+    }
   }
 }

@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
+import { PremiumGuard } from '../subscription/premium.guard';
 import { ExercisesService } from './exercises.service';
 import { CreateExerciseDto } from './dto/exercises.dto';
 
@@ -35,6 +36,7 @@ export class ExercisesController {
   }
 
   @Post()
+  @UseGuards(PremiumGuard)
   @HttpCode(HttpStatus.CREATED)
   async createExercise(@Body() dto: CreateExerciseDto, @Req() req: Request) {
     return this.exercisesService.createExercise(req.user!.id, dto);

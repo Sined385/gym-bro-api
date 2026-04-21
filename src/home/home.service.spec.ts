@@ -3,6 +3,7 @@ import { HomeService } from './home.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const mockPrisma = {
   workoutSession: {
@@ -20,6 +21,10 @@ const mockAnalytics = {
   track: jest.fn(),
 };
 
+const mockNotificationsService = {
+  recalculatePreferredHour: jest.fn(),
+};
+
 describe('HomeService', () => {
   let service: HomeService;
 
@@ -30,6 +35,7 @@ describe('HomeService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: HomeAiService, useValue: mockHomeAiService },
         { provide: AnalyticsService, useValue: mockAnalytics },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 
@@ -98,7 +104,7 @@ describe('HomeService', () => {
         ],
       };
 
-      mockPrisma.workoutSession.findFirst.mockResolvedValue(mockSession);
+      mockPrisma.workoutSession.findMany.mockResolvedValue([mockSession]);
 
       const result = await service.getSessionHistory('user-1', '2026-03-11');
 
@@ -121,7 +127,7 @@ describe('HomeService', () => {
     });
 
     it('should return null session when no completed session exists', async () => {
-      mockPrisma.workoutSession.findFirst.mockResolvedValue(null);
+      mockPrisma.workoutSession.findMany.mockResolvedValue([]);
 
       const result = await service.getSessionHistory('user-1', '2026-03-12');
 

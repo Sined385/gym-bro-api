@@ -716,6 +716,90 @@ export class CommunityService {
     };
   }
 
+  // ── Followers / Following Lists ─────────────────────────────
+
+  async getMyFollowers(userId: string, limit = 20, cursor?: string) {
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+
+    const follows = await this.prisma.follow.findMany({
+      where: {
+        following_id: userId,
+        ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
+      },
+      orderBy: { created_at: 'desc' },
+      take: limit + 1,
+    });
+
+    const hasMore = follows.length > limit;
+    const resultFollows = hasMore ? follows.slice(0, limit) : follows;
+    const nextCursor = hasMore
+      ? resultFollows[resultFollows.length - 1].created_at.toISOString()
+      : null;
+
+    const followerIds = resultFollows.map((f) => f.follower_id);
+    const [users, followingIds] = await Promise.all([
+      this.prisma.user.findMany({ where: { id: { in: followerIds } } }),
+      this.getFollowingIds(userId),
+    ]);
+    const followingSet = new Set(followingIds);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      users: resultFollows.map((f) => {
+        const user = userMap.get(f.follower_id);
+        return {
+          id: f.follower_id,
+          fullName: user?.full_name ?? 'Unknown',
+          username: user?.username ?? null,
+          avatarUrl: user?.avatar_url ?? null,
+          isFollowing: followingSet.has(f.follower_id),
+        };
+      }),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  async getMyFollowing(userId: string, limit = 20, cursor?: string) {
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+
+    const follows = await this.prisma.follow.findMany({
+      where: {
+        follower_id: userId,
+        ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
+      },
+      orderBy: { created_at: 'desc' },
+      take: limit + 1,
+    });
+
+    const hasMore = follows.length > limit;
+    const resultFollows = hasMore ? follows.slice(0, limit) : follows;
+    const nextCursor = hasMore
+      ? resultFollows[resultFollows.length - 1].created_at.toISOString()
+      : null;
+
+    const followingIds = resultFollows.map((f) => f.following_id);
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: followingIds } },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      users: resultFollows.map((f) => {
+        const user = userMap.get(f.following_id);
+        return {
+          id: f.following_id,
+          fullName: user?.full_name ?? 'Unknown',
+          username: user?.username ?? null,
+          avatarUrl: user?.avatar_url ?? null,
+          isFollowing: true,
+        };
+      }),
+      nextCursor,
+      hasMore,
+    };
+  }
+
   // ── Private Helpers ───────────────────────────────────────
 
   private async notifyFollowersOfNewPost(authorId: string, postId: string) {

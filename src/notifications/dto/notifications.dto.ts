@@ -7,6 +7,10 @@ export class RegisterTokenDto {
   @IsOptional()
   @IsString()
   platform?: string;
+
+  @IsOptional()
+  @IsString()
+  timezone?: string;
 }
 
 export class RemoveTokenDto {
