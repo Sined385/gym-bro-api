@@ -1,9 +1,13 @@
-import { Controller, Get, Header } from '@nestjs/common';
+import { Controller, Get, Post, Body, Header, HttpCode, HttpStatus } from '@nestjs/common';
 import { AppService } from './app.service';
+import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get()
   getHello(): string {
@@ -126,5 +130,140 @@ export class AppController {
     </footer>
 </body>
 </html>`;
+  }
+
+  @Get('support')
+  @Header('Content-Type', 'text/html')
+  getSupport(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support — GymJam</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #F8F9FA; color: #1a1a2e; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+        header { background: #fff; border-bottom: 1px solid #eee; padding: 20px 0; }
+        header .container { display: flex; align-items: center; justify-content: space-between; }
+        .logo { font-size: 22px; font-weight: 800; color: #1a1a2e; text-decoration: none; letter-spacing: -0.5px; }
+        .logo span { color: #E86A75; }
+        nav a { font-size: 14px; font-weight: 600; color: #666; text-decoration: none; margin-left: 24px; transition: color 0.2s; }
+        nav a:hover { color: #E86A75; }
+        .container { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+        .hero { padding: 60px 0 40px; text-align: center; }
+        .hero h1 { font-size: 36px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; }
+        .hero p { color: #888; font-size: 15px; }
+        .content { background: #fff; border-radius: 16px; padding: 48px; margin-bottom: 60px; border: 1px solid #eee; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; font-size: 14px; font-weight: 600; color: #1a1a2e; margin-bottom: 6px; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 12px 16px; border: 1px solid #ddd; border-radius: 12px; font-size: 15px; font-family: inherit; color: #1a1a2e; background: #F8F9FA; transition: border-color 0.2s; }
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: #E86A75; background: #fff; }
+        .form-group textarea { min-height: 150px; resize: vertical; }
+        .submit-btn { width: 100%; padding: 14px; background: #E86A75; color: #fff; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s; }
+        .submit-btn:hover { background: #d55d68; }
+        .submit-btn:disabled { background: #ccc; cursor: not-allowed; }
+        .success-msg { text-align: center; padding: 40px 0; }
+        .success-msg h2 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #30C08D; }
+        .success-msg p { color: #666; font-size: 15px; }
+        .error-msg { color: #E86A75; font-size: 14px; margin-top: 8px; display: none; }
+        footer { text-align: center; padding: 32px 0; border-top: 1px solid #eee; color: #999; font-size: 13px; }
+        @media (max-width: 600px) { .hero h1 { font-size: 28px; } .content { padding: 28px 20px; } }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <a href="https://gyymjaam.com" class="logo">Gym<span>Jam</span></a>
+            <nav>
+                <a href="/privacy">Privacy Policy</a>
+                <a href="/support">Support</a>
+            </nav>
+        </div>
+    </header>
+    <div class="container">
+        <div class="hero">
+            <h1>Contact Support</h1>
+            <p>We're here to help. Send us a message and we'll get back to you.</p>
+        </div>
+        <div class="content">
+            <form id="supportForm">
+                <div class="form-group">
+                    <label for="name">Your Name</label>
+                    <input type="text" id="name" name="name" required placeholder="John Doe">
+                </div>
+                <div class="form-group">
+                    <label for="email">Email Address</label>
+                    <input type="email" id="email" name="email" required placeholder="john@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="category">Category</label>
+                    <select id="category" name="category">
+                        <option value="general">General Question</option>
+                        <option value="bug">Bug Report</option>
+                        <option value="account">Account Issue</option>
+                        <option value="subscription">Subscription</option>
+                        <option value="feedback">Feedback</option>
+                        <option value="data">Data / Privacy Request</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="message">Message</label>
+                    <textarea id="message" name="message" required placeholder="Describe your issue or question..."></textarea>
+                </div>
+                <p class="error-msg" id="errorMsg"></p>
+                <button type="submit" class="submit-btn" id="submitBtn">Send Message</button>
+            </form>
+            <div class="success-msg" id="successMsg" style="display:none;">
+                <h2>Message Sent!</h2>
+                <p>Thank you for reaching out. We'll get back to you as soon as possible.</p>
+            </div>
+        </div>
+    </div>
+    <footer>&copy; 2026 GymJam. All rights reserved.</footer>
+    <script>
+        document.getElementById('supportForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+            const errEl = document.getElementById('errorMsg');
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            errEl.style.display = 'none';
+            try {
+                const res = await fetch('/support', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: document.getElementById('name').value,
+                        email: document.getElementById('email').value,
+                        category: document.getElementById('category').value,
+                        message: document.getElementById('message').value,
+                    }),
+                });
+                if (!res.ok) throw new Error('Failed to send');
+                document.getElementById('supportForm').style.display = 'none';
+                document.getElementById('successMsg').style.display = 'block';
+            } catch {
+                errEl.textContent = 'Something went wrong. Please try again.';
+                errEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Send Message';
+            }
+        });
+    </script>
+</body>
+</html>`;
+  }
+
+  @Post('support')
+  @HttpCode(HttpStatus.OK)
+  async submitSupport(
+    @Body() body: { name: string; email: string; category: string; message: string },
+  ) {
+    await this.prisma.$executeRaw\`
+      INSERT INTO support_requests (id, name, email, category, message, created_at)
+      VALUES (gen_random_uuid(), \${body.name}, \${body.email}, \${body.category}, \${body.message}, NOW())
+    \`;
+    return { success: true };
   }
 }
