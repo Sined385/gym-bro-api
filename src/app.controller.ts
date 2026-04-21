@@ -260,10 +260,10 @@ export class AppController {
   async submitSupport(
     @Body() body: { name: string; email: string; category: string; message: string },
   ) {
-    await this.prisma.$executeRaw\`
+    await this.prisma.$executeRaw`
       INSERT INTO support_requests (id, name, email, category, message, created_at)
-      VALUES (gen_random_uuid(), \${body.name}, \${body.email}, \${body.category}, \${body.message}, NOW())
-    \`;
+      VALUES (gen_random_uuid(), ${body.name}, ${body.email}, ${body.category}, ${body.message}, NOW())
+    `;
     return { success: true };
   }
 }
