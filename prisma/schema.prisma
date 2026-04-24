@@ -332,6 +332,17 @@ model AiUsage {
   @@map("ai_usage")
 }
 
+model WeeklyOverview {
+  id         String   @id @default(uuid())
+  user_id    String
+  overview   String
+  week_start DateTime
+  created_at DateTime @default(now())
+
+  @@unique([user_id, week_start])
+  @@map("weekly_overviews")
+}
+
 model WorkoutTemplate {
   id             String   @id @default(uuid())
   user_id        String

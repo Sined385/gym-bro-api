@@ -33,9 +33,13 @@ export class HomeService {
 
     const todayStr = now.toISOString().split('T')[0];
 
+    const prev3WeeksStart = new Date(weekStart.getTime() - 3 * 7 * 24 * 60 * 60 * 1000);
+    const prev3WeeksEnd = weekStart;
+
     const [
       profile,
       completedSessions,
+      prev3WeeksSessions,
       quickWorkout,
       todayHistory,
       motivation,
@@ -50,6 +54,18 @@ export class HomeService {
           user_id: userId,
           status: 'completed',
           completed_at: { gte: weekStart, lt: weekEnd },
+        },
+        include: {
+          exercises: {
+            include: { exercise_sets: true },
+          },
+        },
+      }),
+      this.prisma.workoutSession.findMany({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: prev3WeeksStart, lt: prev3WeeksEnd },
         },
         include: {
           exercises: {
@@ -202,6 +218,72 @@ export class HomeService {
       }
     }
 
+    // Compute previous 3 weeks averages
+    let prev3AvgWorkouts: number | null = null;
+    let prev3AvgVolumeKg: number | null = null;
+    let prev3AvgDurationMinutes: number | null = null;
+    let prev3AvgCalories: number | null = null;
+
+    const hasPrev3WeeksData = prev3WeeksSessions.length > 0;
+    if (hasPrev3WeeksData) {
+      let totalVolume = 0;
+      for (const session of prev3WeeksSessions) {
+        for (const exercise of session.exercises) {
+          for (const set of exercise.exercise_sets) {
+            if (set.weight && set.reps) {
+              let weightKg = Number(set.weight);
+              if (set.weight_unit === 'lbs') {
+                weightKg *= 0.453592;
+              }
+              totalVolume += weightKg * set.reps;
+            }
+          }
+        }
+      }
+
+      const prevDurations = prev3WeeksSessions
+        .map((s) => s.duration_minutes)
+        .filter((d): d is number => d !== null);
+      const prevTotalCalories = prev3WeeksSessions.reduce(
+        (sum, s) => sum + (s.calories ?? 0),
+        0,
+      );
+
+      prev3AvgWorkouts = prev3WeeksSessions.length / 3;
+      prev3AvgVolumeKg = Math.round(totalVolume / 3);
+      prev3AvgDurationMinutes =
+        prevDurations.length > 0
+          ? Math.round(
+              prevDurations.reduce((a, b) => a + b, 0) / prevDurations.length,
+            )
+          : null;
+      prev3AvgCalories = Math.round(prevTotalCalories / 3);
+    }
+
+    // Generate AI weekly overview
+    let weeklyOverview: string | null = null;
+    try {
+      weeklyOverview = await this.homeAiService.getOrGenerateWeeklyOverview(
+        userId,
+        {
+          workouts: completedSessions.length,
+          volumeKg: weekVolumeKg,
+          avgDurationMinutes: weekAvgDurationMinutes,
+          totalCalories: weekTotalCalories,
+        },
+        hasPrev3WeeksData
+          ? {
+              workouts: prev3AvgWorkouts!,
+              volumeKg: prev3AvgVolumeKg!,
+              avgDurationMinutes: prev3AvgDurationMinutes ?? 0,
+              totalCalories: prev3AvgCalories!,
+            }
+          : null,
+      );
+    } catch {
+      // Non-critical — proceed without overview
+    }
+
     return {
       user: { name, avatar_url: profile?.avatar_url ?? null, is_premium: profile?.is_premium ?? false },
       motivation: motivation
@@ -242,6 +324,11 @@ export class HomeService {
       week_streak: weekStreak,
       week_avg_duration_minutes: weekAvgDurationMinutes,
       week_total_calories: weekTotalCalories || null,
+      weekly_overview: weeklyOverview,
+      prev3_avg_workouts: prev3AvgWorkouts,
+      prev3_avg_volume_kg: prev3AvgVolumeKg,
+      prev3_avg_duration_minutes: prev3AvgDurationMinutes,
+      prev3_avg_calories: prev3AvgCalories,
       today_completed_session: todayHistory.session,
     };
   }
@@ -593,6 +680,12 @@ export class HomeService {
     // with the just-completed session included
     await this.prisma.motivationInsight.deleteMany({
       where: { user_id: userId },
+    });
+
+    // Invalidate cached weekly overview so it reflects the new session
+    const weekStart = getWeekStart(new Date());
+    await this.prisma.weeklyOverview.deleteMany({
+      where: { user_id: userId, week_start: weekStart },
     });
 
     // Update plan day status if this session is linked to a plan

@@ -252,6 +252,137 @@ Rules:
 - This appears on a mobile card — be concise`;
   }
 
+  // ── Weekly Overview ────────────────────────────────────
+
+  async getOrGenerateWeeklyOverview(
+    userId: string,
+    currentWeekStats: {
+      workouts: number;
+      volumeKg: number;
+      avgDurationMinutes: number | null;
+      totalCalories: number;
+    },
+    prev3WeekAvgs: {
+      workouts: number;
+      volumeKg: number;
+      avgDurationMinutes: number;
+      totalCalories: number;
+    } | null,
+  ): Promise<string | null> {
+    const weekStart = getWeekStart(new Date());
+
+    // Check cache
+    const cached = await this.prisma.weeklyOverview.findUnique({
+      where: { user_id_week_start: { user_id: userId, week_start: weekStart } },
+    });
+    if (cached) return cached.overview;
+
+    // If no current week workouts, nothing to summarize
+    if (currentWeekStats.workouts === 0) return null;
+
+    try {
+      return await this.generateAIWeeklyOverview(
+        userId,
+        weekStart,
+        currentWeekStats,
+        prev3WeekAvgs,
+      );
+    } catch (error) {
+      console.error('AI weekly overview failed, using fallback:', error);
+      return this.generateFallbackOverview(currentWeekStats, prev3WeekAvgs);
+    }
+  }
+
+  private async generateAIWeeklyOverview(
+    userId: string,
+    weekStart: Date,
+    current: {
+      workouts: number;
+      volumeKg: number;
+      avgDurationMinutes: number | null;
+      totalCalories: number;
+    },
+    prev: {
+      workouts: number;
+      volumeKg: number;
+      avgDurationMinutes: number;
+      totalCalories: number;
+    } | null,
+  ): Promise<string> {
+    let prompt: string;
+    if (prev) {
+      prompt = `You are a concise fitness coach reviewing the user's week so far in the GymJam app.
+Compare their current week to their 3-week rolling average. Focus on what they achieved.
+Celebrate improvements, note any declines matter-of-factly, and end with one brief insight.
+Keep it to 2-3 sentences, conversational tone, no emojis. This is about results, not instructions.
+
+This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volume, ${current.avgDurationMinutes ?? 0} min avg duration, ${current.totalCalories} kcal burned
+Previous 3-week average: ${prev.workouts.toFixed(1)} workouts/week, ${Math.round(prev.volumeKg)} kg, ${Math.round(prev.avgDurationMinutes)} min, ${Math.round(prev.totalCalories)} kcal`;
+    } else {
+      prompt = `You are a concise fitness coach reviewing the user's week so far in the GymJam app.
+The user doesn't have enough history for comparison yet. Briefly summarize their current week stats.
+Keep it to 1-2 sentences, conversational tone, no emojis.
+
+This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volume, ${current.avgDurationMinutes ?? 0} min avg duration, ${current.totalCalories} kcal burned`;
+    }
+
+    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
+    const response = await this.openai.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: 'Generate the weekly overview.' },
+      ],
+      max_tokens: 200,
+      temperature: 0.6,
+    });
+
+    if (response.usage) {
+      this.aiUsage.trackUsage({
+        userId,
+        feature: 'weekly_overview',
+        model,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+      });
+    }
+
+    const overview = response.choices[0]?.message?.content?.trim();
+    if (!overview) throw new Error('Empty OpenAI response');
+
+    await this.prisma.weeklyOverview.upsert({
+      where: { user_id_week_start: { user_id: userId, week_start: weekStart } },
+      create: { user_id: userId, week_start: weekStart, overview },
+      update: { overview },
+    });
+
+    return overview;
+  }
+
+  private generateFallbackOverview(
+    current: {
+      workouts: number;
+      volumeKg: number;
+      avgDurationMinutes: number | null;
+      totalCalories: number;
+    },
+    prev: {
+      workouts: number;
+      volumeKg: number;
+      avgDurationMinutes: number;
+      totalCalories: number;
+    } | null,
+  ): string {
+    const parts = [
+      `${current.workouts} workout${current.workouts === 1 ? '' : 's'} this week`,
+      `${Math.round(current.volumeKg).toLocaleString()} kg total volume`,
+    ];
+    if (!prev) {
+      return `${parts.join(', ')}. Not enough history for comparison yet.`;
+    }
+    return `${parts.join(', ')}. Previous 3-week average: ${prev.workouts.toFixed(1)} workouts, ${Math.round(prev.volumeKg).toLocaleString()} kg volume.`;
+  }
+
   // ── Quick Workout ──────────────────────────────────────
 
   async generateQuickWorkout(userId: string) {

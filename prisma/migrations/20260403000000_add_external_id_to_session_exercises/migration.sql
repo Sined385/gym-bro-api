@@ -34,7 +34,7 @@ SET "exercises_json" = (
   LEFT JOIN "exercise_library" el_id
     ON (elem ->> 'library_exercise_id') IS NOT NULL
     AND (elem ->> 'library_exercise_id') <> ''
-    AND el_id."id" = (elem ->> 'library_exercise_id')::uuid
+    AND el_id."id" = (elem ->> 'library_exercise_id')
     AND el_id."external_id" IS NOT NULL
   LEFT JOIN "exercise_library" el_name
     ON el_name."name" = (elem ->> 'name')
@@ -60,7 +60,7 @@ SET "exercises_json" = (
   LEFT JOIN "exercise_library" el_id
     ON (elem ->> 'library_exercise_id') IS NOT NULL
     AND (elem ->> 'library_exercise_id') <> ''
-    AND el_id."id" = (elem ->> 'library_exercise_id')::uuid
+    AND el_id."id" = (elem ->> 'library_exercise_id')
     AND el_id."external_id" IS NOT NULL
   LEFT JOIN "exercise_library" el_name
     ON el_name."name" = (elem ->> 'name')

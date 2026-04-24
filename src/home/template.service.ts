@@ -20,59 +20,76 @@ export class TemplateService {
   }
 
   async createTemplate(userId: string, dto: CreateTemplateDto) {
-    const ids = dto.session_ids ?? (dto.session_id ? [dto.session_id] : []);
+    let exercisesJson: any[];
 
-    const sessions = await this.prisma.workoutSession.findMany({
-      where: { id: { in: ids }, user_id: userId },
-      orderBy: { completed_at: 'asc' },
-      include: {
-        exercises: {
-          orderBy: { step_number: 'asc' },
-          include: { exercise_sets: true },
-        },
-      },
-    });
-
-    if (sessions.length === 0) {
-      throw new AppException(
-        'session_not_found',
-        'Session not found',
-        HttpStatus.NOT_FOUND,
-      );
-    }
-
-    const allExercises = sessions.flatMap((s) => s.exercises);
-
-    if (allExercises.length === 0) {
-      throw new AppException(
-        'no_exercises',
-        'Cannot save a template from a session with no exercises',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    const exercisesJson = allExercises.map((e: any) => {
-      let setsDisplay = e.sets_display;
-      if (!setsDisplay && e.exercise_sets?.length > 0) {
-        const totalSets = e.exercise_sets.length;
-        const totalReps = e.exercise_sets.reduce(
-          (sum: number, s: any) => sum + s.reps,
-          0,
-        );
-        const repsPerSet = Math.round(totalReps / totalSets);
-        setsDisplay = `${totalSets} × ${repsPerSet}`;
-      }
-      return {
+    if (dto.exercises && dto.exercises.length > 0) {
+      // Direct-exercises path: build from provided exercises
+      exercisesJson = dto.exercises.map((e) => ({
         name: e.name,
         muscle_group: e.muscle_group,
         equipment: e.equipment,
-        sets_display: setsDisplay || '',
-        library_exercise_id: e.library_exercise_id,
+        sets_display: e.sets_display || '3 × 10',
+        library_exercise_id: e.library_exercise_id ?? null,
         external_id: e.external_id ?? null,
-        superset_group_id: e.superset_group_id,
-        superset_order: e.superset_order,
-      };
-    });
+        superset_group_id: null,
+        superset_order: null,
+      }));
+    } else {
+      // Session-based path: build from completed sessions
+      const ids = dto.session_ids ?? (dto.session_id ? [dto.session_id] : []);
+
+      const sessions = await this.prisma.workoutSession.findMany({
+        where: { id: { in: ids }, user_id: userId },
+        orderBy: { completed_at: 'asc' },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+            include: { exercise_sets: true },
+          },
+        },
+      });
+
+      if (sessions.length === 0) {
+        throw new AppException(
+          'session_not_found',
+          'Session not found',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const allExercises = sessions.flatMap((s) => s.exercises);
+
+      if (allExercises.length === 0) {
+        throw new AppException(
+          'no_exercises',
+          'Cannot save a template from a session with no exercises',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      exercisesJson = allExercises.map((e: any) => {
+        let setsDisplay = e.sets_display;
+        if (!setsDisplay && e.exercise_sets?.length > 0) {
+          const totalSets = e.exercise_sets.length;
+          const totalReps = e.exercise_sets.reduce(
+            (sum: number, s: any) => sum + s.reps,
+            0,
+          );
+          const repsPerSet = Math.round(totalReps / totalSets);
+          setsDisplay = `${totalSets} × ${repsPerSet}`;
+        }
+        return {
+          name: e.name,
+          muscle_group: e.muscle_group,
+          equipment: e.equipment,
+          sets_display: setsDisplay || '',
+          library_exercise_id: e.library_exercise_id,
+          external_id: e.external_id ?? null,
+          superset_group_id: e.superset_group_id,
+          superset_order: e.superset_order,
+        };
+      });
+    }
 
     const template = await this.prisma.workoutTemplate.create({
       data: {
