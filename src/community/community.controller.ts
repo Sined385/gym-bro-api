@@ -20,6 +20,8 @@ import {
   CreateCommentDto,
   FeedQueryDto,
   FollowUserDto,
+  CreateReportDto,
+  BlockUserDto,
 } from './dto/community.dto';
 
 @Controller('api/v1/community')
@@ -72,10 +74,11 @@ export class CommunityController {
   @HttpCode(HttpStatus.OK)
   async getComments(
     @Param('id') postId: string,
+    @Req() req: Request,
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: number,
   ) {
-    return this.communityService.getComments(postId, cursor, limit);
+    return this.communityService.getComments(postId, req.user!.id, cursor, limit);
   }
 
   @Post('posts/:id/comments')
@@ -182,5 +185,33 @@ export class CommunityController {
   @HttpCode(HttpStatus.OK)
   async compareWithUser(@Param('userId') userId: string, @Req() req: Request) {
     return this.communityAiService.compareUsers(req.user!.id, userId);
+  }
+
+  // ── Reports ──────────────────────────────────────────────
+
+  @Post('reports')
+  @HttpCode(HttpStatus.CREATED)
+  async reportContent(@Body() dto: CreateReportDto, @Req() req: Request) {
+    return this.communityService.reportContent(req.user!.id, dto);
+  }
+
+  // ── Blocks ──────────────────────────────────────────────
+
+  @Post('blocks')
+  @HttpCode(HttpStatus.CREATED)
+  async blockUser(@Body() dto: BlockUserDto, @Req() req: Request) {
+    return this.communityService.blockUser(req.user!.id, dto.userId);
+  }
+
+  @Delete('blocks/:userId')
+  @HttpCode(HttpStatus.OK)
+  async unblockUser(@Param('userId') userId: string, @Req() req: Request) {
+    return this.communityService.unblockUser(req.user!.id, userId);
+  }
+
+  @Get('blocks')
+  @HttpCode(HttpStatus.OK)
+  async getBlockedUsers(@Req() req: Request) {
+    return this.communityService.getBlockedUsers(req.user!.id);
   }
 }

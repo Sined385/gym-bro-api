@@ -4,6 +4,7 @@ import { AppException } from '../common/exceptions/app.exception';
 import {
   CreatePostDto,
   CreateCommentDto,
+  CreateReportDto,
   FeedQueryDto,
 } from './dto/community.dto';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
@@ -27,19 +28,23 @@ export class CommunityService {
     const limit = query.limit ?? 20;
     const cursor = query.cursor ? new Date(query.cursor) : undefined;
 
-    const followingIds = await this.getFollowingIds(userId);
+    const [followingIds, blockedIds] = await Promise.all([
+      this.getFollowingIds(userId),
+      this.getBlockedIds(userId),
+    ]);
     const followingSet = new Set(followingIds);
 
     let whereClause: any;
 
     if (tab === 'following') {
       whereClause = {
-        user_id: { in: [...followingIds, userId] },
+        user_id: { in: [...followingIds, userId], notIn: blockedIds },
         ...(cursor ? { created_at: { lt: cursor } } : {}),
       };
     } else {
       whereClause = {
         visibility: 'global',
+        ...(blockedIds.length > 0 ? { user_id: { notIn: blockedIds } } : {}),
         ...(cursor ? { created_at: { lt: cursor } } : {}),
       };
     }
@@ -150,6 +155,19 @@ export class CommunityService {
   // ── Likes ─────────────────────────────────────────────────
 
   async toggleLike(userId: string, postId: string) {
+    // Block check
+    const post = await this.prisma.post.findUnique({ where: { id: postId } });
+    if (post) {
+      const blockedIds = await this.getBlockedIds(userId);
+      if (blockedIds.includes(post.user_id)) {
+        throw new AppException(
+          'BLOCKED',
+          'You cannot interact with this user',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+    }
+
     const existing = await this.prisma.postLike.findUnique({
       where: { post_id_user_id: { post_id: postId, user_id: userId } },
     });
@@ -188,13 +206,15 @@ export class CommunityService {
 
   // ── Comments ──────────────────────────────────────────────
 
-  async getComments(postId: string, cursor?: string, limit?: number) {
+  async getComments(postId: string, userId?: string, cursor?: string, limit?: number) {
     const take = limit ?? 20;
     const cursorDate = cursor ? new Date(cursor) : undefined;
+    const blockedIds = userId ? await this.getBlockedIds(userId) : [];
 
     const comments = await this.prisma.postComment.findMany({
       where: {
         post_id: postId,
+        ...(blockedIds.length > 0 ? { user_id: { notIn: blockedIds } } : {}),
         ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
       },
       orderBy: { created_at: 'desc' },
@@ -240,6 +260,16 @@ export class CommunityService {
         'POST_NOT_FOUND',
         'Post not found',
         HttpStatus.NOT_FOUND,
+      );
+    }
+
+    // Block check
+    const blockedIds = await this.getBlockedIds(userId);
+    if (blockedIds.includes(post.user_id)) {
+      throw new AppException(
+        'BLOCKED',
+        'You cannot interact with this user',
+        HttpStatus.FORBIDDEN,
       );
     }
 
@@ -316,6 +346,16 @@ export class CommunityService {
       );
     }
 
+    // Block check
+    const blockedIds = await this.getBlockedIds(followerId);
+    if (blockedIds.includes(followingId)) {
+      throw new AppException(
+        'BLOCKED',
+        'You cannot interact with this user',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     const existing = await this.prisma.follow.findUnique({
       where: {
         follower_id_following_id: {
@@ -385,6 +425,18 @@ export class CommunityService {
         'User not found',
         HttpStatus.NOT_FOUND,
       );
+    }
+
+    // Block check
+    if (currentUserId !== targetUserId) {
+      const blockedIds = await this.getBlockedIds(currentUserId);
+      if (blockedIds.includes(targetUserId)) {
+        throw new AppException(
+          'BLOCKED',
+          'This profile is not available',
+          HttpStatus.FORBIDDEN,
+        );
+      }
     }
 
     const onboarding = await this.prisma.onboardingData.findUnique({
@@ -720,10 +772,12 @@ export class CommunityService {
 
   async getMyFollowers(userId: string, limit = 20, cursor?: string) {
     const cursorDate = cursor ? new Date(cursor) : undefined;
+    const blockedIds = await this.getBlockedIds(userId);
 
     const follows = await this.prisma.follow.findMany({
       where: {
         following_id: userId,
+        ...(blockedIds.length > 0 ? { follower_id: { notIn: blockedIds } } : {}),
         ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
       },
       orderBy: { created_at: 'desc' },
@@ -762,10 +816,12 @@ export class CommunityService {
 
   async getMyFollowing(userId: string, limit = 20, cursor?: string) {
     const cursorDate = cursor ? new Date(cursor) : undefined;
+    const blockedIds = await this.getBlockedIds(userId);
 
     const follows = await this.prisma.follow.findMany({
       where: {
         follower_id: userId,
+        ...(blockedIds.length > 0 ? { following_id: { notIn: blockedIds } } : {}),
         ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
       },
       orderBy: { created_at: 'desc' },
@@ -830,6 +886,135 @@ export class CommunityService {
     });
 
     return follows.map((f) => f.following_id);
+  }
+
+  // ── Reports & Blocks ──────────────────────────────────────
+
+  async reportContent(reporterId: string, dto: CreateReportDto) {
+    // Validate content exists
+    if (dto.contentType === 'post') {
+      const post = await this.prisma.post.findUnique({ where: { id: dto.contentId } });
+      if (!post) throw new AppException('POST_NOT_FOUND', 'Post not found', HttpStatus.NOT_FOUND);
+      if (post.user_id === reporterId) throw new AppException('INVALID_REQUEST', 'Cannot report your own content', HttpStatus.BAD_REQUEST);
+    } else if (dto.contentType === 'comment') {
+      const comment = await this.prisma.postComment.findUnique({ where: { id: dto.contentId } });
+      if (!comment) throw new AppException('COMMENT_NOT_FOUND', 'Comment not found', HttpStatus.NOT_FOUND);
+      if (comment.user_id === reporterId) throw new AppException('INVALID_REQUEST', 'Cannot report your own content', HttpStatus.BAD_REQUEST);
+    } else if (dto.contentType === 'user') {
+      if (dto.contentId === reporterId) throw new AppException('INVALID_REQUEST', 'Cannot report yourself', HttpStatus.BAD_REQUEST);
+      const user = await this.prisma.user.findUnique({ where: { id: dto.contentId } });
+      if (!user) throw new AppException('USER_NOT_FOUND', 'User not found', HttpStatus.NOT_FOUND);
+    }
+
+    await this.prisma.contentReport.upsert({
+      where: {
+        reporter_id_content_type_content_id: {
+          reporter_id: reporterId,
+          content_type: dto.contentType,
+          content_id: dto.contentId,
+        },
+      },
+      update: { reason: dto.reason, description: dto.description ?? null },
+      create: {
+        reporter_id: reporterId,
+        content_type: dto.contentType,
+        content_id: dto.contentId,
+        reason: dto.reason,
+        description: dto.description ?? null,
+      },
+    });
+
+    this.analytics.track(reporterId, 'content_reported', {
+      content_type: dto.contentType,
+      content_id: dto.contentId,
+      reason: dto.reason,
+    });
+
+    return { success: true };
+  }
+
+  async blockUser(blockerId: string, blockedId: string) {
+    if (blockerId === blockedId) {
+      throw new AppException('INVALID_REQUEST', 'Cannot block yourself', HttpStatus.BAD_REQUEST);
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: blockedId } });
+    if (!user) {
+      throw new AppException('USER_NOT_FOUND', 'User not found', HttpStatus.NOT_FOUND);
+    }
+
+    await this.prisma.userBlock.upsert({
+      where: {
+        blocker_id_blocked_id: {
+          blocker_id: blockerId,
+          blocked_id: blockedId,
+        },
+      },
+      update: {},
+      create: { blocker_id: blockerId, blocked_id: blockedId },
+    });
+
+    // Auto-unfollow in both directions
+    await this.prisma.follow.deleteMany({
+      where: {
+        OR: [
+          { follower_id: blockerId, following_id: blockedId },
+          { follower_id: blockedId, following_id: blockerId },
+        ],
+      },
+    });
+
+    this.analytics.track(blockerId, 'user_blocked', { blocked_id: blockedId });
+
+    return { success: true };
+  }
+
+  async unblockUser(blockerId: string, blockedId: string) {
+    await this.prisma.userBlock.deleteMany({
+      where: { blocker_id: blockerId, blocked_id: blockedId },
+    });
+    return { success: true };
+  }
+
+  async getBlockedUsers(userId: string) {
+    const blocks = await this.prisma.userBlock.findMany({
+      where: { blocker_id: userId },
+      orderBy: { created_at: 'desc' },
+    });
+
+    const blockedUserIds = blocks.map((b) => b.blocked_id);
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: blockedUserIds } },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      users: blocks.map((b) => {
+        const user = userMap.get(b.blocked_id);
+        return {
+          id: b.blocked_id,
+          fullName: user?.full_name ?? 'Unknown',
+          username: user?.username ?? null,
+          avatarUrl: user?.avatar_url ?? null,
+          blockedAt: b.created_at.toISOString(),
+        };
+      }),
+    };
+  }
+
+  private async getBlockedIds(userId: string): Promise<string[]> {
+    const blocks = await this.prisma.userBlock.findMany({
+      where: {
+        OR: [{ blocker_id: userId }, { blocked_id: userId }],
+      },
+    });
+
+    const ids = new Set<string>();
+    for (const b of blocks) {
+      if (b.blocker_id === userId) ids.add(b.blocked_id);
+      else ids.add(b.blocker_id);
+    }
+    return [...ids];
   }
 
   private async enrichPostsBatch(posts: any[], currentUserId: string) {

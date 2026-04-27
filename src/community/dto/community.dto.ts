@@ -55,3 +55,26 @@ export class FollowUserDto {
   @IsString()
   userId!: string;
 }
+
+export class CreateReportDto {
+  @IsString()
+  @IsIn(['post', 'comment', 'user'])
+  contentType!: string;
+
+  @IsString()
+  contentId!: string;
+
+  @IsString()
+  @IsIn(['spam', 'harassment', 'inappropriate_content', 'other'])
+  reason!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string;
+}
+
+export class BlockUserDto {
+  @IsString()
+  userId!: string;
+}

@@ -357,3 +357,29 @@ model WorkoutTemplate {
   @@index([share_code])
   @@map("workout_templates")
 }
+
+model ContentReport {
+  id           String   @id @default(uuid())
+  reporter_id  String
+  content_type String
+  content_id   String
+  reason       String
+  description  String?
+  created_at   DateTime @default(now())
+
+  @@unique([reporter_id, content_type, content_id])
+  @@index([content_type, content_id])
+  @@map("content_reports")
+}
+
+model UserBlock {
+  id         String   @id @default(uuid())
+  blocker_id String
+  blocked_id String
+  created_at DateTime @default(now())
+
+  @@unique([blocker_id, blocked_id])
+  @@index([blocker_id])
+  @@index([blocked_id])
+  @@map("user_blocks")
+}
