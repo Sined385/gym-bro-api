@@ -84,10 +84,11 @@ export class NotificationsCronService {
 
         if (alreadySentToday) continue;
 
+        const message = this.getWorkoutSkipMessage(daysSinceLastWorkout);
         await this.notificationsService.sendToUser(user.id, {
           type: 'workout_skip',
-          title: 'Miss us?',
-          body: `You haven't worked out in ${daysSinceLastWorkout} days. Let's get back on track!`,
+          title: message.title,
+          body: message.body,
         });
       }
 
@@ -95,6 +96,36 @@ export class NotificationsCronService {
     } catch (error) {
       this.logger.error('Smart workout reminder cron failed', error);
     }
+  }
+
+  private getWorkoutSkipMessage(days: number): {
+    title: string;
+    body: string;
+  } {
+    const messages = [
+      {
+        title: "Don't lose your gains! 💪",
+        body: `${days} days without a workout — your muscles are waiting. Let's go!`,
+      },
+      {
+        title: 'Your gains miss you 🏋️',
+        body: `It's been ${days} days. One session is all it takes to get back on track!`,
+      },
+      {
+        title: 'Rest day streak? 😅',
+        body: `${days} days off — time to break the streak and break a sweat!`,
+      },
+      {
+        title: 'Time to get back at it 🔥',
+        body: `${days} days since your last session. Your future self will thank you!`,
+      },
+      {
+        title: 'Consistency beats perfection 🎯',
+        body: `${days} days is long enough — even a quick session keeps the momentum going!`,
+      },
+    ];
+
+    return messages[Math.floor(Math.random() * messages.length)];
   }
 
   /**

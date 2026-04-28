@@ -192,7 +192,7 @@ export class CommunityService {
           type: 'like',
           title: `${likerName} liked your post`,
           body: `${likerName} liked your post`,
-          data: { postId, userId },
+          data: { post_id: postId, user_id: userId },
         });
       }
     }
@@ -294,8 +294,8 @@ export class CommunityService {
       this.notificationsService.sendToUser(post.user_id, {
         type: 'comment',
         title: `${commenterName} commented on your post`,
-        body: `${commenterName} commented on your post`,
-        data: { postId, userId },
+        body: dto.content.length > 150 ? dto.content.slice(0, 150) + '...' : dto.content,
+        data: { post_id: postId, user_id: userId },
       });
     }
 
@@ -389,7 +389,7 @@ export class CommunityService {
       type: 'follow',
       title: `${followerName} started following you`,
       body: `${followerName} started following you`,
-      data: { userId: followerId },
+      data: { user_id: followerId },
     });
 
     return { followId: follow.id, message: 'Followed successfully' };
@@ -872,7 +872,7 @@ export class CommunityService {
           type: 'new_post',
           title: `${authorName} shared a new post`,
           body: `${authorName} shared a new post`,
-          data: { postId, userId: authorId },
+          data: { post_id: postId, user_id: authorId },
         });
       }
     } catch {
