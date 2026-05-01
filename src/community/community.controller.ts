@@ -22,6 +22,7 @@ import {
   FollowUserDto,
   CreateReportDto,
   BlockUserDto,
+  ToggleReactionDto,
 } from './dto/community.dto';
 
 @Controller('api/v1/community')
@@ -60,12 +61,26 @@ export class CommunityController {
     return this.communityService.deletePost(req.user!.id, postId);
   }
 
-  // ── Likes ─────────────────────────────────────────────────
+  // ── Likes / Reactions ────────────────────────────────────────
 
   @Post('posts/:id/like')
   @HttpCode(HttpStatus.OK)
   async toggleLike(@Param('id') postId: string, @Req() req: Request) {
-    return this.communityService.toggleLike(req.user!.id, postId);
+    return this.communityService.toggleReaction(req.user!.id, postId, 'heart');
+  }
+
+  @Post('posts/:id/react')
+  @HttpCode(HttpStatus.OK)
+  async toggleReaction(
+    @Param('id') postId: string,
+    @Body() dto: ToggleReactionDto,
+    @Req() req: Request,
+  ) {
+    return this.communityService.toggleReaction(
+      req.user!.id,
+      postId,
+      dto.emoji,
+    );
   }
 
   // ── Comments ──────────────────────────────────────────────
@@ -78,7 +93,12 @@ export class CommunityController {
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: number,
   ) {
-    return this.communityService.getComments(postId, req.user!.id, cursor, limit);
+    return this.communityService.getComments(
+      postId,
+      req.user!.id,
+      cursor,
+      limit,
+    );
   }
 
   @Post('posts/:id/comments')
@@ -161,6 +181,28 @@ export class CommunityController {
       limit ?? 10,
       cursor,
     );
+  }
+
+  // ── User Search & Suggested ──────────────────────────────
+
+  @Get('users/search')
+  @HttpCode(HttpStatus.OK)
+  async searchUsers(
+    @Query('q') query: string,
+    @Query('limit') limit: number,
+    @Req() req: Request,
+  ) {
+    return this.communityService.searchUsers(
+      req.user!.id,
+      query ?? '',
+      limit ?? 10,
+    );
+  }
+
+  @Get('users/suggested')
+  @HttpCode(HttpStatus.OK)
+  async getSuggestedUsers(@Query('limit') limit: number, @Req() req: Request) {
+    return this.communityService.getSuggestedUsers(req.user!.id, limit ?? 10);
   }
 
   // ── User Profiles ─────────────────────────────────────────

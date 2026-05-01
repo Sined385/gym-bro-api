@@ -231,10 +231,12 @@ model PostLike {
   id         String   @id @default(uuid())
   post_id    String
   user_id    String
+  emoji      String   @default("heart")
   created_at DateTime @default(now())
   post       Post     @relation(fields: [post_id], references: [id], onDelete: Cascade)
 
-  @@unique([post_id, user_id])
+  @@unique([post_id, user_id, emoji])
+  @@index([post_id])
   @@map("post_likes")
 }
 

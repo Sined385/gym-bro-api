@@ -152,10 +152,18 @@ export class CommunityService {
     return { success: true };
   }
 
-  // ── Likes ─────────────────────────────────────────────────
+  // ── Reactions ────────────────────────────────────────────
 
-  async toggleLike(userId: string, postId: string) {
-    // Block check
+  private static readonly EMOJI_DISPLAY: Record<string, string> = {
+    fire: '\uD83D\uDD25',
+    muscle: '\uD83D\uDCAA',
+    heart: '\u2764\uFE0F',
+    clap: '\uD83D\uDC4F',
+    wow: '\uD83D\uDE2E',
+    trophy: '\uD83C\uDFC6',
+  };
+
+  async toggleReaction(userId: string, postId: string, emoji: string) {
     const post = await this.prisma.post.findUnique({ where: { id: postId } });
     if (post) {
       const blockedIds = await this.getBlockedIds(userId);
@@ -168,45 +176,73 @@ export class CommunityService {
       }
     }
 
-    const existing = await this.prisma.postLike.findUnique({
-      where: { post_id_user_id: { post_id: postId, user_id: userId } },
+    const existing = await this.prisma.postLike.findFirst({
+      where: { post_id: postId, user_id: userId, emoji },
     });
 
     if (existing) {
       await this.prisma.postLike.delete({ where: { id: existing.id } });
     } else {
       await this.prisma.postLike.create({
-        data: { post_id: postId, user_id: userId },
+        data: { post_id: postId, user_id: userId, emoji },
       });
 
-      this.analytics.track(userId, 'post_liked', { post_id: postId });
+      this.analytics.track(userId, 'post_reacted', {
+        post_id: postId,
+        emoji,
+      });
 
-      // Notify post author of new like (fire-and-forget)
-      const post = await this.prisma.post.findUnique({ where: { id: postId } });
       if (post && post.user_id !== userId) {
-        const liker = await this.prisma.user.findUnique({
+        const reactor = await this.prisma.user.findUnique({
           where: { id: userId },
         });
-        const likerName = liker?.full_name ?? 'Someone';
+        const reactorName = reactor?.full_name ?? 'Someone';
+        const emojiChar = CommunityService.EMOJI_DISPLAY[emoji] ?? emoji;
         this.notificationsService.sendToUser(post.user_id, {
           type: 'like',
-          title: `${likerName} liked your post`,
-          body: `${likerName} liked your post`,
+          title: `${reactorName} reacted ${emojiChar} to your post`,
+          body: `${reactorName} reacted ${emojiChar} to your post`,
           data: { post_id: postId, user_id: userId },
         });
       }
     }
 
-    const likeCount = await this.prisma.postLike.count({
-      where: { post_id: postId },
-    });
+    return this.getPostReactions(postId, userId);
+  }
 
-    return { isLiked: !existing, likeCount };
+  private async getPostReactions(postId: string, userId: string) {
+    const [grouped, userReactions] = await Promise.all([
+      this.prisma.postLike.groupBy({
+        by: ['emoji'],
+        where: { post_id: postId },
+        _count: true,
+      }),
+      this.prisma.postLike.findMany({
+        where: { post_id: postId, user_id: userId },
+        select: { emoji: true },
+      }),
+    ]);
+
+    const userEmojiSet = new Set(userReactions.map((r) => r.emoji));
+    const reactions = grouped.map((g) => ({
+      emoji: g.emoji,
+      count: g._count,
+      isReacted: userEmojiSet.has(g.emoji),
+    }));
+
+    const totalReactionCount = reactions.reduce((s, r) => s + r.count, 0);
+
+    return { reactions, totalReactionCount };
   }
 
   // ── Comments ──────────────────────────────────────────────
 
-  async getComments(postId: string, userId?: string, cursor?: string, limit?: number) {
+  async getComments(
+    postId: string,
+    userId?: string,
+    cursor?: string,
+    limit?: number,
+  ) {
     const take = limit ?? 20;
     const cursorDate = cursor ? new Date(cursor) : undefined;
     const blockedIds = userId ? await this.getBlockedIds(userId) : [];
@@ -294,7 +330,10 @@ export class CommunityService {
       this.notificationsService.sendToUser(post.user_id, {
         type: 'comment',
         title: `${commenterName} commented on your post`,
-        body: dto.content.length > 150 ? dto.content.slice(0, 150) + '...' : dto.content,
+        body:
+          dto.content.length > 150
+            ? dto.content.slice(0, 150) + '...'
+            : dto.content,
         data: { post_id: postId, user_id: userId },
       });
     }
@@ -777,7 +816,9 @@ export class CommunityService {
     const follows = await this.prisma.follow.findMany({
       where: {
         following_id: userId,
-        ...(blockedIds.length > 0 ? { follower_id: { notIn: blockedIds } } : {}),
+        ...(blockedIds.length > 0
+          ? { follower_id: { notIn: blockedIds } }
+          : {}),
         ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
       },
       orderBy: { created_at: 'desc' },
@@ -821,7 +862,9 @@ export class CommunityService {
     const follows = await this.prisma.follow.findMany({
       where: {
         follower_id: userId,
-        ...(blockedIds.length > 0 ? { following_id: { notIn: blockedIds } } : {}),
+        ...(blockedIds.length > 0
+          ? { following_id: { notIn: blockedIds } }
+          : {}),
         ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
       },
       orderBy: { created_at: 'desc' },
@@ -853,6 +896,82 @@ export class CommunityService {
       }),
       nextCursor,
       hasMore,
+    };
+  }
+
+  // ── User Search ──────────────────────────────────────────
+
+  async searchUsers(currentUserId: string, query: string, limit: number) {
+    if (!query || query.trim().length === 0) {
+      return { users: [] };
+    }
+
+    const blockedIds = await this.getBlockedIds(currentUserId);
+    const followingIds = await this.getFollowingIds(currentUserId);
+    const followingSet = new Set(followingIds);
+
+    const excludeIds = [currentUserId, ...blockedIds];
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { notIn: excludeIds },
+        OR: [
+          { full_name: { contains: query, mode: 'insensitive' } },
+          { username: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      take: limit,
+      orderBy: { created_at: 'desc' },
+    });
+
+    return {
+      users: users.map((u) => ({
+        id: u.id,
+        fullName: u.full_name ?? 'Unknown',
+        username: u.username ?? null,
+        avatarUrl: u.avatar_url ?? null,
+        isFollowing: followingSet.has(u.id),
+      })),
+    };
+  }
+
+  // ── Suggested Users ────────────────────────────────────────
+
+  async getSuggestedUsers(currentUserId: string, limit: number) {
+    const [followingIds, blockedIds] = await Promise.all([
+      this.getFollowingIds(currentUserId),
+      this.getBlockedIds(currentUserId),
+    ]);
+
+    const excludeIds = [currentUserId, ...followingIds, ...blockedIds];
+
+    const users = await this.prisma.$queryRaw<
+      {
+        id: string;
+        full_name: string | null;
+        username: string | null;
+        avatar_url: string | null;
+        session_count: number;
+      }[]
+    >`
+      SELECT u.id, u.full_name, u.username, u.avatar_url,
+             COUNT(ws.id)::int as session_count
+      FROM "User" u
+      LEFT JOIN workout_sessions ws ON ws.user_id = u.id AND ws.status = 'completed'
+      WHERE u.id != ALL(${excludeIds})
+      GROUP BY u.id
+      ORDER BY session_count DESC
+      LIMIT ${limit}
+    `;
+
+    return {
+      users: users.map((u) => ({
+        id: u.id,
+        fullName: u.full_name ?? 'Unknown',
+        username: u.username ?? null,
+        avatarUrl: u.avatar_url ?? null,
+        sessionCount: Number(u.session_count),
+      })),
     };
   }
 
@@ -893,17 +1012,53 @@ export class CommunityService {
   async reportContent(reporterId: string, dto: CreateReportDto) {
     // Validate content exists
     if (dto.contentType === 'post') {
-      const post = await this.prisma.post.findUnique({ where: { id: dto.contentId } });
-      if (!post) throw new AppException('POST_NOT_FOUND', 'Post not found', HttpStatus.NOT_FOUND);
-      if (post.user_id === reporterId) throw new AppException('INVALID_REQUEST', 'Cannot report your own content', HttpStatus.BAD_REQUEST);
+      const post = await this.prisma.post.findUnique({
+        where: { id: dto.contentId },
+      });
+      if (!post)
+        throw new AppException(
+          'POST_NOT_FOUND',
+          'Post not found',
+          HttpStatus.NOT_FOUND,
+        );
+      if (post.user_id === reporterId)
+        throw new AppException(
+          'INVALID_REQUEST',
+          'Cannot report your own content',
+          HttpStatus.BAD_REQUEST,
+        );
     } else if (dto.contentType === 'comment') {
-      const comment = await this.prisma.postComment.findUnique({ where: { id: dto.contentId } });
-      if (!comment) throw new AppException('COMMENT_NOT_FOUND', 'Comment not found', HttpStatus.NOT_FOUND);
-      if (comment.user_id === reporterId) throw new AppException('INVALID_REQUEST', 'Cannot report your own content', HttpStatus.BAD_REQUEST);
+      const comment = await this.prisma.postComment.findUnique({
+        where: { id: dto.contentId },
+      });
+      if (!comment)
+        throw new AppException(
+          'COMMENT_NOT_FOUND',
+          'Comment not found',
+          HttpStatus.NOT_FOUND,
+        );
+      if (comment.user_id === reporterId)
+        throw new AppException(
+          'INVALID_REQUEST',
+          'Cannot report your own content',
+          HttpStatus.BAD_REQUEST,
+        );
     } else if (dto.contentType === 'user') {
-      if (dto.contentId === reporterId) throw new AppException('INVALID_REQUEST', 'Cannot report yourself', HttpStatus.BAD_REQUEST);
-      const user = await this.prisma.user.findUnique({ where: { id: dto.contentId } });
-      if (!user) throw new AppException('USER_NOT_FOUND', 'User not found', HttpStatus.NOT_FOUND);
+      if (dto.contentId === reporterId)
+        throw new AppException(
+          'INVALID_REQUEST',
+          'Cannot report yourself',
+          HttpStatus.BAD_REQUEST,
+        );
+      const user = await this.prisma.user.findUnique({
+        where: { id: dto.contentId },
+      });
+      if (!user)
+        throw new AppException(
+          'USER_NOT_FOUND',
+          'User not found',
+          HttpStatus.NOT_FOUND,
+        );
     }
 
     await this.prisma.contentReport.upsert({
@@ -935,12 +1090,22 @@ export class CommunityService {
 
   async blockUser(blockerId: string, blockedId: string) {
     if (blockerId === blockedId) {
-      throw new AppException('INVALID_REQUEST', 'Cannot block yourself', HttpStatus.BAD_REQUEST);
+      throw new AppException(
+        'INVALID_REQUEST',
+        'Cannot block yourself',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: blockedId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: blockedId },
+    });
     if (!user) {
-      throw new AppException('USER_NOT_FOUND', 'User not found', HttpStatus.NOT_FOUND);
+      throw new AppException(
+        'USER_NOT_FOUND',
+        'User not found',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     await this.prisma.userBlock.upsert({
@@ -1026,13 +1191,13 @@ export class CommunityService {
       .filter((p) => p.workout_session_id)
       .map((p) => p.workout_session_id!);
 
-    const [users, likeCounts, commentCounts, userLikes, sessions] =
+    const [users, reactionGroups, commentCounts, userReactions, sessions] =
       await Promise.all([
         // Batch fetch all post authors
         this.prisma.user.findMany({ where: { id: { in: postUserIds } } }),
-        // Batch count likes per post
+        // Batch count reactions per post+emoji
         this.prisma.postLike.groupBy({
-          by: ['post_id'],
+          by: ['post_id', 'emoji'],
           where: { post_id: { in: postIds } },
           _count: true,
         }),
@@ -1042,9 +1207,10 @@ export class CommunityService {
           where: { post_id: { in: postIds } },
           _count: true,
         }),
-        // Batch check if current user liked these posts
+        // Batch check current user's reactions
         this.prisma.postLike.findMany({
           where: { post_id: { in: postIds }, user_id: currentUserId },
+          select: { post_id: true, emoji: true },
         }),
         // Batch fetch workout sessions for posts that have them
         sessionIds.length > 0
@@ -1065,20 +1231,50 @@ export class CommunityService {
 
     // Build O(1) lookup maps
     const userMap = new Map(users.map((u) => [u.id, u]));
-    const likeCountMap = new Map(
-      likeCounts.map((lc) => [lc.post_id, lc._count]),
-    );
+
+    // Reactions per post: Map<postId, {emoji, count}[]>
+    const reactionMap = new Map<string, { emoji: string; count: number }[]>();
+    const reactionCountMap = new Map<string, number>();
+    for (const rg of reactionGroups) {
+      const list = reactionMap.get(rg.post_id) ?? [];
+      list.push({ emoji: rg.emoji, count: rg._count });
+      reactionMap.set(rg.post_id, list);
+      reactionCountMap.set(
+        rg.post_id,
+        (reactionCountMap.get(rg.post_id) ?? 0) + rg._count,
+      );
+    }
+
+    // User reactions: Map<postId, Set<emoji>>
+    const userReactionMap = new Map<string, Set<string>>();
+    for (const ur of userReactions) {
+      const set = userReactionMap.get(ur.post_id) ?? new Set();
+      set.add(ur.emoji);
+      userReactionMap.set(ur.post_id, set);
+    }
+
     const commentCountMap = new Map(
       commentCounts.map((cc) => [cc.post_id, cc._count]),
     );
-    const userLikeSet = new Set(userLikes.map((ul) => ul.post_id));
     const sessionMap = new Map((sessions as any[]).map((s) => [s.id, s]));
 
     return posts.map((post) => {
       const postUser = userMap.get(post.user_id);
-      const likeCount = likeCountMap.get(post.id) ?? 0;
       const commentCount = commentCountMap.get(post.id) ?? 0;
-      const isLiked = userLikeSet.has(post.id);
+
+      // Reactions
+      const postReactions = reactionMap.get(post.id) ?? [];
+      const userEmojis = userReactionMap.get(post.id) ?? new Set();
+      const reactions = postReactions.map((r) => ({
+        emoji: r.emoji,
+        count: r.count,
+        isReacted: userEmojis.has(r.emoji),
+      }));
+      const reactionCount = reactionCountMap.get(post.id) ?? 0;
+
+      // Legacy compat
+      const likeCount = reactionCount;
+      const isLiked = userEmojis.has('heart');
 
       let workoutAttachment: any = null;
       if (post.workout_session_id) {
@@ -1144,6 +1340,8 @@ export class CommunityService {
         likeCount,
         commentCount,
         isLiked,
+        reactions,
+        reactionCount,
         isFollowingAuthor: false, // Caller sets this with followingSet
         isOwnPost: post.user_id === currentUserId,
         createdAt: post.created_at.toISOString(),

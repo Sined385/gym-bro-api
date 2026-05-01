@@ -153,7 +153,7 @@ export class CoachService {
       });
 
       // Save the user message and limit-reached response to conversation history
-      let conversationId = dto.conversation_id;
+      const conversationId = dto.conversation_id;
       if (conversationId) {
         await this.prisma.coachMessage.create({
           data: {

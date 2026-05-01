@@ -33,7 +33,9 @@ export class HomeService {
 
     const todayStr = now.toISOString().split('T')[0];
 
-    const prev3WeeksStart = new Date(weekStart.getTime() - 3 * 7 * 24 * 60 * 60 * 1000);
+    const prev3WeeksStart = new Date(
+      weekStart.getTime() - 3 * 7 * 24 * 60 * 60 * 1000,
+    );
     const prev3WeeksEnd = weekStart;
 
     const [
@@ -47,7 +49,12 @@ export class HomeService {
     ] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { full_name: true, email: true, avatar_url: true, is_premium: true },
+        select: {
+          full_name: true,
+          email: true,
+          avatar_url: true,
+          is_premium: true,
+        },
       }),
       this.prisma.workoutSession.findMany({
         where: {
@@ -285,7 +292,11 @@ export class HomeService {
     }
 
     return {
-      user: { name, avatar_url: profile?.avatar_url ?? null, is_premium: profile?.is_premium ?? false },
+      user: {
+        name,
+        avatar_url: profile?.avatar_url ?? null,
+        is_premium: profile?.is_premium ?? false,
+      },
       motivation: motivation
         ? {
             title: motivation.title,

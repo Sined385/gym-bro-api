@@ -78,3 +78,9 @@ export class BlockUserDto {
   @IsString()
   userId!: string;
 }
+
+export class ToggleReactionDto {
+  @IsString()
+  @IsIn(['fire', 'muscle', 'clap', 'wow', 'trophy'])
+  emoji!: string;
+}

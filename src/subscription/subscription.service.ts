@@ -137,7 +137,10 @@ export class SubscriptionService {
     });
 
     if (user?.premium_source !== 'admin') {
-      return { success: false, reason: 'Can only revoke admin-granted premium' };
+      return {
+        success: false,
+        reason: 'Can only revoke admin-granted premium',
+      };
     }
 
     await this.prisma.user.update({

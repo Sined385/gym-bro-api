@@ -186,7 +186,11 @@ export class NotificationsService {
       if (!user?.timezone) return;
 
       const sessions = await this.prisma.workoutSession.findMany({
-        where: { user_id: userId, status: 'completed', started_at: { not: null } },
+        where: {
+          user_id: userId,
+          status: 'completed',
+          started_at: { not: null },
+        },
         orderBy: { started_at: 'desc' },
         take: 10,
         select: { started_at: true },

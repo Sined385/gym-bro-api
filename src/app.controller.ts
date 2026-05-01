@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Header, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Header,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
 
@@ -258,7 +266,13 @@ export class AppController {
   @Post('support')
   @HttpCode(HttpStatus.OK)
   async submitSupport(
-    @Body() body: { name: string; email: string; category: string; message: string },
+    @Body()
+    body: {
+      name: string;
+      email: string;
+      category: string;
+      message: string;
+    },
   ) {
     await this.prisma.$executeRaw`
       INSERT INTO support_requests (id, name, email, category, message, created_at)

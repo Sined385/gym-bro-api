@@ -49,11 +49,7 @@ export class NotificationsCronService {
       todayStart.setUTCHours(0, 0, 0, 0);
 
       for (const user of users) {
-        const shouldSend = this.shouldSendReminder(
-          user,
-          currentUtcHour,
-          now,
-        );
+        const shouldSend = this.shouldSendReminder(user, currentUtcHour, now);
 
         if (!shouldSend) continue;
 
