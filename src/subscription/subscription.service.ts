@@ -4,6 +4,12 @@ import { AnalyticsService } from '../analytics/analytics.service';
 
 const FREE_COACH_MESSAGE_LIMIT = 20;
 
+const PRODUCT_DURATIONS_DAYS: Record<string, number> = {
+  'com.gymjam.monthly.subscription': 35,
+  'com.gymgam.threemonth.subscription': 95,
+  'com.gymjam.annual.subscription': 370,
+};
+
 @Injectable()
 export class SubscriptionService {
   constructor(
@@ -85,15 +91,17 @@ export class SubscriptionService {
     transactionId: string,
     productId: string,
   ) {
-    // Store the subscription details
-    // In production, this would validate with App Store Server API v2
+    const durationDays = PRODUCT_DURATIONS_DAYS[productId] ?? 35;
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + durationDays);
+
     await this.prisma.user.update({
       where: { id: userId },
       data: {
         is_premium: true,
         premium_source: 'storekit',
         premium_granted_at: new Date(),
-        premium_expires_at: null,
+        premium_expires_at: expiresAt,
         storekit_transaction_id: transactionId,
         storekit_product_id: productId,
       },
@@ -158,6 +166,47 @@ export class SubscriptionService {
     });
 
     return { success: true };
+  }
+
+  async syncStatus(
+    userId: string,
+    hasActiveEntitlement: boolean,
+    transactionId?: string,
+    productId?: string,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { is_premium: true, premium_source: true },
+    });
+
+    if (hasActiveEntitlement && transactionId && productId) {
+      // Renew / extend
+      await this.verifyAndActivate(userId, transactionId, productId);
+      return { is_premium: true };
+    }
+
+    if (!hasActiveEntitlement && user?.premium_source === 'storekit') {
+      // Subscription lapsed or cancelled
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          is_premium: false,
+          premium_source: null,
+          premium_granted_at: null,
+          premium_expires_at: null,
+          storekit_transaction_id: null,
+          storekit_product_id: null,
+        },
+      });
+
+      this.analytics.track(userId, 'premium_expired', {
+        source: 'storekit_sync',
+      });
+
+      return { is_premium: false };
+    }
+
+    return { is_premium: user?.is_premium ?? false };
   }
 
   async hasAnyPlan(userId: string): Promise<boolean> {

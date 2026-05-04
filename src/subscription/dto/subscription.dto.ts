@@ -1,4 +1,4 @@
-import { IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class VerifySubscriptionDto {
   @IsString()
@@ -6,4 +6,17 @@ export class VerifySubscriptionDto {
 
   @IsString()
   product_id: string;
+}
+
+export class SyncSubscriptionDto {
+  @IsBoolean()
+  has_active_entitlement: boolean;
+
+  @IsOptional()
+  @IsString()
+  transaction_id?: string;
+
+  @IsOptional()
+  @IsString()
+  product_id?: string;
 }
