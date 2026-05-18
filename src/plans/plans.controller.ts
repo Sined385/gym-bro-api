@@ -10,6 +10,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { PlansService } from './plans.service';
@@ -29,6 +30,7 @@ export class PlansController {
 
   @Post('generate')
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 5, ttl: 60 * 60 * 1000 } })
   async generatePlan(@Req() req: Request, @Body() dto: GeneratePlanDto) {
     return this.plansService.generatePlan(req.user!.id, dto.force ?? false);
   }

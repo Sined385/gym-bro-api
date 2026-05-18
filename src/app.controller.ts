@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
 
@@ -390,6 +391,7 @@ export class AppController {
 
   @Post('support')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60 * 60 * 1000 } })
   async submitSupport(
     @Body()
     body: {

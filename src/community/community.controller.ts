@@ -11,6 +11,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { CommunityService } from './community.service';
@@ -225,6 +226,7 @@ export class CommunityController {
 
   @Get('users/:userId/compare')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60 * 60 * 1000 } })
   async compareWithUser(@Param('userId') userId: string, @Req() req: Request) {
     return this.communityAiService.compareUsers(req.user!.id, userId);
   }

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -18,11 +20,15 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { UserModule } from './user/user.module';
 import { ShareModule } from './share/share.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { AuthThrottlerGuard } from './common/guards/auth-throttler.guard';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot({
+      throttlers: [{ name: 'default', limit: 60, ttl: 60_000 }],
+    }),
     PrismaModule,
     SupabaseModule,
     OpenAIModule,
@@ -40,6 +46,6 @@ import { SubscriptionModule } from './subscription/subscription.module';
     SubscriptionModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: AuthThrottlerGuard }],
 })
 export class AppModule {}

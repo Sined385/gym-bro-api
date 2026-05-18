@@ -123,8 +123,11 @@ export class CommunityService {
   }
 
   async getPostPublic(postId: string) {
+    // Only globally-visible posts are accessible via the unauthenticated
+    // /p/:postId web fallback. friends-only / private posts must never leak
+    // to anonymous link scrapers.
     const post = await this.prisma.post.findUnique({ where: { id: postId } });
-    if (!post) return null;
+    if (!post || post.visibility !== 'global') return null;
     const user = await this.prisma.user.findUnique({
       where: { id: post.user_id },
     });

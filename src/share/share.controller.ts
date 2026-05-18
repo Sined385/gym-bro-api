@@ -7,11 +7,13 @@ import {
   Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { TemplateService } from '../home/template.service';
 import { CommunityService } from '../community/community.service';
 
 @Controller()
+@Throttle({ default: { limit: 30, ttl: 60 * 1000 } })
 export class ShareController {
   constructor(
     private readonly templateService: TemplateService,
@@ -133,6 +135,7 @@ export class ShareController {
   }
 
   @Get('.well-known/apple-app-site-association')
+  @SkipThrottle()
   async aasa(@Res() res: Response) {
     const aasa = {
       applinks: {

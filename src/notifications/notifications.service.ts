@@ -37,9 +37,9 @@ export class NotificationsService {
     }
   }
 
-  async removeToken(token: string) {
+  async removeToken(userId: string, token: string) {
     await this.prisma.deviceToken.updateMany({
-      where: { token },
+      where: { token, user_id: userId },
       data: { is_active: false },
     });
   }
