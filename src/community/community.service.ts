@@ -93,6 +93,8 @@ export class CommunityService {
         visibility: dto.visibility ?? 'global',
         workout_session_id: sessionId,
         photo_url: dto.photo_url ?? null,
+        share_config: dto.share_config ?? undefined,
+        card_image_url: dto.card_image_url ?? null,
       },
     });
 
@@ -1339,6 +1341,8 @@ export class CommunityService {
         content: post.content,
         visibility: post.visibility,
         photoUrl: post.photo_url,
+        shareConfig: post.share_config ?? null,
+        cardImageUrl: post.card_image_url ?? null,
         workoutAttachment,
         likeCount,
         commentCount,

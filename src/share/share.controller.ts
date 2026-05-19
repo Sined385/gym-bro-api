@@ -96,8 +96,15 @@ export class ShareController {
       ? this.escapeHtml(post.content.substring(0, 200))
       : 'Check out this post on GymJam';
     const title = `${this.escapeHtml(authorName)} on GymJam`;
-    const ogImage = post.photo_url
-      ? `<meta property="og:image" content="${this.escapeHtml(post.photo_url)}">`
+    // Prefer the rasterized share card (9:16, branded) when present; fall
+    // back to the raw user photo for legacy posts. Both unfurl as og:image.
+    const previewImage =
+      (post as any).card_image_url ?? post.photo_url ?? null;
+    const ogImage = previewImage
+      ? `<meta property="og:image" content="${this.escapeHtml(previewImage)}">
+  <meta property="og:image:width" content="1080">
+  <meta property="og:image:height" content="1920">
+  <meta name="twitter:card" content="summary_large_image">`
       : '';
 
     const html = `<!DOCTYPE html>

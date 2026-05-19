@@ -81,6 +81,7 @@ model ExerciseSet {
   set_number   Int
   weight       Decimal?
   weight_unit  String          @default("kg")
+  is_bodyweight Boolean        @default(false)
   reps         Int
   is_completed Boolean         @default(true)
   created_at   DateTime        @default(now())
@@ -105,6 +106,17 @@ model ExerciseLibrary {
   session_exercises SessionExercise[]
 
   @@map("exercise_library")
+}
+
+model ExerciseFavorite {
+  id          String   @id @default(uuid())
+  user_id     String
+  exercise_id String
+  created_at  DateTime @default(now())
+
+  @@unique([user_id, exercise_id])
+  @@index([user_id, created_at(sort: Desc)])
+  @@map("exercise_favorites")
 }
 
 model SessionFeedback {
@@ -217,6 +229,8 @@ model Post {
   visibility         String        @default("global")
   photo_url          String?
   workout_session_id String?
+  share_config       Json?
+  card_image_url     String?
   created_at         DateTime      @default(now())
   updated_at         DateTime      @updatedAt
   likes              PostLike[]

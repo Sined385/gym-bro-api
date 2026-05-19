@@ -564,14 +564,20 @@ export class HomeService {
 
         if (exDto.sets?.length) {
           await tx.exerciseSet.createMany({
-            data: exDto.sets.map((s) => ({
-              exercise_id: exercise.id,
-              set_number: s.set_number,
-              weight: s.weight ?? null,
-              weight_unit: s.weight_unit ?? 'kg',
-              reps: s.reps,
-              is_completed: s.is_completed ?? true,
-            })),
+            data: exDto.sets.map((s) => {
+              const isBodyweight = s.is_bodyweight ?? false;
+              return {
+                exercise_id: exercise.id,
+                set_number: s.set_number,
+                // Force-null weight when the set is flagged bodyweight, so the
+                // DB shape never says "Bodyweight × 8 at 0kg" by mistake.
+                weight: isBodyweight ? null : (s.weight ?? null),
+                weight_unit: s.weight_unit ?? 'kg',
+                reps: s.reps,
+                is_completed: s.is_completed ?? true,
+                is_bodyweight: isBodyweight,
+              };
+            }),
           });
         }
       }
@@ -857,6 +863,7 @@ export class HomeService {
             weight: s.weight ? Number(s.weight) : null,
             weight_unit: s.weight_unit,
             reps: s.reps,
+            is_bodyweight: s.is_bodyweight,
           })),
         })),
       },

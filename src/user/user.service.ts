@@ -164,6 +164,7 @@ export class UserService {
       await tx.post.deleteMany({ where: { user_id: userId } });
       await tx.trainingPlan.deleteMany({ where: { user_id: userId } });
       await tx.workoutSession.deleteMany({ where: { user_id: userId } });
+      await tx.exerciseFavorite.deleteMany({ where: { user_id: userId } });
       await tx.exerciseLibrary.deleteMany({ where: { user_id: userId } });
       await tx.user.deleteMany({ where: { id: userId } });
     });
@@ -176,6 +177,25 @@ export class UserService {
         .remove([`avatars/${userId}.jpg`]);
     } catch (err) {
       this.logger.warn(`Avatar cleanup failed for ${userId}: ${String(err)}`);
+    }
+
+    // Best-effort post-cards cleanup. Listing first because remove() takes
+    // exact paths; bucket is empty for most users so this is cheap.
+    try {
+      const { data: files } = await this.supabase
+        .getClient()
+        .storage.from('post-cards')
+        .list(userId);
+      if (files && files.length > 0) {
+        await this.supabase
+          .getClient()
+          .storage.from('post-cards')
+          .remove(files.map((f) => `${userId}/${f.name}`));
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Post-cards cleanup failed for ${userId}: ${String(err)}`,
+      );
     }
 
     // Drop the Supabase auth user. This invalidates refresh tokens; the current

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -52,5 +53,23 @@ export class ExercisesController {
   @HttpCode(HttpStatus.OK)
   async getPreviousSets(@Param('id') exerciseId: string, @Req() req: Request) {
     return this.exercisesService.getPreviousSets(req.user!.id, exerciseId);
+  }
+
+  @Post(':id/favorite')
+  @HttpCode(HttpStatus.OK)
+  async favoriteExercise(
+    @Param('id') exerciseId: string,
+    @Req() req: Request,
+  ) {
+    return this.exercisesService.favoriteExercise(req.user!.id, exerciseId);
+  }
+
+  @Delete(':id/favorite')
+  @HttpCode(HttpStatus.OK)
+  async unfavoriteExercise(
+    @Param('id') exerciseId: string,
+    @Req() req: Request,
+  ) {
+    return this.exercisesService.unfavoriteExercise(req.user!.id, exerciseId);
   }
 }

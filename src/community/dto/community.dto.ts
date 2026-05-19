@@ -1,5 +1,6 @@
 import {
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -26,6 +27,18 @@ export class CreatePostDto {
   @IsOptional()
   @IsString()
   photo_url?: string;
+
+  // Loose-bag JSON: stored as-is, never interpreted server-side. iOS owns
+  // the schema and evolves it independently. Future clients tolerantly decode.
+  @IsOptional()
+  @IsObject()
+  share_config?: Record<string, any>;
+
+  // Public URL of a pre-rasterized 1080×1920 PNG of the share card. Used as
+  // og:image on the /p/:postId HTML preview so link unfurls show the real card.
+  @IsOptional()
+  @IsString()
+  card_image_url?: string;
 }
 
 export class CreateCommentDto {

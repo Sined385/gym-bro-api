@@ -74,6 +74,10 @@ export class LogSetDto {
   @IsInt()
   @Min(0)
   reps!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  is_bodyweight?: boolean;
 }
 
 export class UpdateSetDto {
@@ -93,6 +97,10 @@ export class UpdateSetDto {
   @IsOptional()
   @IsBoolean()
   is_completed?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_bodyweight?: boolean;
 }
 
 export class FeedbackDto {
@@ -144,6 +152,10 @@ class CompleteSetItemDto {
   @IsOptional()
   @IsBoolean()
   is_completed?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_bodyweight?: boolean;
 }
 
 class CompleteExerciseItemDto {
