@@ -6,10 +6,21 @@ import {
   Header,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
+
+// Cached at module load — both are static. nest-cli.json copies src/assets/*
+// into dist/assets/*. The compiled controller lives at dist/src/, so step out
+// one level to reach the assets folder.
+const ASSETS_DIR = join(__dirname, '..', 'assets');
+const APP_ICON_BYTES = readFileSync(join(ASSETS_DIR, 'app-icon.png'));
+const LANDING_HTML = readFileSync(join(ASSETS_DIR, 'landing.html'), 'utf-8');
 
 @Controller()
 export class AppController {
@@ -19,8 +30,16 @@ export class AppController {
   ) {}
 
   @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  getLanding(): string {
+    return LANDING_HTML;
+  }
+
+  @Get('app-icon.png')
+  @Header('Content-Type', 'image/png')
+  @Header('Cache-Control', 'public, max-age=86400')
+  getAppIcon(@Res() res: Response) {
+    res.send(APP_ICON_BYTES);
   }
 
   @Get('privacy')

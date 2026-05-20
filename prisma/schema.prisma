@@ -254,6 +254,18 @@ model PostLike {
   @@map("post_likes")
 }
 
+model SharedCard {
+  id                 String   @id @default(uuid())
+  user_id            String
+  card_image_url     String
+  share_config       Json?
+  workout_session_id String?
+  created_at         DateTime @default(now())
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@map("shared_cards")
+}
+
 model PostComment {
   id         String   @id @default(uuid())
   post_id    String

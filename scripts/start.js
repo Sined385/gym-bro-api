@@ -23,15 +23,11 @@ function run(label, command, timeoutMs = 60000, extraEnv = {}) {
   }
 }
 
-// 1. Resolve any previously-failed Prisma migrations so migrate deploy can proceed
-run(
-  'Resolve failed Prisma migrations',
-  'npx prisma migrate resolve --rolled-back 20260318100000_add_training_plan',
-  30000,
-  { PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1' },
-);
-
-// analytics_events table was already created by Supabase migration, so mark Prisma's as applied
+// One-time bandage: analytics_events was originally created by a Supabase
+// migration before its Prisma counterpart existed, so prod's _prisma_migrations
+// doesn't have the row. We mark it as applied so `migrate deploy` doesn't try
+// to re-create the table. Brand-new databases (staging, future envs) execute
+// this as a no-op once they're past it. Remove when prod gets baselined.
 run(
   'Resolve analytics_events migration',
   'npx prisma migrate resolve --applied 20260330000000_add_analytics_events',
@@ -39,17 +35,17 @@ run(
   { PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1' },
 );
 
-// 2. Prisma migrations (creates all tables)
+// 1. Prisma migrations (creates all tables)
 run('Prisma migrations', 'npx prisma migrate deploy', 120000, {
   PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK: '1',
 });
 
-// 3. Supabase SQL migrations (adds RLS policies, seed data, storage buckets)
+// 2. Supabase SQL migrations (adds RLS policies, seed data, storage buckets)
 run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 120000);
 
-// 4. Seed exercise library (with external_id for images)
+// 3. Seed exercise library (with external_id for images)
 run('Seed exercise library', 'node scripts/seed-exercise-library.js', 120000);
 
-// 5. Start the app
+// 4. Start the app
 console.log('[startup] Starting NestJS app...');
 require('../dist/src/main');

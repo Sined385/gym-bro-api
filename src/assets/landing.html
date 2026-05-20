@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>GymJam — your AI lifting coach</title>
+<meta name="description" content="GymJam is your pocket coach. AI builds your plan, the app logs every set, and a community of lifters keeps you showing up.">
+<link rel="icon" type="image/png" href="/app-icon.png">
+<meta property="og:title" content="GymJam — your AI lifting coach">
+<meta property="og:description" content="AI builds your plan, the app logs every set, and a community of lifters keeps you showing up.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://gyymjaam.com">
+<meta property="og:image" content="https://gyymjaam.com/app-icon.png">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --coral: #E86A75; --coralDark: #D65D68;
+    --ink: #030213; --ink2: #2D3240; --ink3: #1a1d28;
+    --bg: #F8F9FA; --card: #FFFFFF; --border: #ECECF0;
+    --textSec: #717182; --n100: #F3F3F5; --n200: #E5E5E5;
+    --n400: #A1A1A1; --n600: #525252;
+    --green: #30C08D; --purple: #7A82F6; --amber: #F5B565; --red: #FF453A;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+  /* ─── NAV ─── */
+  nav { position: sticky; top: 0; z-index: 50; background: rgba(248,249,250,0.82); backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid rgba(0,0,0,0.04); }
+  .nav-inner { max-width: 1180px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 18px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; letter-spacing: -0.4px; color: var(--ink); text-decoration: none; }
+  .logo-mark { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; box-shadow: 0 4px 12px rgba(232,106,117,0.35); display: block; }
+  .nav-links { display: flex; gap: 28px; margin-left: 28px; }
+  .nav-links a { color: var(--n600); font-size: 14px; font-weight: 600; text-decoration: none; }
+  .nav-links a:hover { color: var(--ink); }
+  .spacer { flex: 1; }
+  .nav-cta { padding: 9px 18px; background: var(--ink); color: #fff; border-radius: 22px; font-size: 14px; font-weight: 700; text-decoration: none; display: flex; align-items: center; gap: 6px; }
+
+  /* ─── HERO ─── */
+  .hero { max-width: 1180px; margin: 0 auto; padding: 80px 24px 120px; display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: center; }
+  .badge { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 100px; background: rgba(232,106,117,0.10); color: var(--coral); font-size: 13px; font-weight: 700; letter-spacing: 0.3px; margin-bottom: 24px; }
+  .badge-dot { width: 7px; height: 7px; border-radius: 4px; background: var(--coral); box-shadow: 0 0 0 4px rgba(232,106,117,0.18); }
+  h1 { font-size: 88px; font-weight: 900; letter-spacing: -3.2px; line-height: 0.95; margin: 0 0 24px; }
+  h1 em { color: var(--coral); font-style: italic; font-weight: 900; }
+  .lede { font-size: 22px; line-height: 1.5; color: var(--n600); font-weight: 500; max-width: 540px; margin: 0 0 36px; }
+
+  .cta-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .app-store {
+    display: inline-flex; align-items: center; gap: 14px;
+    background: var(--ink); color: #fff;
+    padding: 14px 24px; border-radius: 18px;
+    text-decoration: none;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.14);
+    transition: transform .15s, box-shadow .15s;
+  }
+  .app-store:hover { transform: translateY(-2px); box-shadow: 0 20px 50px rgba(0,0,0,0.18); }
+  .app-store small { display: block; font-size: 11px; font-weight: 500; opacity: 0.7; letter-spacing: 0.5px; }
+  .app-store .as-title { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+  .secondary-link { color: var(--n600); font-size: 14px; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; padding: 14px 8px; }
+  .secondary-link:hover { color: var(--ink); }
+
+  .meta-row { display: flex; gap: 28px; margin-top: 36px; color: var(--textSec); font-size: 13px; font-weight: 600; }
+  .meta-row > div { display: inline-flex; align-items: center; gap: 6px; }
+  .stars { color: var(--amber); letter-spacing: 1px; }
+
+  /* ─── PHONE FRAME ─── */
+  .phone-wrap { display: flex; justify-content: center; position: relative; }
+  .phone-wrap::before {
+    content: ''; position: absolute; inset: -40px;
+    background: radial-gradient(circle at 60% 50%, rgba(232,106,117,0.18), transparent 60%);
+    z-index: 0;
+  }
+  .phone-wrap.purple::before { background: radial-gradient(circle at 50% 50%, rgba(122,130,246,0.18), transparent 60%); }
+  .phone-wrap.dark::before { background: radial-gradient(circle at 50% 50%, rgba(45,50,64,0.20), transparent 60%); }
+  .phone-wrap.amber::before { background: radial-gradient(circle at 50% 50%, rgba(245,181,101,0.20), transparent 60%); }
+  .phone-wrap.green::before { background: radial-gradient(circle at 50% 50%, rgba(48,192,141,0.16), transparent 60%); }
+  .phone { width: 320px; height: 656px; background: #000; border-radius: 48px; padding: 6px; box-shadow: 0 40px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.04) inset; position: relative; z-index: 1; }
+  .phone-screen { width: 100%; height: 100%; background: var(--bg); border-radius: 42px; overflow: hidden; position: relative; }
+  .phone-screen.dark { background: var(--ink2); }
+  .phone-island { position: absolute; top: 9px; left: 50%; transform: translateX(-50%); width: 96px; height: 22px; background: #000; border-radius: 11px; z-index: 5; }
+  .phone-time { position: absolute; top: 12px; left: 22px; font-size: 13px; font-weight: 600; color: var(--ink); z-index: 5; }
+  .phone-screen.dark + .phone-time, .phone-screen.dark .ph-time-dark { color: #fff; }
+  .phone-time.dark { color: #fff; }
+
+  /* Generic phone-content wrapper */
+  .ph { padding: 38px 14px 0; display: flex; flex-direction: column; gap: 11px; }
+
+  /* ─── HOME SCREEN ─── */
+  .ph-head { display: flex; align-items: center; gap: 10px; padding: 4px 4px 0; }
+  .ph-avatar { width: 34px; height: 34px; border-radius: 17px; background: linear-gradient(135deg, var(--coral), var(--coralDark)); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 13px; }
+  .ph-head-text { flex: 1; }
+  .ph-greet { font-size: 10px; color: #737373; font-weight: 500; }
+  .ph-name { font-size: 15px; font-weight: 800; letter-spacing: -0.3px; color: var(--ink); }
+  .ph-bell { width: 30px; height: 30px; border-radius: 15px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.06); display: flex; align-items: center; justify-content: center; color: var(--ink); }
+
+  .ph-mot { background: linear-gradient(135deg, var(--coral), var(--coralDark)); border-radius: 18px; padding: 13px 14px; color: #fff; box-shadow: 0 6px 16px rgba(232,106,117,0.28); }
+  .ph-mot-eyebrow { font-size: 8px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase; opacity: 0.88; }
+  .ph-mot-title { font-size: 15px; font-weight: 800; letter-spacing: -0.2px; margin-top: 3px; }
+  .ph-mot-msg { font-size: 10px; margin-top: 3px; opacity: 0.92; line-height: 1.35; }
+
+  .ph-week { background: #fff; border: 1px solid #F5F5F5; border-radius: 18px; padding: 11px 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.025); }
+  .ph-week-row { display: flex; align-items: center; }
+  .ph-day { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .ph-day-letter { font-size: 8px; font-weight: 800; letter-spacing: 0.4px; color: #A1A1A1; }
+  .ph-day-circle { width: 22px; height: 22px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; }
+  .ph-day-done { background: rgba(48,192,141,0.16); color: var(--green); }
+  .ph-day-today { background: #171717; color: #fff; }
+  .ph-day-empty { color: #A1A1A1; }
+  .ph-chev { width: 20px; color: #525252; display: flex; justify-content: center; }
+
+  .ph-btn { background: #fff; height: 42px; border-radius: 16px; border: 1px solid #E5E5E5; display: flex; align-items: center; padding: 0 14px; gap: 10px; }
+  .ph-btn-icon { width: 22px; height: 22px; border-radius: 11px; background: rgba(232,106,117,0.12); color: var(--coral); display: flex; align-items: center; justify-content: center; }
+  .ph-btn-label { font-size: 12px; font-weight: 800; letter-spacing: -0.3px; color: #171717; }
+
+  .ph-pw-title { font-size: 13px; font-weight: 800; letter-spacing: -0.3px; color: #171717; padding: 0 4px; }
+  .ph-pw {
+    background: linear-gradient(135deg, rgba(122,130,246,0.06) 0%, transparent 55%), #fff;
+    border-radius: 20px; padding: 14px;
+    border: 1px solid #F5F5F5;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.025);
+    display: flex; flex-direction: column; gap: 11px;
+    margin-top: 6px;
+  }
+  .ph-pw-header { font-size: 14px; font-weight: 800; letter-spacing: -0.3px; color: #171717; }
+  .ph-pw-meta { display: flex; gap: 10px; margin-top: 4px; font-size: 9px; font-weight: 700; color: #737373; }
+  .ph-ex { display: flex; align-items: center; gap: 9px; background: #fff; padding: 8px 10px; border-radius: 12px; border: 1px solid #F5F5F5; }
+  .ph-ex-num { width: 24px; height: 24px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; }
+  .ph-ex-name { flex: 1; font-size: 11px; font-weight: 700; color: #171717; letter-spacing: -0.1px; }
+  .ph-ex-name span { font-size: 8px; color: #737373; font-weight: 700; display: block; margin-top: 1px; }
+  .ph-ex-sets { font-size: 10px; font-weight: 800; color: #525252; font-variant-numeric: tabular-nums; }
+  .ph-start {
+    background: var(--purple); border-radius: 13px; height: 36px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    color: #fff; font-size: 12px; font-weight: 800;
+    box-shadow: 0 6px 8px rgba(122,130,246,0.28);
+  }
+
+  /* ─── COACH SCREEN ─── */
+  .ph-coach-head { padding: 4px 4px 8px; text-align: center; font-size: 14px; font-weight: 800; color: var(--ink); letter-spacing: -0.3px; }
+  .ph-bubble-ai { background: #fff; border: 1px solid #F5F5F5; border-radius: 14px 14px 14px 4px; padding: 10px 12px; font-size: 11px; line-height: 1.45; color: var(--ink); max-width: 80%; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
+  .ph-bubble-user { background: linear-gradient(135deg, var(--coral), var(--coralDark)); color: #fff; border-radius: 14px 14px 4px 14px; padding: 10px 12px; font-size: 11px; line-height: 1.45; max-width: 80%; align-self: flex-end; }
+  .ph-coach-card {
+    background: linear-gradient(135deg, rgba(122,130,246,0.07), transparent), #fff;
+    border: 1px solid #F5F5F5; border-radius: 16px; padding: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.03);
+  }
+  .ph-coach-card-title { font-size: 13px; font-weight: 800; color: var(--ink); letter-spacing: -0.3px; }
+  .ph-coach-card-meta { display: flex; gap: 8px; font-size: 9px; font-weight: 700; color: #737373; }
+  .ph-coach-cta { background: var(--purple); border-radius: 10px; padding: 9px 0; text-align: center; color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 4px 8px rgba(122,130,246,0.28); }
+  .ph-coach-input { display: flex; align-items: center; gap: 6px; background: #fff; border: 1px solid #F5F5F5; border-radius: 100px; padding: 8px 10px 8px 14px; margin-top: 4px; }
+  .ph-coach-input-text { flex: 1; font-size: 11px; color: #A1A1A1; font-weight: 500; }
+  .ph-coach-input-send { width: 26px; height: 26px; border-radius: 13px; background: linear-gradient(135deg, var(--coral), var(--coralDark)); display: flex; align-items: center; justify-content: center; }
+
+  /* ─── PLAN SCREEN ─── */
+  .ph-plan-title { font-size: 24px; font-weight: 800; color: var(--ink); letter-spacing: -0.8px; padding: 0 4px; }
+  .ph-plan-sub { font-size: 10px; color: #737373; font-weight: 600; padding: 0 4px 2px; }
+  .ph-plan-day { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: #fff; border: 1px solid #F5F5F5; border-radius: 14px; }
+  .ph-plan-day.today { background: var(--ink); color: #fff; border: none; box-shadow: 0 6px 16px rgba(45,50,64,0.18); }
+  .ph-plan-day-date { width: 38px; height: 38px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ph-plan-day.today .ph-plan-day-date { background: var(--coral); color: #fff; }
+  .ph-plan-day.done .ph-plan-day-date { background: rgba(48,192,141,0.14); color: var(--green); }
+  .ph-plan-day.rest .ph-plan-day-date { background: rgba(122,130,246,0.14); color: var(--purple); }
+  .ph-plan-day-date b { font-size: 13px; font-weight: 800; letter-spacing: -0.3px; }
+  .ph-plan-day-date small { font-size: 7px; font-weight: 800; opacity: 0.7; }
+  .ph-plan-day-name { flex: 1; }
+  .ph-plan-day-name b { font-size: 12px; font-weight: 800; letter-spacing: -0.2px; display: block; }
+  .ph-plan-day-name small { font-size: 9px; opacity: 0.7; font-weight: 600; }
+  .ph-plan-day-start { padding: 4px 10px; border-radius: 10px; background: var(--coral); color: #fff; font-size: 10px; font-weight: 800; }
+  .ph-plan-day-check { color: var(--green); }
+
+  /* ─── SESSION SCREEN ─── */
+  .ph-session-head { padding: 6px 8px; display: flex; align-items: center; gap: 8px; }
+  .ph-session-back { width: 28px; height: 28px; border-radius: 14px; background: #fff; border: 1px solid #F5F5F5; display: flex; align-items: center; justify-content: center; color: var(--ink); }
+  .ph-session-eyebrow { flex: 1; text-align: center; }
+  .ph-session-eyebrow b { font-size: 8px; font-weight: 800; color: var(--coral); letter-spacing: 1px; }
+  .ph-session-eyebrow span { display: block; font-size: 12px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ph-session-name { font-size: 22px; font-weight: 800; color: var(--ink); letter-spacing: -0.7px; padding: 0 4px; line-height: 1.05; }
+  .ph-comp { background: #F8F9FA; border: 1px solid #F5F5F5; border-radius: 14px; padding: 10px 12px; }
+  .ph-comp-label { font-size: 8px; font-weight: 800; letter-spacing: 1px; color: #A1A1A1; }
+  .ph-comp-stats { display: flex; gap: 8px; margin-top: 8px; }
+  .ph-comp-stat { flex: 1; text-align: center; }
+  .ph-comp-stat b { font-size: 13px; font-weight: 800; color: var(--ink); display: block; }
+  .ph-comp-stat small { font-size: 7px; font-weight: 800; color: #A1A1A1; letter-spacing: 0.4px; }
+  .ph-comp-delta { display: inline-block; padding: 2px 5px; border-radius: 3px; background: rgba(48,192,141,0.08); color: var(--green); font-size: 8px; font-weight: 800; margin-top: 2px; }
+  .ph-today { background: #fff; border: 1px solid #F5F5F5; border-radius: 18px; padding: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+  .ph-today-title { font-size: 13px; font-weight: 800; color: var(--ink); display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .ph-today-title::after { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--coral); box-shadow: 0 0 0 3px rgba(232,106,117,0.2); }
+  .ph-set { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 9px; margin-bottom: 4px; border: 1px solid #F5F5F5; }
+  .ph-set.done { background: rgba(48,192,141,0.06); }
+  .ph-set.active { background: rgba(232,106,117,0.06); border-color: var(--coral); }
+  .ph-set-n { width: 18px; height: 18px; border-radius: 9px; background: var(--coral); color: #fff; font-size: 9px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .ph-set.done .ph-set-n { background: var(--green); }
+  .ph-set-w, .ph-set-r { font-size: 11px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; flex: 1; text-align: center; padding: 4px 0; background: #fff; border: 1px solid #F5F5F5; border-radius: 6px; }
+  .ph-set-check { width: 18px; height: 18px; color: var(--green); }
+  .ph-set-pr { padding: 1px 4px; border-radius: 3px; background: var(--coral); color: #fff; font-size: 8px; font-weight: 800; letter-spacing: 0.3px; }
+
+  /* ─── COMMUNITY SCREEN ─── */
+  .ph-comm-head { display: flex; align-items: center; padding: 0 4px; }
+  .ph-comm-head h2 { flex: 1; font-size: 22px; font-weight: 800; color: var(--ink); margin: 0; letter-spacing: -0.6px; }
+  .ph-comm-icon { width: 28px; height: 28px; border-radius: 14px; background: var(--coral); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(232,106,117,0.35); }
+  .ph-post { background: #fff; border: 1px solid #F5F5F5; border-radius: 18px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+  .ph-post-head { padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
+  .ph-post-av { width: 28px; height: 28px; border-radius: 14px; background: linear-gradient(135deg, var(--coral), var(--coralDark)); color: #fff; font-size: 10px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .ph-post-name { flex: 1; font-size: 11px; font-weight: 800; color: var(--ink); }
+  .ph-post-name span { font-size: 9px; font-weight: 500; color: #737373; }
+  .ph-post-follow { font-size: 9px; font-weight: 800; color: var(--coral); border: 1.5px solid var(--coral); padding: 2px 7px; border-radius: 8px; }
+  .ph-post-cap { padding: 0 12px 8px; font-size: 11px; color: var(--ink); line-height: 1.4; }
+  .ph-post-card { margin: 0 12px 8px; background: linear-gradient(135deg, rgba(122,130,246,0.06), transparent), #FCFCFA; border: 1px solid #F5F5F5; border-radius: 12px; padding: 10px; }
+  .ph-post-card-eyebrow { font-size: 7px; font-weight: 800; color: var(--coral); letter-spacing: 1px; }
+  .ph-post-card-title { font-size: 13px; font-weight: 800; color: var(--ink); letter-spacing: -0.3px; margin: 2px 0 6px; }
+  .ph-post-card-stats { background: #fff; border: 1px solid #F5F5F5; border-radius: 8px; padding: 6px 8px; display: flex; justify-content: space-between; }
+  .ph-post-card-stat b { display: block; font-size: 11px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ph-post-card-stat small { font-size: 6.5px; font-weight: 800; color: #737373; letter-spacing: 0.5px; }
+  .ph-post-card-exes { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .ph-post-card-ex { display: flex; align-items: center; gap: 5px; background: #fff; border: 1px solid #F5F5F5; border-radius: 6px; padding: 4px 6px; }
+  .ph-post-card-ex-num { width: 14px; height: 14px; border-radius: 4px; font-size: 8px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .ph-post-card-ex-name { flex: 1; font-size: 9px; font-weight: 700; color: var(--ink); }
+  .ph-post-card-ex-pr { padding: 0 3px; border-radius: 2px; background: var(--coral); color: #fff; font-size: 6px; font-weight: 800; }
+  .ph-post-card-ex-sets { font-size: 9px; font-weight: 800; color: var(--ink); }
+  .ph-post-dots { display: flex; justify-content: center; gap: 4px; padding: 4px 0; }
+  .ph-post-dot { width: 4px; height: 4px; border-radius: 2px; background: var(--n400); }
+  .ph-post-dot.active { width: 14px; background: var(--coral); }
+  .ph-post-react { padding: 6px 12px 10px; display: flex; align-items: center; gap: 12px; color: var(--n400); }
+  .ph-post-react-heart { color: var(--coral); display: flex; align-items: center; gap: 4px; }
+  .ph-post-react-heart span { font-size: 10px; font-weight: 800; }
+
+  /* ─── PROFILE SCREEN ─── */
+  .ph-prof-head { display: flex; align-items: center; gap: 10px; padding: 4px 4px 0; }
+  .ph-prof-av { width: 56px; height: 56px; border-radius: 28px; background: linear-gradient(135deg, var(--coral), var(--coralDark)); color: #fff; font-size: 20px; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 3px solid #F5F5F5; }
+  .ph-prof-info b { font-size: 17px; font-weight: 800; color: var(--ink); letter-spacing: -0.4px; display: block; }
+  .ph-prof-info span { font-size: 10px; color: #737373; font-weight: 600; display: block; margin-top: 2px; }
+  .ph-prof-info .goal { color: var(--coral); font-weight: 800; margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  .ph-followers { display: flex; background: #fff; border: 1px solid #F5F5F5; border-radius: 16px; padding: 10px 0; }
+  .ph-followers > div { flex: 1; text-align: center; }
+  .ph-followers b { font-size: 16px; font-weight: 800; color: var(--ink); display: block; }
+  .ph-followers small { font-size: 9px; font-weight: 600; color: #737373; }
+  .ph-followers-sep { width: 1px; background: #F5F5F5; }
+  .ph-consistency-title, .ph-prs-title { font-size: 13px; font-weight: 800; color: var(--ink); letter-spacing: -0.3px; padding: 0 4px; margin-top: 4px; }
+  .ph-consistency { display: flex; gap: 6px; }
+  .ph-consistency > div { flex: 1; background: #fff; border: 1px solid #F5F5F5; border-radius: 12px; padding: 8px 0; text-align: center; }
+  .ph-consistency small { font-size: 7px; font-weight: 800; color: #737373; letter-spacing: 0.6px; }
+  .ph-consistency b { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; display: block; margin: 2px 0; }
+  .ph-prs { background: #fff; border: 1px solid #F5F5F5; border-radius: 16px; overflow: hidden; }
+  .ph-prs > div { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #F5F5F5; }
+  .ph-prs > div:last-child { border-bottom: none; }
+  .ph-prs-trophy { color: var(--amber); }
+  .ph-prs-name { flex: 1; font-size: 11px; font-weight: 800; color: var(--ink); }
+  .ph-prs-val { font-size: 11px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  /* ─── WATCH (small watch face inline) ─── */
+  .watch { width: 240px; height: 290px; background: #000; border-radius: 50px; padding: 4px; position: relative; box-shadow: 0 30px 60px rgba(0,0,0,0.3); }
+  .watch::before, .watch::after { content: ''; position: absolute; right: -5px; width: 8px; background: #1a1a1a; border-radius: 2px; }
+  .watch::before { top: 60px; height: 14px; }
+  .watch::after { top: 95px; height: 30px; }
+  .watch-screen { width: 100%; height: 100%; background: #000; border-radius: 46px; overflow: hidden; padding: 18px 12px; display: flex; flex-direction: column; gap: 6px; color: #fff; }
+  .watch-time { font-size: 10px; font-weight: 700; color: var(--coral); position: absolute; top: 12px; right: 20px; font-variant-numeric: tabular-nums; }
+  .watch-row { display: flex; align-items: center; justify-content: space-between; }
+  .watch-elapsed { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .watch-hr { display: flex; align-items: center; gap: 2px; color: var(--red); font-size: 11px; font-weight: 700; }
+  .watch-set { font-size: 9px; color: rgba(255,255,255,0.6); font-weight: 700; }
+  .watch-exname { font-size: 13px; font-weight: 800; letter-spacing: -0.3px; margin-top: 4px; }
+  .watch-muscle { font-size: 8px; color: rgba(255,255,255,0.55); font-weight: 600; }
+  .watch-dots { display: flex; gap: 3px; margin: 5px 0; }
+  .watch-dot { width: 6px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.2); }
+  .watch-dot.done { background: var(--green); }
+  .watch-sets { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+  .watch-set-row { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; }
+  .watch-set-row.done { color: rgba(255,255,255,0.55); }
+  .watch-set-row.curr { background: rgba(232,106,117,0.12); border: 1px solid rgba(232,106,117,0.3); color: #fff; }
+  .watch-set-w { flex: 1; font-variant-numeric: tabular-nums; }
+  .watch-tick { color: var(--green); }
+
+  /* ─── FEATURE ROWS ─── */
+  section.features { background: #fff; padding: 120px 0; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .section-eyebrow { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; color: var(--coral); text-transform: uppercase; }
+  .section-title { font-size: 52px; font-weight: 800; letter-spacing: -1.5px; margin: 8px 0 16px; line-height: 1.05; }
+  .section-sub { font-size: 18px; line-height: 1.5; color: var(--n600); max-width: 640px; font-weight: 500; margin: 0 0 80px; }
+
+  .feature-row { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; align-items: center; padding: 60px 0; }
+  .feature-row.reverse .ftr-text { order: 2; }
+  .ftr-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 100px; }
+  .ftr-eb-coral { background: rgba(232,106,117,0.10); color: var(--coral); }
+  .ftr-eb-purple { background: rgba(122,130,246,0.10); color: var(--purple); }
+  .ftr-eb-amber { background: rgba(245,181,101,0.14); color: #b87a2d; }
+  .ftr-eb-green { background: rgba(48,192,141,0.10); color: var(--green); }
+  .ftr-eb-ink { background: rgba(45,50,64,0.10); color: var(--ink2); }
+  .ftr-text h3 { font-size: 44px; font-weight: 800; letter-spacing: -1.3px; line-height: 1.05; margin: 16px 0 18px; color: var(--ink); }
+  .ftr-text h3 em { font-style: italic; }
+  .ftr-text h3 em.coral { color: var(--coral); }
+  .ftr-text h3 em.purple { color: var(--purple); }
+  .ftr-text h3 em.amber { color: var(--amber); }
+  .ftr-text h3 em.green { color: var(--green); }
+  .ftr-text p { font-size: 17px; line-height: 1.55; color: var(--n600); font-weight: 500; margin: 0 0 22px; max-width: 480px; }
+  .ftr-list { display: flex; flex-direction: column; gap: 10px; }
+  .ftr-list-item { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--ink); font-weight: 600; }
+  .ftr-list-tick { flex-shrink: 0; width: 18px; height: 18px; border-radius: 9px; background: rgba(48,192,141,0.14); color: var(--green); display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+
+  /* ─── BIG CTA ─── */
+  section.cta {
+    padding: 120px 0;
+    background: linear-gradient(135deg, var(--coral) 0%, var(--coralDark) 100%);
+    color: #fff; text-align: center;
+    position: relative; overflow: hidden;
+  }
+  section.cta::before { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 20% 80%, rgba(255,255,255,0.18), transparent 60%); }
+  .cta h2 { position: relative; font-size: 64px; font-weight: 900; letter-spacing: -2.5px; line-height: 0.95; margin: 0 0 18px; }
+  .cta p { position: relative; font-size: 20px; opacity: 0.92; max-width: 540px; margin: 0 auto 38px; font-weight: 500; }
+  .cta-buttons { position: relative; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+  .cta .app-store { background: #000; }
+
+  /* ─── FOOTER ─── */
+  footer { padding: 50px 0 60px; background: var(--bg); }
+  .footer-inner { display: flex; flex-direction: column; gap: 24px; align-items: flex-start; }
+  .footer-row { display: flex; gap: 32px; align-items: center; flex-wrap: wrap; }
+  .footer-row a { color: var(--textSec); font-size: 13px; font-weight: 600; text-decoration: none; }
+  .footer-row a:hover { color: var(--ink); }
+  .copy { color: var(--n400); font-size: 12px; font-weight: 500; }
+
+  /* ─── responsive ─── */
+  @media (max-width: 880px) {
+    .hero { grid-template-columns: 1fr; padding: 60px 24px 80px; gap: 60px; text-align: center; }
+    .lede { margin-left: auto; margin-right: auto; }
+    .cta-row, .meta-row { justify-content: center; }
+    .nav-links { display: none; }
+    h1 { font-size: 56px; letter-spacing: -2px; }
+    .section-title { font-size: 36px; letter-spacing: -1px; }
+    .cta h2 { font-size: 44px; letter-spacing: -1.5px; }
+    .feature-row { grid-template-columns: 1fr; gap: 40px; padding: 40px 0; text-align: center; }
+    .feature-row.reverse .ftr-text { order: 0; }
+    .ftr-text h3 { font-size: 32px; letter-spacing: -1px; }
+    .ftr-text p, .ftr-list { margin-left: auto; margin-right: auto; }
+    .ftr-list-item { text-align: left; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="logo">
+      <img class="logo-mark" src="/app-icon.png" alt="">
+      GymJam
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#community">Community</a>
+      <a href="#download">Download</a>
+    </div>
+    <div class="spacer"></div>
+    <a href="https://apps.apple.com/app/gymjam/id6744136857" class="nav-cta">
+      Get app
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+    </a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div>
+    <div class="badge"><span class="badge-dot"></span>AI coach · workout tracker · community</div>
+    <h1>Lift smarter.<br/>Track every <em>rep.</em></h1>
+    <p class="lede">GymJam is your pocket coach. AI builds your plan, the app logs every set, and a community of lifters keeps you showing up.</p>
+    <div class="cta-row">
+      <a href="https://apps.apple.com/app/gymjam/id6744136857" class="app-store">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="#fff"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.41-1.09-.47-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.41C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.07zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+        <div><small>Download on the</small><div class="as-title">App Store</div></div>
+      </a>
+      <a href="#features" class="secondary-link">See features<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></a>
+    </div>
+    <div class="meta-row">
+      <div><span class="stars">★★★★★</span> 4.8 · App Store</div>
+      <div>·</div>
+      <div>30+ activity types</div>
+      <div>·</div>
+      <div>Apple Watch ready</div>
+    </div>
+  </div>
+
+  <!-- HERO PHONE — HOME -->
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-island"></div>
+      <div class="phone-time">9:41</div>
+      <div class="phone-screen">
+        <div class="ph">
+          <div class="ph-head">
+            <div class="ph-avatar">D</div>
+            <div class="ph-head-text"><div class="ph-greet">Good morning</div><div class="ph-name">Dan</div></div>
+            <div class="ph-bell"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></svg></div>
+          </div>
+          <div class="ph-mot">
+            <div class="ph-mot-eyebrow">🔥 Daily</div>
+            <div class="ph-mot-title">You're on fire</div>
+            <div class="ph-mot-msg">3-day streak. One more locks in a full training week.</div>
+          </div>
+          <div class="ph-week">
+            <div class="ph-week-row">
+              <div class="ph-day"><div class="ph-day-letter">M</div><div class="ph-day-circle ph-day-done">✓</div></div>
+              <div class="ph-day"><div class="ph-day-letter">T</div><div class="ph-day-circle ph-day-done">✓</div></div>
+              <div class="ph-day"><div class="ph-day-letter">W</div><div class="ph-day-circle ph-day-empty">17</div></div>
+              <div class="ph-day"><div class="ph-day-letter">T</div><div class="ph-day-circle ph-day-done">✓</div></div>
+              <div class="ph-day"><div class="ph-day-letter">F</div><div class="ph-day-circle ph-day-today">21</div></div>
+              <div class="ph-day"><div class="ph-day-letter">S</div><div class="ph-day-circle ph-day-empty">22</div></div>
+              <div class="ph-day"><div class="ph-day-letter">S</div><div class="ph-day-circle ph-day-empty">23</div></div>
+              <div class="ph-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+          </div>
+          <div class="ph-btn"><div class="ph-btn-icon"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div><div class="ph-btn-label">Start Session</div></div>
+          <div class="ph-btn"><div class="ph-btn-icon"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M19 21l-7-5-7 5V3h14v18z"/></svg></div><div class="ph-btn-label">Library</div></div>
+          <div style="margin-top:2px">
+            <div class="ph-pw-title">Planned Workout</div>
+            <div class="ph-pw">
+              <div>
+                <div class="ph-pw-header">Upper Body Power</div>
+                <div class="ph-pw-meta"><span>⚡ Chest, Back, Shoulders</span><span>· 4 exercises</span></div>
+              </div>
+              <div class="ph-ex"><div class="ph-ex-num" style="background:rgba(232,106,117,0.12);color:var(--coral)">1</div><div class="ph-ex-name">Bench Press<span>Chest</span></div><div class="ph-ex-sets">4 × 8</div></div>
+              <div class="ph-ex"><div class="ph-ex-num" style="background:rgba(48,192,141,0.14);color:var(--green)">2</div><div class="ph-ex-name">Pull-ups<span>Back</span></div><div class="ph-ex-sets">3 × 10</div></div>
+              <div class="ph-ex"><div class="ph-ex-num" style="background:rgba(122,130,246,0.14);color:var(--purple)">3</div><div class="ph-ex-name">DB Shoulder Press<span>Shoulders</span></div><div class="ph-ex-sets">3 × 10</div></div>
+              <div class="ph-start"><svg width="9" height="9" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>Start Session</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features" id="features">
+  <div class="container">
+    <div class="section-eyebrow">Everything you need</div>
+    <h2 class="section-title">Built for lifters.<br/>Smarter than a spreadsheet.</h2>
+    <p class="section-sub">From your first warm-up to the post-PR victory lap, GymJam handles the planning so you can focus on the lifting.</p>
+
+    <!-- FEATURE 1 · AI COACH -->
+    <div class="feature-row reverse">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-purple">AI Coach</span>
+        <h3>An expert <em class="purple">in your pocket.</em></h3>
+        <p>Ask anything. The coach knows your training history, your goals, your injuries — and answers like the friend who happens to be a kinesiologist.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>"Should I deload?" "Why is my bench stalling?"</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Swap exercises on the fly when something hurts</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Generates today's workout in 3 seconds</div>
+        </div>
+      </div>
+      <div class="phone-wrap purple">
+        <div class="phone">
+          <div class="phone-island"></div><div class="phone-time">9:41</div>
+          <div class="phone-screen">
+            <div class="ph">
+              <div class="ph-coach-head">AI Coach</div>
+              <div class="ph-bubble-user">My bench felt weak today. Should I deload?</div>
+              <div class="ph-bubble-ai">Your bench is down <b>7.5 lb</b> vs last week, and you slept under 6h three nights running. That's a recovery signal — let's hold steady.</div>
+              <div class="ph-coach-card">
+                <div class="ph-coach-card-eyebrow" style="font-size:8px;font-weight:800;letter-spacing:1px;color:var(--purple)">SUGGESTED ADJUSTMENT</div>
+                <div class="ph-coach-card-title">Thursday · Bench 3×5</div>
+                <div class="ph-coach-card-meta"><span>185 → 175 lb</span><span>·</span><span>same volume</span></div>
+                <div class="ph-coach-cta">Apply to plan</div>
+              </div>
+              <div class="ph-coach-input">
+                <div class="ph-coach-input-text">Ask anything…</div>
+                <div class="ph-coach-input-send"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURE 2 · ADAPTIVE PLAN -->
+    <div class="feature-row">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-coral">Adaptive plans</span>
+        <h3>Built for you.<br/><em class="coral">Updated weekly.</em></h3>
+        <p>12-week blocks shaped around your goal, schedule, and gear. Every week progresses based on what you actually did — not a static PDF.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Auto-progressive overload</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Deloads slot in when you need them</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Missed a session? It reshuffles automatically</div>
+        </div>
+      </div>
+      <div class="phone-wrap">
+        <div class="phone">
+          <div class="phone-island"></div><div class="phone-time">9:41</div>
+          <div class="phone-screen">
+            <div class="ph">
+              <div class="ph-plan-title">Your Plan</div>
+              <div class="ph-plan-sub">Build muscle · Week 4 of 12</div>
+              <div class="ph-plan-day done">
+                <div class="ph-plan-day-date"><b>21</b><small>MON</small></div>
+                <div class="ph-plan-day-name"><b>Upper Push</b><small>Chest · Shoulders · Tri</small></div>
+                <div class="ph-plan-day-check"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+              </div>
+              <div class="ph-plan-day done">
+                <div class="ph-plan-day-date"><b>22</b><small>TUE</small></div>
+                <div class="ph-plan-day-name"><b>Lower Power</b><small>Quads · Glutes</small></div>
+                <div class="ph-plan-day-check"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+              </div>
+              <div class="ph-plan-day today">
+                <div class="ph-plan-day-date"><b>23</b><small>WED</small></div>
+                <div class="ph-plan-day-name"><b>Pull Day</b><small>Back · Biceps</small></div>
+                <div class="ph-plan-day-start">Start</div>
+              </div>
+              <div class="ph-plan-day rest">
+                <div class="ph-plan-day-date"><b>24</b><small>THU</small></div>
+                <div class="ph-plan-day-name"><b>Rest</b><small>Recovery · mobility</small></div>
+              </div>
+              <div class="ph-plan-day">
+                <div class="ph-plan-day-date" style="background:#F5F5F5;color:#A1A1A1"><b>25</b><small>FRI</small></div>
+                <div class="ph-plan-day-name"><b>Upper Pull</b><small>Back · Rear delts</small></div>
+              </div>
+              <div class="ph-plan-day">
+                <div class="ph-plan-day-date" style="background:#F5F5F5;color:#A1A1A1"><b>26</b><small>SAT</small></div>
+                <div class="ph-plan-day-name"><b>Lower Volume</b><small>Hamstrings · Glutes</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURE 3 · LIVE SESSION -->
+    <div class="feature-row reverse">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-green">Live tracking</span>
+        <h3>Log fast.<br/>Lift <em class="coral">heavier.</em></h3>
+        <p>Tap once to log a set. The rest timer starts automatically. PRs are flagged in real time. Side-by-side comparison vs your last session keeps progress honest.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>One-tap set logging with auto rest timer</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Live comparison vs your last session</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Instant PR detection · estimated 1RM</div>
+        </div>
+      </div>
+      <div class="phone-wrap green">
+        <div class="phone">
+          <div class="phone-island"></div><div class="phone-time">9:41</div>
+          <div class="phone-screen">
+            <div class="ph">
+              <div class="ph-session-head">
+                <div class="ph-session-back"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg></div>
+                <div class="ph-session-eyebrow"><b>EXERCISE 3 OF 8</b><span>⏱ 34:12</span></div>
+                <div class="ph-session-back" style="visibility:hidden"></div>
+              </div>
+              <div class="ph-session-name">Bench Press</div>
+              <div class="ph-comp">
+                <div class="ph-comp-label">LIVE COMPARISON · VS LAST SESSION</div>
+                <div class="ph-comp-stats">
+                  <div class="ph-comp-stat"><b>1,640<small style="font-size:7px;color:#A1A1A1"> kg</small></b><small>VOLUME</small><div class="ph-comp-delta">+340</div></div>
+                  <div class="ph-comp-stat"><b>82<small style="font-size:7px;color:#A1A1A1"> kg</small></b><small>AVG WT</small><div class="ph-comp-delta">+5</div></div>
+                  <div class="ph-comp-stat"><b>20</b><small>REPS</small><div class="ph-comp-delta">+2</div></div>
+                  <div class="ph-comp-stat"><b>3</b><small>SETS</small><div class="ph-comp-delta" style="background:rgba(161,161,161,0.1);color:#A1A1A1">0</div></div>
+                </div>
+              </div>
+              <div class="ph-today">
+                <div class="ph-today-title">Today</div>
+                <div class="ph-set done"><div class="ph-set-n">1</div><div class="ph-set-w">80 kg</div><div class="ph-set-r">10</div><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-set-check"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+                <div class="ph-set done"><div class="ph-set-n">2</div><div class="ph-set-w">82 kg</div><div class="ph-set-r">8</div><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-set-check"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+                <div class="ph-set done"><div class="ph-set-n">3</div><div class="ph-set-w">85 kg</div><div class="ph-set-r">6</div><div class="ph-set-pr">PR</div><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-set-check"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+                <div class="ph-set active"><div class="ph-set-n">4</div><div class="ph-set-w">85 kg</div><div class="ph-set-r" style="color:#A1A1A1">—</div><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURE 4 · WARM-UP / COOL-DOWN -->
+    <div class="feature-row">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-amber">Warm-up &amp; cool-down</span>
+        <h3>Don't <em class="amber">skip the prep.</em></h3>
+        <p>Every workout bookended with a 5-minute dynamic warm-up and targeted static stretches. Built into the session flow — no extra app, no excuses.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Dynamic warm-up tailored to today's workout</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Targeted cool-down stretches for the muscles you just trained</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>30+ standalone activities: walks, yoga, breathwork</div>
+        </div>
+      </div>
+      <div class="phone-wrap amber">
+        <div class="phone">
+          <div class="phone-island"></div><div class="phone-time">9:41</div>
+          <div class="phone-screen">
+            <div class="ph">
+              <div style="padding:0 4px;display:flex;align-items:center;justify-content:space-between"><span style="font-size:18px;font-weight:800;color:var(--ink);letter-spacing:-0.5px">Today's flow</span><span style="font-size:9px;color:#737373;font-weight:700">~52 min</span></div>
+              <div style="background:#fff;border:2px solid var(--amber);border-radius:18px;padding:12px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 20px rgba(245,181,101,0.18)">
+                <div style="width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--amber),#E89545);display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M13.5.67s.74 2.65.74 4.8a4.24 4.24 0 01-4.24 4.24c-2.34 0-4.11-2-4.11-4.24l.03-.39A9 9 0 0012 23a9 9 0 001.5-17.83z"/></svg></div>
+                <div style="flex:1"><div style="font-size:8px;font-weight:800;letter-spacing:0.8px;color:#b87a2d">PHASE 1 · WARM UP</div><div style="font-size:13px;font-weight:800;color:var(--ink);letter-spacing:-0.2px">Dynamic mobility</div><div style="font-size:9px;color:#737373;font-weight:600">5 min · 6 movements</div></div>
+                <div style="padding:5px 10px;border-radius:10px;background:var(--amber);color:#fff;font-size:10px;font-weight:800">Start</div>
+              </div>
+              <div style="background:#fff;border:1px solid #F5F5F5;border-radius:18px;padding:12px;display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--coral),var(--coralDark));display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M6 5h2v14H6zm10 0h2v14h-2zM4 9h2v6H4zm14 0h2v6h-2zM8 11h8v2H8z"/></svg></div>
+                <div style="flex:1"><div style="font-size:8px;font-weight:800;letter-spacing:0.8px;color:var(--coral)">PHASE 2 · LIFT</div><div style="font-size:13px;font-weight:800;color:var(--ink);letter-spacing:-0.2px">Upper Push</div><div style="font-size:9px;color:#737373;font-weight:600">42 min · 6 exercises</div></div>
+                <div style="padding:3px 8px;border-radius:6px;background:#F5F5F5;color:#525252;font-size:9px;font-weight:800;letter-spacing:0.4px">NEXT</div>
+              </div>
+              <div style="background:#fff;border:1px solid #F5F5F5;border-radius:18px;padding:12px;display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--purple),#5A63D8);display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M12 3a9 9 0 109 9c0-.5 0-1-.1-1.5a5.4 5.4 0 01-3.4 1.2 5.5 5.5 0 01-3.6-9.6c-.6-.1-1.2-.1-1.9-.1z"/></svg></div>
+                <div style="flex:1"><div style="font-size:8px;font-weight:800;letter-spacing:0.8px;color:var(--purple)">PHASE 3 · COOL DOWN</div><div style="font-size:13px;font-weight:800;color:var(--ink);letter-spacing:-0.2px">Static stretches</div><div style="font-size:9px;color:#737373;font-weight:600">5 min · chest &amp; shoulders</div></div>
+                <div style="padding:3px 8px;border-radius:6px;background:#F5F5F5;color:#A1A1A1;font-size:9px;font-weight:800;letter-spacing:0.4px">LAST</div>
+              </div>
+              <div style="margin-top:4px;padding:10px 12px;background:rgba(245,181,101,0.10);border-radius:10px;font-size:9px;line-height:1.4;color:#525252"><b style="color:var(--ink)">Why bother?</b> Dynamic warm-ups raise heart rate, mobilize joints, and prep your CNS — proven to reduce injury risk.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURE 5 · COMMUNITY -->
+    <div class="feature-row reverse" id="community">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-coral">Community</span>
+        <h3>Lift loud.<br/>Share <em class="coral">louder.</em></h3>
+        <p>Every workout becomes a swipeable post — your stats, your PRs, your exercises. Find friends by handle, scan a QR at the gym, or get matched by lifts.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Auto-generated workout share cards · custom backgrounds</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Carousel posts: card, photo, exercise list</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Discover by mutuals, gym, or top lifts</div>
+        </div>
+      </div>
+      <div class="phone-wrap">
+        <div class="phone">
+          <div class="phone-island"></div><div class="phone-time">9:41</div>
+          <div class="phone-screen">
+            <div class="ph">
+              <div class="ph-comm-head"><h2>Community</h2><div class="ph-comm-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div></div>
+              <div class="ph-post">
+                <div class="ph-post-head">
+                  <div class="ph-post-av">MR</div>
+                  <div class="ph-post-name">Maya R. <span style="display:block">@maya · 8m</span></div>
+                  <div class="ph-post-follow">+ Follow</div>
+                </div>
+                <div class="ph-post-cap">3-plate club. Belt, no straps 🔒</div>
+                <div class="ph-post-card">
+                  <div class="ph-post-card-eyebrow">UPPER PUSH</div>
+                  <div class="ph-post-card-title">Today's workout</div>
+                  <div class="ph-post-card-stats">
+                    <div class="ph-post-card-stat"><b>52:18</b><small>TIME</small></div>
+                    <div class="ph-post-card-stat"><b>18.4k</b><small>VOLUME</small></div>
+                    <div class="ph-post-card-stat"><b>24</b><small>SETS</small></div>
+                    <div class="ph-post-card-stat"><b style="color:var(--coral)">1</b><small>PRs</small></div>
+                  </div>
+                  <div class="ph-post-card-exes">
+                    <div class="ph-post-card-ex"><div class="ph-post-card-ex-num" style="background:rgba(232,106,117,0.14);color:var(--coral)">1</div><div class="ph-post-card-ex-name">Bench Press</div><div class="ph-post-card-ex-pr">PR</div><div class="ph-post-card-ex-sets">85 × 6</div></div>
+                    <div class="ph-post-card-ex"><div class="ph-post-card-ex-num" style="background:rgba(122,130,246,0.14);color:var(--purple)">2</div><div class="ph-post-card-ex-name">Overhead Press</div><div class="ph-post-card-ex-sets">60 × 8</div></div>
+                    <div class="ph-post-card-ex"><div class="ph-post-card-ex-num" style="background:rgba(245,181,101,0.16);color:var(--amber)">3</div><div class="ph-post-card-ex-name">Dips</div><div class="ph-post-card-ex-sets">BW × 10</div></div>
+                  </div>
+                </div>
+                <div class="ph-post-dots"><div class="ph-post-dot active"></div><div class="ph-post-dot"></div><div class="ph-post-dot"></div></div>
+                <div class="ph-post-react">
+                  <div class="ph-post-react-heart"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a5 5 0 019-3 5 5 0 019 3c0 6-8 11-8 11z"/></svg><span>284</span></div>
+                  <div style="display:flex;align-items:center;gap:4px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span style="font-size:10px;font-weight:800">41</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURE 6 · PROFILE -->
+    <div class="feature-row">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-ink">Your record book</span>
+        <h3>A year in <em class="coral">PRs.</em></h3>
+        <p>Followers, consistency, every personal best — all in one record book. Open it when you need a reminder of how far you've come.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Week / month / year consistency</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Every lift's all-time best, with date and rep range</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Volume, duration, calories · lifetime totals</div>
+        </div>
+      </div>
+      <div class="phone-wrap dark">
+        <div class="phone">
+          <div class="phone-island"></div><div class="phone-time">9:41</div>
+          <div class="phone-screen">
+            <div class="ph">
+              <div class="ph-prof-head">
+                <div class="ph-prof-av">DC</div>
+                <div class="ph-prof-info">
+                  <b>Dan Cortés</b>
+                  <span>@dancortes · 82 kg</span>
+                  <span class="goal"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="5" fill="#fff"/><circle cx="12" cy="12" r="2"/></svg>Build muscle · Week 4/12</span>
+                </div>
+              </div>
+              <div class="ph-followers"><div><b>1,284</b><small>Followers</small></div><div class="ph-followers-sep"></div><div><b>342</b><small>Following</small></div></div>
+              <div class="ph-consistency-title">Consistency</div>
+              <div class="ph-consistency">
+                <div><small>THIS WEEK</small><b style="color:var(--ink)">4</b><small style="font-weight:600">sessions</small></div>
+                <div><small>THIS MONTH</small><b style="color:var(--green)">18</b><small style="font-weight:600">sessions</small></div>
+                <div><small>THIS YEAR</small><b style="color:var(--coral)">186</b><small style="font-weight:600">sessions</small></div>
+              </div>
+              <div class="ph-prs-title">Personal records</div>
+              <div class="ph-prs">
+                <div><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-prs-trophy"><path d="M5 3v4c0 3 2 5 5 5v4H7v2h10v-2h-3v-4c3 0 5-2 5-5V3H5z"/></svg><div class="ph-prs-name">Deadlift</div><div class="ph-prs-val">142 kg × 3</div></div>
+                <div><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-prs-trophy"><path d="M5 3v4c0 3 2 5 5 5v4H7v2h10v-2h-3v-4c3 0 5-2 5-5V3H5z"/></svg><div class="ph-prs-name">Squat</div><div class="ph-prs-val">120 kg × 5</div></div>
+                <div style="background:rgba(232,106,117,0.06)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-prs-trophy"><path d="M5 3v4c0 3 2 5 5 5v4H7v2h10v-2h-3v-4c3 0 5-2 5-5V3H5z"/></svg><div class="ph-prs-name">Bench<br/><span style="font-size:8px;font-weight:800;color:var(--coral)">TODAY · NEW</span></div><div class="ph-prs-val">85 kg × 6</div></div>
+                <div><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="ph-prs-trophy"><path d="M5 3v4c0 3 2 5 5 5v4H7v2h10v-2h-3v-4c3 0 5-2 5-5V3H5z"/></svg><div class="ph-prs-name">Overhead</div><div class="ph-prs-val">60 kg × 5</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FEATURE 7 · APPLE WATCH -->
+    <div class="feature-row reverse">
+      <div class="ftr-text">
+        <span class="ftr-eyebrow ftr-eb-purple">Apple Watch</span>
+        <h3>Log sets from<br/>your <em class="purple">wrist.</em></h3>
+        <p>Native watchOS app. Live heart-rate zones, set-by-set logging, and rest timers that buzz when you're ready for the next set. No phone needed mid-lift.</p>
+        <div class="ftr-list">
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Digital Crown weight input · taptic confirmation</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Live HR · heart rate zone alerts</div>
+          <div class="ftr-list-item"><div class="ftr-list-tick"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12l5 5 9-11"/></svg></div>Auto-syncs with the phone app</div>
+        </div>
+      </div>
+      <div class="phone-wrap purple">
+        <div class="watch">
+          <div class="watch-time">6:42</div>
+          <div class="watch-screen">
+            <div class="watch-row" style="margin-top:8px">
+              <div class="watch-elapsed">24:18</div>
+              <div class="watch-hr"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-6-8-12a5 5 0 019-3 5 5 0 019 3c0 6-8 12-8 12z"/></svg>142</div>
+              <div class="watch-set">5/12</div>
+            </div>
+            <div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:8px;margin-top:4px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <div style="width:2px;height:24px;background:var(--coral);border-radius:1px"></div>
+                <div>
+                  <div class="watch-exname">Bench Press</div>
+                  <div class="watch-muscle">CHEST</div>
+                </div>
+              </div>
+              <div class="watch-dots"><div class="watch-dot done"></div><div class="watch-dot done"></div><div class="watch-dot"></div><div class="watch-dot"></div></div>
+              <div class="watch-sets">
+                <div class="watch-set-row done"><div class="watch-set-w">80kg × 8</div><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" class="watch-tick"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#000" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+                <div class="watch-set-row done"><div class="watch-set-w">85kg × 6</div><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" class="watch-tick"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6" stroke="#000" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg></div>
+                <div class="watch-set-row curr"><div class="watch-set-w">85kg × ?</div><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--coral)" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- BIG CTA -->
+<section class="cta" id="download">
+  <div class="container">
+    <h2>Your next PR<br/>starts here.</h2>
+    <p>Free to download. Free to use. Pro features for serious lifters when you're ready.</p>
+    <div class="cta-buttons">
+      <a href="https://apps.apple.com/app/gymjam/id6744136857" class="app-store">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="#fff"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.41-1.09-.47-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.41C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.07zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+        <div><small>Download on the</small><div class="as-title">App Store</div></div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-inner">
+      <div class="logo"><img class="logo-mark" src="/app-icon.png" alt="">GymJam</div>
+      <div class="footer-row">
+        <a href="#features">Features</a>
+        <a href="#community">Community</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/support">Support</a>
+      </div>
+      <div class="copy">© 2026 GymJam · Made for lifters · iOS 18+</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

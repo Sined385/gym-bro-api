@@ -166,6 +166,7 @@ export class UserService {
       await tx.workoutSession.deleteMany({ where: { user_id: userId } });
       await tx.exerciseFavorite.deleteMany({ where: { user_id: userId } });
       await tx.exerciseLibrary.deleteMany({ where: { user_id: userId } });
+      await tx.sharedCard.deleteMany({ where: { user_id: userId } });
       await tx.user.deleteMany({ where: { id: userId } });
     });
 
