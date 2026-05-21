@@ -75,7 +75,7 @@ export class ShareController {
     <h1>${this.escapeHtml(template.name)}</h1>
     <ul>${exerciseList}</ul>
   </div>
-  <a class="cta" href="https://apps.apple.com/app/gymjam/id6744136857">Open in GymJam</a>
+  <a class="cta" href="https://apps.apple.com/app/gymjam/id6761364129">Open in GymJam</a>
   <p class="sub">Don't have the app? Download it free on the App Store.</p>
 </body>
 </html>`;
@@ -136,7 +136,7 @@ export class ShareController {
     <p class="author">${this.escapeHtml(authorName)}</p>
     <p class="content">${this.escapeHtml(post.content ?? '')}</p>
   </div>
-  <a class="cta" href="https://apps.apple.com/app/gymjam/id6744136857">Open in GymJam</a>
+  <a class="cta" href="https://apps.apple.com/app/gymjam/id6761364129">Open in GymJam</a>
   <p class="sub">Don't have the app? Download it free on the App Store.</p>
 </body>
 </html>`;
@@ -209,7 +209,7 @@ export class ShareController {
       ${handleLine}
     </div>
   </div>
-  <a class="cta" href="https://apps.apple.com/app/gymjam/id6744136857">Open in GymJam</a>
+  <a class="cta" href="https://apps.apple.com/app/gymjam/id6761364129">Open in GymJam</a>
   <p class="sub">Don't have the app? Download it free on the App Store.</p>
 </body>
 </html>`;
