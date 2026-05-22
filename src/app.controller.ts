@@ -21,6 +21,9 @@ import { PrismaService } from './prisma/prisma.service';
 const ASSETS_DIR = join(__dirname, '..', 'assets');
 const APP_ICON_BYTES = readFileSync(join(ASSETS_DIR, 'app-icon.png'));
 const LANDING_HTML = readFileSync(join(ASSETS_DIR, 'landing.html'), 'utf-8');
+const LLMS_TXT = readFileSync(join(ASSETS_DIR, 'llms.txt'), 'utf-8');
+const ROBOTS_TXT = readFileSync(join(ASSETS_DIR, 'robots.txt'), 'utf-8');
+const SITEMAP_XML = readFileSync(join(ASSETS_DIR, 'sitemap.xml'), 'utf-8');
 
 @Controller()
 export class AppController {
@@ -40,6 +43,28 @@ export class AppController {
   @Header('Cache-Control', 'public, max-age=86400')
   getAppIcon(@Res() res: Response) {
     res.send(APP_ICON_BYTES);
+  }
+
+  // Machine-readable summary for LLM crawlers (llmstxt.org spec).
+  @Get('llms.txt')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  @Header('Cache-Control', 'public, max-age=3600')
+  getLlmsTxt(): string {
+    return LLMS_TXT;
+  }
+
+  @Get('robots.txt')
+  @Header('Content-Type', 'text/plain; charset=utf-8')
+  @Header('Cache-Control', 'public, max-age=3600')
+  getRobotsTxt(): string {
+    return ROBOTS_TXT;
+  }
+
+  @Get('sitemap.xml')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
+  @Header('Cache-Control', 'public, max-age=3600')
+  getSitemapXml(): string {
+    return SITEMAP_XML;
   }
 
   @Get('privacy')

@@ -1,0 +1,32 @@
+# GymJam
+
+> AI lifting coach, workout tracker, and lifter community for iOS and Apple Watch. Built for serious lifters who care about both the data and the consistency.
+
+GymJam (gyymjaam.com) is a native iOS + watchOS app for strength training. Available free on the App Store; optional Premium subscription unlocks advanced features.
+
+## What it does
+
+- **AI training plans** — 12-week blocks shaped around the user's goal, schedule, and available equipment. Each week progresses based on what the lifter actually did, not a static PDF.
+- **AI coach chat** — an in-app assistant that knows the user's training history, goals, and injuries. Answers questions like "should I deload?" and "why is my bench stalling?" and can swap exercises on the fly.
+- **One-tap set logging** — tap once to record a set. Rest timer starts automatically. Personal records are flagged in real time. Side-by-side comparison vs the user's last session.
+- **Apple Watch app** — native watchOS app for logging sets from the wrist, live heart-rate tracking, taptic confirmation, and rest timers.
+- **Warm-up and cool-down** — every workout is bookended with a 5-minute dynamic warm-up and targeted static stretches.
+- **Community** — share completed workouts as a swipeable card with stats, exercises, and PRs. Follow other lifters, react to posts.
+- **Standalone share links** — share a workout card as a public URL (`/c/<id>`) that shows the card, the author's profile preview, and an Open-in-GymJam CTA.
+
+## Platforms
+
+- iOS 18.0+
+- watchOS (native paired app)
+
+## Links
+
+- Homepage: https://gyymjaam.com/
+- App Store: https://apps.apple.com/app/gymjam/id6761364129
+- Privacy policy: https://gyymjaam.com/privacy
+- Terms of use: https://gyymjaam.com/terms
+- Support: https://gyymjaam.com/support
+
+## Brand
+
+GymJam is the public-facing brand. The primary color is coral (#E86A75).

@@ -1,0 +1,9 @@
+# GymJam — gyymjaam.com
+# Site is publicly indexable. Only the API/auth routes are off-limits since
+# they require authentication and have no value to a crawler.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://gyymjaam.com/sitemap.xml
