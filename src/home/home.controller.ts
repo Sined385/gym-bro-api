@@ -19,6 +19,7 @@ import { PremiumGuard } from '../subscription/premium.guard';
 import { HomeService } from './home.service';
 import { SessionExerciseService } from './session-exercise.service';
 import { TemplateService } from './template.service';
+import { ChallengesService } from './challenges.service';
 import {
   AddExercisesDto,
   CompleteSessionDto,
@@ -29,6 +30,7 @@ import {
   GetCompletedDaysDto,
   GetSessionHistoryDto,
   LogSetDto,
+  ReorderExercisesDto,
   UpdateSetDto,
 } from './dto/home.dto';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
@@ -40,6 +42,7 @@ export class HomeController {
     private readonly homeService: HomeService,
     private readonly sessionExerciseService: SessionExerciseService,
     private readonly templateService: TemplateService,
+    private readonly challengesService: ChallengesService,
   ) {}
 
   @Get('dashboard')
@@ -108,6 +111,20 @@ export class HomeController {
     @Req() req: Request,
   ) {
     return this.sessionExerciseService.createSuperset(
+      req.user!.id,
+      sessionId,
+      dto,
+    );
+  }
+
+  @Patch('sessions/:id/exercises/reorder')
+  @HttpCode(HttpStatus.OK)
+  async reorderExercises(
+    @Param('id') sessionId: string,
+    @Body() dto: ReorderExercisesDto,
+    @Req() req: Request,
+  ) {
+    return this.sessionExerciseService.reorderExercises(
       req.user!.id,
       sessionId,
       dto,
@@ -196,6 +213,24 @@ export class HomeController {
     @Body() body: CompleteSessionDto,
   ) {
     return this.homeService.completeSession(req.user!.id, sessionId, body);
+  }
+
+  @Patch('sessions/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelSession(
+    @Req() req: Request,
+    @Param('id') sessionId: string,
+  ) {
+    return this.homeService.cancelSession(req.user!.id, sessionId);
+  }
+
+  @Post('challenges/:id/complete')
+  @HttpCode(HttpStatus.OK)
+  async completeChallenge(
+    @Req() req: Request,
+    @Param('id') challengeId: string,
+  ) {
+    return this.challengesService.complete(req.user!.id, challengeId);
   }
 
   @Post('sessions/:id/complete-full')

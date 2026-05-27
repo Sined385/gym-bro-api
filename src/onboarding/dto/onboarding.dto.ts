@@ -18,5 +18,6 @@ export interface SaveOnboardingDto {
   weight_kg?: number;
   height_cm?: number;
   biological_sex?: string;
+  ai_coach_context?: string;
   completed_at: string;
 }

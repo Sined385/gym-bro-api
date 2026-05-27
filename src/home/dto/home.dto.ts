@@ -58,6 +58,15 @@ export class CreateSupersetDto {
   exercise_ids!: string[];
 }
 
+export class ReorderExercisesDto {
+  // The full list of session-exercise IDs in their new order. Position in
+  // the array becomes the new step_number (1-indexed). Must include every
+  // exercise currently in the session — partial lists are rejected.
+  @IsArray()
+  @IsString({ each: true })
+  exercise_ids!: string[];
+}
+
 export class LogSetDto {
   @IsInt()
   @Min(1)

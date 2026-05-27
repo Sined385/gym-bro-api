@@ -14,6 +14,7 @@ import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { formatSessionResponse } from '../common/format-session';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ChallengesService } from './challenges.service';
 
 @Injectable()
 export class HomeService {
@@ -22,6 +23,7 @@ export class HomeService {
     private readonly homeAiService: HomeAiService,
     private readonly analytics: AnalyticsService,
     private readonly notificationsService: NotificationsService,
+    private readonly challengesService: ChallengesService,
   ) {}
 
   // ── Dashboard ────────────────────────────────────────────
@@ -291,6 +293,11 @@ export class HomeService {
       // Non-critical — proceed without overview
     }
 
+    const [dailyChallenge, tomorrowChallenge] = await Promise.all([
+      this.challengesService.getDailyChallenge(userId, now),
+      this.challengesService.getTomorrowChallenge(userId, now),
+    ]);
+
     return {
       user: {
         name,
@@ -341,6 +348,8 @@ export class HomeService {
       prev3_avg_duration_minutes: prev3AvgDurationMinutes,
       prev3_avg_calories: prev3AvgCalories,
       today_completed_session: todayHistory.session,
+      daily_challenge: dailyChallenge,
+      tomorrow_challenge: tomorrowChallenge,
     };
   }
 
@@ -434,6 +443,61 @@ export class HomeService {
     });
 
     return formatSessionResponse(session);
+  }
+
+  async cancelSession(userId: string, sessionId: string) {
+    const session = await this.prisma.workoutSession.findFirst({
+      where: { id: sessionId, user_id: userId },
+    });
+
+    if (!session) {
+      throw new AppException(
+        'session_not_found',
+        'Session not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (session.status !== 'proposed' && session.status !== 'active') {
+      throw new AppException(
+        'invalid_session_status',
+        `Cannot cancel a session with status '${session.status}'`,
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const linkedPlanDay = await tx.planDay.findFirst({
+        where: { workout_session_id: sessionId },
+      });
+      if (linkedPlanDay) {
+        await tx.planDay.update({
+          where: { id: linkedPlanDay.id },
+          data: { status: 'pending', workout_session_id: null },
+        });
+      }
+
+      return tx.workoutSession.update({
+        where: { id: sessionId },
+        data: {
+          status: 'cancelled',
+          updated_at: new Date(),
+        },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+          },
+        },
+      });
+    });
+
+    this.analytics.track(userId, 'session_cancelled', {
+      session_id: updated.id,
+      previous_status: session.status,
+      had_exercises: updated.exercises.length > 0,
+    });
+
+    return formatSessionResponse(updated);
   }
 
   async completeSession(

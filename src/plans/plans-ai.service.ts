@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
+import { aiContextLine } from '../common/ai-context';
 import {
   SkeletonDay,
   AiExerciseSelection,
@@ -46,7 +47,7 @@ User profile:
 - Training frequency: ${scaledFrequency} training days (scaled from ${onboarding.training_frequency}x/week for partial week)
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
-- Injuries: ${JSON.stringify(onboarding.injuries)}
+- Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
 
 Respond with a JSON object:
 {
@@ -289,7 +290,7 @@ Rules:
 User profile:
 - Goal: ${onboarding.primary_goals?.[0] ?? 'build_muscle'}
 - Experience: ${onboarding.experience_level ?? 'intermediate'}
-- Injuries: ${JSON.stringify(onboarding.injuries ?? [])}
+- Injuries: ${JSON.stringify(onboarding.injuries ?? [])}${aiContextLine(onboarding)}
 - Recently used exercises (avoid repeating): ${recentExerciseNames.slice(0, 20).join(', ') || 'none'}
 
 Training days:

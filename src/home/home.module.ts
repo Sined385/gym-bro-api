@@ -7,6 +7,7 @@ import { HomeAiService } from './home-ai.service';
 import { SessionExerciseService } from './session-exercise.service';
 import { TemplateService } from './template.service';
 import { WeightSuggestionService } from './weight-suggestion.service';
+import { ChallengesService } from './challenges.service';
 
 @Module({
   imports: [AuthModule, NotificationsModule],
@@ -17,6 +18,7 @@ import { WeightSuggestionService } from './weight-suggestion.service';
     SessionExerciseService,
     TemplateService,
     WeightSuggestionService,
+    ChallengesService,
   ],
   exports: [HomeService, WeightSuggestionService, TemplateService],
 })

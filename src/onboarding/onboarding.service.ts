@@ -37,6 +37,7 @@ export class OnboardingService {
       weight_kg,
       height_cm,
       biological_sex,
+      ai_coach_context,
       completed_at,
     } = dto;
 
@@ -112,6 +113,14 @@ export class OnboardingService {
       );
     }
 
+    if (ai_coach_context !== undefined && ai_coach_context.length > 500) {
+      throw new AppException(
+        'invalid_ai_coach_context',
+        'ai_coach_context must be 500 characters or fewer',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const validatedInjuries = this.normalizeInjuries(injuries);
 
     const data = {
@@ -126,6 +135,7 @@ export class OnboardingService {
       ...(weight_kg !== undefined && { body_weight_kg: weight_kg }),
       ...(height_cm !== undefined && { height_cm }),
       ...(biological_sex !== undefined && { biological_sex }),
+      ...(ai_coach_context !== undefined && { ai_coach_context }),
       completed_at: new Date(completed_at),
       updated_at: new Date(),
     };
@@ -166,6 +176,18 @@ export class OnboardingService {
         );
       }
       data.preferred_rest_time = body.preferred_rest_time;
+    }
+
+    if (body.ai_coach_context !== undefined) {
+      if (typeof body.ai_coach_context !== 'string' || body.ai_coach_context.length > 500) {
+        throw new AppException(
+          'invalid_ai_coach_context',
+          'ai_coach_context must be a string with 500 characters or fewer',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      // Empty string clears the field; otherwise store as-is.
+      data.ai_coach_context = body.ai_coach_context.length === 0 ? null : body.ai_coach_context;
     }
 
     if (Object.keys(data).length === 0) {
@@ -218,6 +240,7 @@ export class OnboardingService {
     preferred_rest_time: number | null;
     available_equipment: string;
     injuries: unknown;
+    ai_coach_context?: string | null;
     completed_at: Date | null;
     created_at: Date;
     updated_at: Date;
@@ -233,6 +256,7 @@ export class OnboardingService {
       preferred_rest_time: record.preferred_rest_time,
       available_equipment: record.available_equipment,
       injuries: record.injuries ?? [],
+      ai_coach_context: record.ai_coach_context ?? null,
       completed_at: record.completed_at?.toISOString() ?? null,
       created_at: record.created_at.toISOString(),
       updated_at: record.updated_at.toISOString(),

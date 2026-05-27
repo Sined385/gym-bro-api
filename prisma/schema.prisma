@@ -145,6 +145,18 @@ model MotivationInsight {
   @@map("motivation_insights")
 }
 
+model DailyChallengeCompletion {
+  id           String   @id @default(uuid())
+  user_id      String
+  challenge_id String
+  date         DateTime @db.Date
+  created_at   DateTime @default(now())
+
+  @@unique([user_id, challenge_id, date])
+  @@index([user_id, date])
+  @@map("daily_challenge_completions")
+}
+
 model CoachConversation {
   id         String         @id @default(uuid())
   user_id    String
@@ -181,6 +193,7 @@ model OnboardingData {
   body_weight_kg      Float?
   height_cm           Float?
   biological_sex      String?
+  ai_coach_context    String?
   completed_at        DateTime?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt

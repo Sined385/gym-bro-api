@@ -8,6 +8,7 @@ import { AiUsageService } from '../analytics/ai-usage.service';
 import { getWeekStart } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
+import { aiContextLine } from '../common/ai-context';
 
 const SETS_DISPLAY_BY_GOAL: Record<string, string> = {
   build_muscle: '3 × 10',
@@ -191,7 +192,7 @@ export class HomeAiService {
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
-- Injuries: ${JSON.stringify(onboarding.injuries)}`
+- Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}`
       : 'No onboarding profile available.';
 
     const sessionsContext = formatRecentSessions(recentSessions);
@@ -229,7 +230,7 @@ Rules:
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
-- Injuries: ${JSON.stringify(onboarding.injuries)}`
+- Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}`
       : 'No onboarding profile available.';
 
     return `You are a friendly strength coach for the GymJam app.
@@ -574,7 +575,7 @@ User profile:
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
-- Injuries: ${JSON.stringify(onboarding.injuries)}
+- Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
 
 Week progress: ${weekStats.completedThisWeek}/${weekStats.targetPerWeek} workouts completed, ${weekStats.daysLeftInWeek} days left in the week.
 

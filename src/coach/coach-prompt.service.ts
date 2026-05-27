@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
+import { aiContextLine } from '../common/ai-context';
 
 @Injectable()
 export class CoachPromptService {
@@ -102,7 +103,7 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
 - Training frequency target: ${onboarding.training_frequency}x per week
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
-- Injuries: ${JSON.stringify(onboarding.injuries)}`
+- Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}`
       : 'No onboarding profile available.';
 
     const sessionsContext = formatRecentSessions(recentSessions);

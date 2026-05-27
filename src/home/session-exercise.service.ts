@@ -6,6 +6,7 @@ import {
   AddExercisesDto,
   CreateSupersetDto,
   LogSetDto,
+  ReorderExercisesDto,
   UpdateSetDto,
 } from './dto/home.dto';
 import { exerciseImageUrl } from '../common/exercise-image';
@@ -205,6 +206,46 @@ export class SessionExerciseService {
     });
 
     return { superset_group_id: supersetGroupId, exercises: results };
+  }
+
+  async reorderExercises(
+    userId: string,
+    sessionId: string,
+    dto: ReorderExercisesDto,
+  ) {
+    await this.verifySession(userId, sessionId);
+
+    const existing = await this.prisma.sessionExercise.findMany({
+      where: { session_id: sessionId },
+      select: { id: true },
+    });
+    const existingIds = new Set(existing.map((e) => e.id));
+
+    // The payload must list every exercise in the session exactly once —
+    // partial reorders would leave gaps in step_number and reject the obvious
+    // expectation that the client is sending the full new order.
+    if (
+      dto.exercise_ids.length !== existing.length ||
+      dto.exercise_ids.some((id) => !existingIds.has(id)) ||
+      new Set(dto.exercise_ids).size !== dto.exercise_ids.length
+    ) {
+      throw new AppException(
+        'invalid_reorder_payload',
+        'reorder payload must include every exercise in the session exactly once',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    await this.prisma.$transaction(
+      dto.exercise_ids.map((exId, idx) =>
+        this.prisma.sessionExercise.update({
+          where: { id: exId },
+          data: { step_number: idx + 1 },
+        }),
+      ),
+    );
+
+    return { reordered: true };
   }
 
   async removeExercise(userId: string, sessionId: string, exerciseId: string) {
