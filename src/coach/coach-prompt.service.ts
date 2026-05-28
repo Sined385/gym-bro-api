@@ -10,22 +10,15 @@ export class CoachPromptService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getExerciseLibrary(userId: string) {
-    const onboarding = await this.prisma.onboardingData.findUnique({
-      where: { user_id: userId },
-    });
-
-    const allowedEquipment = onboarding
-      ? EQUIPMENT_MAP[onboarding.available_equipment]
-      : undefined;
-    const equipmentFilter =
-      allowedEquipment && allowedEquipment.length > 0
-        ? { equipment: { in: allowedEquipment } }
-        : {};
-
+    // No equipment pre-filter — Coach sees the full catalog so it can honor
+    // explicit user requests (e.g. "bench press") even when onboarding says
+    // bodyweight-only. The equipment field is still attached to each entry
+    // and used by the system prompt as a default-selection hint; user intent
+    // in the current message overrides that hint per the priority chain in
+    // buildSystemPrompt.
     return this.prisma.exerciseLibrary.findMany({
       where: {
         OR: [{ is_system: true }, { user_id: userId }],
-        ...equipmentFilter,
       },
       orderBy: { name: 'asc' },
     });
@@ -193,6 +186,20 @@ Tool usage rules:
 - "Create a workout" / "Build me a workout" / "Give me a workout for today" → call create_workout_session. This is for single ad-hoc workout sessions only.
 - "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
+
+Priority chain for exercise selection (highest wins):
+1. The user's current message. If they name a specific exercise (e.g. "bench press", "deadlift", "back squat"), you MUST include that exercise. Find it in the Available exercises list and use its library_exercise_id. If it isn't in the list, include it as a free-form entry — supply name, muscle_group, sets_display and OMIT library_exercise_id. NEVER swap a named lift for a "close enough" variation (push-ups are NOT bench press).
+2. The "Personal context from the user" block (if present in the profile). Use it as a stronger signal than onboarding fields. If the context implies they actually train with equipment beyond what onboarding lists (e.g. context says "I focus on bench press and deadlift" but onboarding says bodyweight), trust the context for exercise selection.
+3. Onboarding profile (Equipment, etc.) — use as the default when 1 and 2 give no signal.
+
+Title and message honesty:
+- Workout title must reflect what is actually in the session. If you include bench press, "Bench Press Focus" is fine. If you don't, do not put "Bench Press" in the title.
+- ai_message: be plain about what you built. No filler.
+
+Plan integration (server auto-handles this):
+- create_workout_session for today automatically replaces today's entry in the active plan with the new workout. Today's original training day (if any) is auto-shifted to the next pending training day this week.
+- After the tool runs, the follow-up tool result includes "plan_today_updated" and "plan_displaced_to" (a day name like "Friday", or null). In the text reply you stream after the tool, briefly mention this if plan_today_updated is true — e.g. "Plugged it in as today; your original Pull Day moved to Friday." Keep it one sentence, no apology.
+
 - Reference the training plan context above when user asks about their plan.
 - When creating workouts, ALWAYS use the tool — never list exercises as plain text.
 - For greetings, questions, advice, or general conversation — respond in text only. Do NOT call any tool unless the user explicitly asks for a workout, plan, or plan change.

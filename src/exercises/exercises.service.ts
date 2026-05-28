@@ -23,7 +23,7 @@ export class ExercisesService {
       where.muscle_group = muscleGroup;
     }
 
-    const [rows, favIds] = await Promise.all([
+    const [rows, favIds, lastSetMap] = await Promise.all([
       this.prisma.exerciseLibrary.findMany({
         where,
         orderBy: [{ is_system: 'desc' }, { name: 'asc' }],
@@ -37,6 +37,7 @@ export class ExercisesService {
         },
       }),
       this.fetchFavoriteIdSet(userId),
+      this.fetchLastSetMap(userId),
     ]);
 
     const mapped = rows.map((r) => ({
@@ -53,6 +54,7 @@ export class ExercisesService {
             `${IMAGE_BASE_URL}/${r.external_id}/1.jpg`,
           ]
         : [],
+      last_set: lastSetMap.get(r.id) ?? null,
     }));
 
     // Stable partition: favorites first, others preserve DB order. Prisma can't
@@ -60,6 +62,73 @@ export class ExercisesService {
     const favorites = mapped.filter((e) => e.is_favorite);
     const rest = mapped.filter((e) => !e.is_favorite);
     return { exercises: [...favorites, ...rest] };
+  }
+
+  /**
+   * For each library exercise the user has performed at least once, returns
+   * the user's most recent completed set on that exercise (highest set_number
+   * from the most recent completed session). Used as a hint on the library
+   * card so the user can recall where they left off before picking an
+   * exercise to add.
+   */
+  private async fetchLastSetMap(userId: string): Promise<
+    Map<
+      string,
+      {
+        weight: number | null;
+        weight_unit: string;
+        reps: number;
+        is_bodyweight: boolean;
+        completed_at: string | null;
+      }
+    >
+  > {
+    const rows = await this.prisma.sessionExercise.findMany({
+      where: {
+        library_exercise_id: { not: null },
+        session: { user_id: userId, status: 'completed' },
+        exercise_sets: { some: {} },
+      },
+      select: {
+        library_exercise_id: true,
+        session: { select: { completed_at: true } },
+        exercise_sets: {
+          orderBy: { set_number: 'desc' },
+          take: 1,
+          select: {
+            weight: true,
+            weight_unit: true,
+            reps: true,
+            is_bodyweight: true,
+          },
+        },
+      },
+      orderBy: { session: { completed_at: 'desc' } },
+    });
+
+    const map = new Map<
+      string,
+      {
+        weight: number | null;
+        weight_unit: string;
+        reps: number;
+        is_bodyweight: boolean;
+        completed_at: string | null;
+      }
+    >();
+    for (const r of rows) {
+      if (!r.library_exercise_id || map.has(r.library_exercise_id)) continue;
+      const set = r.exercise_sets[0];
+      if (!set) continue;
+      map.set(r.library_exercise_id, {
+        weight: set.weight !== null ? Number(set.weight) : null,
+        weight_unit: set.weight_unit,
+        reps: set.reps,
+        is_bodyweight: set.is_bodyweight,
+        completed_at: r.session.completed_at?.toISOString() ?? null,
+      });
+    }
+    return map;
   }
 
   async createExercise(userId: string, dto: CreateExerciseDto) {

@@ -5,6 +5,7 @@ import { PlansService } from '../plans/plans.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { exerciseImageUrl } from '../common/exercise-image';
+import { toMondayDow } from '../common/date-utils';
 import {
   matchExercisesToSlots,
   normalizeMuscleGroup,
@@ -213,6 +214,14 @@ export class CoachToolsService {
         params.exerciseLibrary,
       );
 
+      // Wire the new session into the user's plan: today's plan day adopts
+      // it; today's original workout (if any) is bumped to the next pending
+      // training day so the week stays coherent.
+      const planChange = await this.linkSessionToTodayAndRebalance(
+        params.userId,
+        session.id,
+      );
+
       yield {
         type: 'session_created',
         data: {
@@ -252,6 +261,8 @@ export class CoachToolsService {
           session_id: session.id,
           title: session.title,
           exercise_count: session.exercises.length,
+          plan_today_updated: planChange.todayUpdated,
+          plan_displaced_to: planChange.movedToDayLabel,
         }),
         fullContent: params.fullContent,
         maxTokens: 200,
@@ -619,6 +630,123 @@ export class CoachToolsService {
     });
 
     return session;
+  }
+
+  /**
+   * Splice a freshly created workout into the user's active plan:
+   *   - Today's PlanDay adopts the session (title, exercises, muscle groups,
+   *     workout_session_id, status='pending', day_type='training').
+   *   - If today was originally a training day with exercises, those original
+   *     exercises move to the next pending training day this week so the week
+   *     stays coherent (chest swapped with what was scheduled for that day).
+   *
+   * Silently no-ops when there's no active plan, today isn't in the plan,
+   * or today's plan day is already completed (don't overwrite a finished day).
+   */
+  private async linkSessionToTodayAndRebalance(
+    userId: string,
+    sessionId: string,
+  ): Promise<{
+    todayUpdated: boolean;
+    movedToDayLabel: string | null;
+  }> {
+    const dayLabels = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    const todayDow = toMondayDow(new Date());
+
+    const plan = await this.prisma.trainingPlan.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: { days: { orderBy: { day_of_week: 'asc' } } },
+    });
+    if (!plan) return { todayUpdated: false, movedToDayLabel: null };
+
+    const todayDay = plan.days.find((d) => d.day_of_week === todayDow);
+    if (!todayDay || todayDay.status === 'completed') {
+      return { todayUpdated: false, movedToDayLabel: null };
+    }
+
+    const session = await this.prisma.workoutSession.findUnique({
+      where: { id: sessionId },
+      include: { exercises: { orderBy: { step_number: 'asc' } } },
+    });
+    if (!session) return { todayUpdated: false, movedToDayLabel: null };
+
+    // Snapshot today's original workout so we can relocate it.
+    const originalDayType = todayDay.day_type;
+    const originalTitle = todayDay.session_title;
+    const originalSessionType = todayDay.session_type;
+    const originalMuscleGroups = todayDay.muscle_groups;
+    const originalExercises = todayDay.exercises_json;
+    const originalIsTrainingWithContent =
+      originalDayType === 'training' &&
+      Array.isArray(originalExercises) &&
+      (originalExercises as unknown[]).length > 0;
+
+    // Shape today's PlanDay.exercises_json from the new session's exercises.
+    const newExercisesJson = session.exercises.map((e) => ({
+      library_exercise_id: e.library_exercise_id ?? null,
+      external_id: e.external_id ?? null,
+      name: e.name,
+      muscle_group: e.muscle_group ?? null,
+      equipment: e.equipment ?? null,
+      sets_display: e.sets_display,
+    }));
+    const muscleGroups = [
+      ...new Set(
+        session.exercises
+          .map((e) => e.muscle_group)
+          .filter((m): m is string => !!m),
+      ),
+    ];
+
+    let movedToDayLabel: string | null = null;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.planDay.update({
+        where: { id: todayDay.id },
+        data: {
+          day_type: 'training',
+          session_title: session.title,
+          session_type: session.type,
+          muscle_groups: muscleGroups,
+          exercises_json: newExercisesJson,
+          workout_session_id: session.id,
+          status: 'pending',
+          adapted_at: new Date(),
+        },
+      });
+
+      if (!originalIsTrainingWithContent) return;
+      const targetDay = plan.days.find(
+        (d) =>
+          d.day_of_week > todayDow &&
+          d.day_type === 'training' &&
+          d.status === 'pending' &&
+          d.id !== todayDay.id,
+      );
+      if (!targetDay) return;
+      await tx.planDay.update({
+        where: { id: targetDay.id },
+        data: {
+          session_title: originalTitle,
+          session_type: originalSessionType,
+          muscle_groups: originalMuscleGroups,
+          exercises_json: originalExercises as any,
+          status: 'pending',
+          workout_session_id: null,
+          adapted_at: new Date(),
+        },
+      });
+      movedToDayLabel = dayLabels[targetDay.day_of_week] ?? null;
+    });
+
+    return { todayUpdated: true, movedToDayLabel };
   }
 
   private detectMuscleGroupMismatch(

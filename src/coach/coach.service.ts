@@ -240,7 +240,10 @@ export class CoachService {
           select: { role: true, content: true },
         })
         .then((msgs) => msgs.reverse()),
-      this.plansService.getActivePlan(userId),
+      // Plan auto-regen on a new week throws PREMIUM_REQUIRED for non-premium
+      // users with an existing plan. Don't let that kill the whole chat —
+      // coach just skips the active-plan context for this turn.
+      this.plansService.getActivePlan(userId).catch(() => null),
     ]);
 
     const quickWorkout = await this.prisma.workoutSession.findFirst({
