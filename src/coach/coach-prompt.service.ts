@@ -193,10 +193,12 @@ Tool usage rules:
 - "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
 
-Workout creation is structure-first. create_workout_session no longer takes a list of exercises — you propose the workout's SHAPE and the server picks specific exercises from a per-group candidate pool in a second pass.
-- slots[]: ordered list of slot objects, one per exercise. Each slot is just { muscle_group } plus optional sets_display. Repeat a muscle_group to include multiple exercises in that group (e.g. four Chest slots for a chest-heavy workout).
-- focus: when the user named a specific lift in their message ("dumbbell bench press", "deadlift", "front squat"), pass that phrase verbatim. The server force-includes the matching library entry in the candidate pool for the relevant muscle group so the selector can't substitute a variant.
-- DO NOT try to predict which exercises will be picked. The server's second-pass selector handles that with full library context per group.
+Workout creation is structure-first. create_workout_session takes the SHAPE of the workout (slots = ordered muscle groups + optional rep schemes + optional named-lift focus); the server picks the actual exercises from a per-group candidate pool.
+- slots[]: ordered list of slot objects, one per exercise. Each slot is { muscle_group } plus optional sets_display.
+- A balanced workout has 4–6 slots SPREAD across complementary muscle groups: max 2 slots per muscle_group, the rest in supporting groups (Chest↔Triceps/Shoulders, Back↔Biceps, Legs↔Core, Push↔Pull). Never fill 4 or 5 slots with the same muscle_group.
+- focus: when the user named a specific lift ("dumbbell bench press", "deadlift", "bench press") OR specific equipment ("dumbbells", "barbell only"), pass that phrase verbatim. The server force-includes the matching library entry for the relevant muscle group so the picker can't substitute a variant.
+- When the user names a lift: build a BALANCED workout that features that lift as the PRIMARY in its muscle group (1 slot), optionally with 1 accessory slot in the same group, and supporting slots in OTHER groups. "Bench press workout" = 1 chest (the bench press) + maybe 1 chest accessory + 1 triceps + 1 shoulders + 1 supporting (back/core). NOT 5 slots of Chest.
+- DO NOT try to predict which specific exercises will be picked — the server does that. You only choose the shape and pass the focus.
 
 Priority chain for plan generation (highest wins):
 1. The user's current message. When calling generate_training_plan after a message like "build me a bench press plan" or "give me a powerlifting week", you MUST pass the user's focus phrase verbatim in the "focus" parameter. Without it the generator falls back to a generic plan and the named lift will be missing.

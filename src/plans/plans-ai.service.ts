@@ -49,7 +49,7 @@ User profile:
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
 - Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
-${userFocus ? `\nUser focus for this plan: "${userFocus}". Bias the skeleton toward this focus — add extra compound slots in the relevant muscle group and lean into rep schemes that suit the named lift. The exercise-selection pass will fill in the specific lift, but the skeleton must give it room.\n` : ''}
+${userFocus ? `\nUser focus for this plan: "${userFocus}". Treat the focus as the WEEK'S THEME — feature it prominently on ONE primary training day (the focus muscle_group as the first slot, with a low-rep compound scheme like 4×5 or 5×5 that suits the named lift). Optionally include the focus muscle group as a single accessory slot on ONE other training day. The remaining training days MUST stay balanced across the OTHER muscle groups (Legs, Back, Shoulders, Arms, Core as appropriate) so the user gets full-body recovery and well-rounded volume across the week. DO NOT make every training day focus-heavy — a "bench press plan" still needs a leg day and a pull day.\n` : ''}
 Respond with a JSON object:
 {
   "days": [
@@ -308,7 +308,7 @@ Rules:
 - Vary exercises — don't repeat the same exercise across days unless the pool is very small
 - Pick well-known, effective exercises over obscure ones
 - You MUST only use exercise IDs from the pools above${userFocus ? `
-- USER FOCUS: "${userFocus}". Wherever the named lift or its direct variations appear in a candidate pool, prefer them over generic alternatives. For "bench press" that means Barbell Bench Press, Incline Bench Press, Close-Grip Bench Press across the chest slots. Pick the canonical lift on the first applicable day and rotate to variations on later days; don't silently swap to push-ups just because they're in the pool too.` : ''}
+- USER FOCUS: "${userFocus}". For the FIRST slot in the matching muscle group across the whole plan, pick the canonical named lift if it appears in the pool (e.g. "bench press" → Barbell Bench Press). For ANY subsequent slot in the same muscle group — whether it's another slot on the same day or a slot on a later day — pick a DIFFERENT exercise (different mechanic, accessory, or complementary movement). Do not stack multiple bench-press variations in one workout or repeat the same lift across days; the focus is featured ONCE, then varied around.` : ''}
 
 Respond with JSON:
 {

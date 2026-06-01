@@ -245,12 +245,8 @@ export class PlanGeneratorService {
 
     // Equipment resolution — three tiers, highest wins:
     //   1. Equipment hint inside `focus` ("dumbbells for legs", "barbell
-    //      bench press"). Narrow the pool to that specific equipment so
-    //      the selector physically cannot pick a bodyweight exercise when
-    //      the user asked for dumbbells.
-    //   2. Other `focus` (named lift, no equipment hint). Drop the filter
-    //      so the AI can find e.g. "Barbell Bench Press" even when the
-    //      user is onboarded as bodyweight.
+    //      bench press"). Narrow the pool to that specific equipment.
+    //   2. Other `focus` (named lift, no equipment hint). Drop the filter.
     //   3. No focus. Default to onboarding equipment.
     const equipmentHint = userFocus ? extractEquipmentHint(userFocus) : null;
     const allowedEquipment = equipmentHint
@@ -259,23 +255,22 @@ export class PlanGeneratorService {
         ? []
         : (EQUIPMENT_MAP[onboarding?.available_equipment ?? ''] ?? []);
 
-    const [exerciseLibrary, recentExerciseIds, recentExerciseNames] =
-      await Promise.all([
-        this.prisma.exerciseLibrary.findMany({
-          where: {
-            OR: [{ is_system: true }, { user_id: userId }],
-            ...(allowedEquipment.length > 0
-              ? { equipment: { in: allowedEquipment } }
-              : {}),
-          },
-          orderBy: { name: 'asc' },
-        }),
-        getRecentExerciseIds(this.prisma, userId),
-        getRecentExerciseNames(this.prisma, userId),
-      ]);
+    const [exerciseLibrary, recentExerciseIds] = await Promise.all([
+      this.prisma.exerciseLibrary.findMany({
+        where: {
+          OR: [{ is_system: true }, { user_id: userId }],
+          ...(allowedEquipment.length > 0
+            ? { equipment: { in: allowedEquipment } }
+            : {}),
+        },
+        orderBy: { name: 'asc' },
+      }),
+      getRecentExerciseIds(this.prisma, userId),
+    ]);
 
-    // Wrap the slots in a single-day skeleton so we can reuse the plan
-    // selection pipeline. filterCandidates() expects skeleton shape.
+    // Wrap the slots in a single-day skeleton so filterCandidates can
+    // build per-group candidate pools (deterministically scored: compound
+    // first, not-recently-used preferred, image-bearing preferred).
     const skeleton: SkeletonDay[] = [
       {
         day_of_week: 0,
@@ -296,46 +291,45 @@ export class PlanGeneratorService {
       recentExerciseIds,
     );
 
-    // Force-include any library entry whose name the user named verbatim
-    // (case-insensitive substring of their focus phrase, or vice versa).
-    // Place it at the front of the appropriate muscle group's pool so it's
-    // the obvious pick for the selector.
+    // Force-include any library entry whose name matches the user's focus
+    // phrase. Placed at the front of the relevant muscle group's pool so
+    // the walker below picks it for the FIRST slot in that group.
     if (userFocus) {
       forceIncludeFocusInPools(userFocus, exerciseLibrary, candidatePools);
     }
 
-    const aiSelection = await this.plansAiService.selectExercises(
-      userId,
-      skeleton,
-      candidatePools,
-      onboarding,
-      recentExerciseNames,
-      userFocus,
-    );
-
-    // Take day 0's picks. assembleFromAiSelection fills in equipment +
-    // external_id from the library, which we need for the workout session
-    // exercise rows.
-    const generatedDays = aiSelection
-      ? assembleFromAiSelection(skeleton, aiSelection, candidatePools)
-      : matchSkeletonToDays(
-          skeleton,
-          exerciseLibrary,
-          recentExerciseIds,
-          onboarding?.experience_level ?? null,
+    // Walk slots in order and pick from the pool. Skip exercises already
+    // chosen in this workout so the same group gets variety (Bench Press
+    // first, then a different chest movement for the next chest slot).
+    // No AI call — the pools are already scored well and force-include
+    // pins the user's named lift to the front; an AI pass added ~2-4 s of
+    // latency for marginal quality gain at this stage.
+    const usedIds = new Set<string>();
+    const picks: PickedWorkoutExercise[] = [];
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      const pool = candidatePools.get(slot.muscle_group) ?? [];
+      let candidate = pool.find((ex) => !usedIds.has(ex.id));
+      // Pool exhausted — fall back to any library exercise in this group
+      // so we never return fewer slots than the user asked for.
+      if (!candidate) {
+        candidate = exerciseLibrary.find(
+          (ex) => ex.muscle_group === slot.muscle_group && !usedIds.has(ex.id),
         );
+      }
+      if (!candidate) continue;
+      usedIds.add(candidate.id);
+      picks.push({
+        library_exercise_id: candidate.id,
+        external_id: candidate.external_id ?? null,
+        name: candidate.name,
+        muscle_group: candidate.muscle_group,
+        equipment: candidate.equipment ?? null,
+        sets_display: slot.sets_display ?? '3 × 10',
+      });
+    }
 
-    const day0 = generatedDays[0];
-    if (!day0?.exercises) return [];
-
-    return day0.exercises.map((ex: any, i: number) => ({
-      library_exercise_id: ex.library_exercise_id ?? null,
-      external_id: ex.external_id ?? null,
-      name: ex.name,
-      muscle_group: ex.muscle_group,
-      equipment: ex.equipment ?? null,
-      sets_display: slots[i]?.sets_display ?? ex.sets_display ?? '3 × 10',
-    }));
+    return picks;
   }
 }
 

@@ -70,7 +70,7 @@ export class CoachToolsService {
               slots: {
                 type: 'array',
                 description:
-                  'One entry per exercise slot in the workout. Order matters — slot[0] is exercise #1. Use the same muscle_group multiple times if the user wants two chest exercises (e.g. flat + incline).',
+                  'One entry per exercise slot in the workout. Order matters — slot[0] is exercise #1. Build a BALANCED workout: max 2 slots per muscle_group, the rest spread across complementary groups (Chest↔Triceps/Shoulders, Back↔Biceps, Legs↔Core). When the user names a specific lift in `focus` ("bench press", "deadlift"), put exactly ONE slot in that lift\'s muscle_group as the primary, optionally ONE accessory slot in the SAME group, and use the remaining slots for supporting groups — never fill 4–5 slots with the same muscle_group just because the user named a lift.',
                 items: {
                   type: 'object',
                   properties: {
