@@ -23,6 +23,7 @@ export class PlansAiService {
     userId: string,
     onboarding: any,
     startDayOfWeek: number = 0,
+    userFocus?: string,
   ): Promise<SkeletonDay[]> {
     const dayNames = [
       'Monday',
@@ -48,7 +49,7 @@ User profile:
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
 - Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
-
+${userFocus ? `\nUser focus for this plan: "${userFocus}". Bias the skeleton toward this focus — add extra compound slots in the relevant muscle group and lean into rep schemes that suit the named lift. The exercise-selection pass will fill in the specific lift, but the skeleton must give it room.\n` : ''}
 Respond with a JSON object:
 {
   "days": [
@@ -258,6 +259,7 @@ Rules:
     candidatePools: Map<string, LibraryExercise[]>,
     onboarding: any,
     recentExerciseNames: string[],
+    userFocus?: string,
   ): Promise<AiExerciseSelection | null> {
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
@@ -305,7 +307,8 @@ Rules:
 - Avoid exercises that aggravate listed injuries
 - Vary exercises — don't repeat the same exercise across days unless the pool is very small
 - Pick well-known, effective exercises over obscure ones
-- You MUST only use exercise IDs from the pools above
+- You MUST only use exercise IDs from the pools above${userFocus ? `
+- USER FOCUS: "${userFocus}". Wherever the named lift or its direct variations appear in a candidate pool, prefer them over generic alternatives. For "bench press" that means Barbell Bench Press, Incline Bench Press, Close-Grip Bench Press across the chest slots. Pick the canonical lift on the first applicable day and rotate to variations on later days; don't silently swap to push-ups just because they're in the pool too.` : ''}
 
 Respond with JSON:
 {

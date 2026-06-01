@@ -15,6 +15,7 @@ import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { formatSessionResponse } from '../common/format-session';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ChallengesService } from './challenges.service';
+import { PlansService } from '../plans/plans.service';
 
 @Injectable()
 export class HomeService {
@@ -24,11 +25,18 @@ export class HomeService {
     private readonly analytics: AnalyticsService,
     private readonly notificationsService: NotificationsService,
     private readonly challengesService: ChallengesService,
+    private readonly plansService: PlansService,
   ) {}
 
   // ── Dashboard ────────────────────────────────────────────
 
   async getDashboard(userId: string) {
+    // Run the plan auto-advance + skipped-day adaptation BEFORE we read
+    // plan_days, so a user who skipped a training day earlier in the week
+    // sees the redistributed schedule (e.g. today's rest day promoted to
+    // training) instead of a stale "rest day" screen.
+    await this.plansService.ensureCurrentPlan(userId);
+
     const now = new Date();
     const weekStart = getWeekStart(now);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);

@@ -364,26 +364,39 @@ export class CoachService {
       });
     }
 
-    // 5. Save assistant message (skip empty — prevents polluting history)
-    const contentToSave = fullContent.trim();
-    const assistantMessage = contentToSave
-      ? await this.prisma.coachMessage.create({
-          data: {
-            conversation_id: conversationId,
-            role: 'assistant',
-            content: contentToSave,
-            session_id: sessionId,
-          },
-        })
-      : await this.prisma.coachMessage.findFirst({
-          where: { conversation_id: conversationId },
-          orderBy: { created_at: 'desc' },
-        });
+    // 5. Save assistant message and emit 'done'. Wrap in try/finally so the
+    // client always receives a 'done' (or at minimum the conversation_id)
+    // even if the DB write or anything above blew up — without it the iOS
+    // chat view stays stuck on isStreaming=true and the user can't send
+    // another message.
+    let assistantMessageId = '';
+    try {
+      const contentToSave = fullContent.trim();
+      const assistantMessage = contentToSave
+        ? await this.prisma.coachMessage.create({
+            data: {
+              conversation_id: conversationId,
+              role: 'assistant',
+              content: contentToSave,
+              session_id: sessionId,
+            },
+          })
+        : await this.prisma.coachMessage.findFirst({
+            where: { conversation_id: conversationId },
+            orderBy: { created_at: 'desc' },
+          });
+      assistantMessageId = assistantMessage?.id ?? '';
+    } catch (err) {
+      console.error('[coach.chat] Failed to persist assistant message', err);
+    }
 
+    console.log(
+      `[coach.chat] yielding done: conv=${conversationId} msg=${assistantMessageId}`,
+    );
     yield {
       type: 'done',
       data: {
-        message_id: assistantMessage?.id ?? '',
+        message_id: assistantMessageId,
         conversation_id: conversationId,
       },
     };
