@@ -19,22 +19,10 @@ export class PlansAiService {
     private readonly aiUsage: AiUsageService,
   ) {}
 
-  /// Constrained-task model used by plan skeleton generation and the
-  /// exercise selection pass. Both are bounded JSON tasks where a
-  /// smaller/faster model performs comparably to gpt-4o at 3-5x lower
-  /// latency. Override via OPENAI_MODEL_FAST. Coach chat keeps the
-  /// larger OPENAI_MODEL — it needs the bigger model for reasoning.
-  private get fastModel(): string {
-    return (
-      this.configService.get('OPENAI_MODEL_FAST') ?? 'gpt-4o-mini'
-    );
-  }
-
   async generateWeeklyPlan(
     userId: string,
     onboarding: any,
     startDayOfWeek: number = 0,
-    userFocus?: string,
   ): Promise<SkeletonDay[]> {
     const dayNames = [
       'Monday',
@@ -60,7 +48,7 @@ User profile:
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
 - Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
-${userFocus ? `\nUser focus for this plan: "${userFocus}". Treat the focus as the WEEK'S THEME — feature it prominently on ONE primary training day (the focus muscle_group as the first slot, with a low-rep compound scheme like 4×5 or 5×5 that suits the named lift). Optionally include the focus muscle group as a single accessory slot on ONE other training day. The remaining training days MUST stay balanced across the OTHER muscle groups (Legs, Back, Shoulders, Arms, Core as appropriate) so the user gets full-body recovery and well-rounded volume across the week. DO NOT make every training day focus-heavy — a "bench press plan" still needs a leg day and a pull day.\n` : ''}
+
 Respond with a JSON object:
 {
   "days": [
@@ -87,13 +75,8 @@ Rules:
 - Match rep scheme to goal (build_muscle: 3-4×8-10, lose_fat: 3×12-15, get_stronger: 4-5×5-6, improve_endurance: 3×15-20, stay_healthy: 3×10-12)
 - Avoid muscle groups that aggravate listed injuries
 - Distribute training days evenly through the partial week
-- Return exactly ${totalDays} days (${startDayOfWeek} through 6)
-- HARD REQUIREMENT: every training day MUST have between 4 and 6 entries in exercise_slots. Days with 1, 2, or 3 slots are invalid and will be rejected.`;
+- Return exactly ${totalDays} days (${startDayOfWeek} through 6)`;
 
-    // Skeleton stays on the larger reasoning model — gpt-4o-mini drops
-    // slot counts when the rules block gets long (yielded plans with 1
-    // exercise/day in testing). Selection from candidate pools is a
-    // simpler constrained task and still uses fastModel.
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
     try {
@@ -275,9 +258,8 @@ Rules:
     candidatePools: Map<string, LibraryExercise[]>,
     onboarding: any,
     recentExerciseNames: string[],
-    userFocus?: string,
   ): Promise<AiExerciseSelection | null> {
-    const model = this.fastModel;
+    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
     // Build pool descriptions: "id | name | mechanic | equipment"
     const poolLines: string[] = [];
@@ -323,8 +305,7 @@ Rules:
 - Avoid exercises that aggravate listed injuries
 - Vary exercises — don't repeat the same exercise across days unless the pool is very small
 - Pick well-known, effective exercises over obscure ones
-- You MUST only use exercise IDs from the pools above${userFocus ? `
-- USER FOCUS: "${userFocus}". For the FIRST slot in the matching muscle group across the whole plan, pick the canonical named lift if it appears in the pool (e.g. "bench press" → Barbell Bench Press). For ANY subsequent slot in the same muscle group — whether it's another slot on the same day or a slot on a later day — pick a DIFFERENT exercise (different mechanic, accessory, or complementary movement). Do not stack multiple bench-press variations in one workout or repeat the same lift across days; the focus is featured ONCE, then varied around.` : ''}
+- You MUST only use exercise IDs from the pools above
 
 Respond with JSON:
 {

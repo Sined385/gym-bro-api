@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { ACCENT_COLORS } from './session-exercise.service';
-import { WeightSuggestionService } from '../weight-suggestion/weight-suggestion.service';
+import { WeightSuggestionService } from './weight-suggestion.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { getWeekStart } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';

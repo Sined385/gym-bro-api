@@ -2,10 +2,6 @@ import { Injectable } from '@nestjs/common';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
-import {
-  PlanGeneratorService,
-  WorkoutSlotInput,
-} from '../plans/plan-generator.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { exerciseImageUrl } from '../common/exercise-image';
@@ -47,7 +43,6 @@ export class CoachToolsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly plansService: PlansService,
-    private readonly planGenerator: PlanGeneratorService,
     private readonly aiUsage: AiUsageService,
   ) {}
 
@@ -58,7 +53,7 @@ export class CoachToolsService {
         function: {
           name: 'create_workout_session',
           description:
-            'Create a new workout session. Propose the STRUCTURE (which muscle groups, how many slots, what rep scheme); the server filters its exercise library per group and runs a second AI pass to pick the actual exercises. You do not pick exercises here — only the shape of the workout.',
+            'Create a new workout session for the user based on their request. Use this when the user asks you to create, build, or generate a workout.',
           parameters: {
             type: 'object',
             properties: {
@@ -67,37 +62,22 @@ export class CoachToolsService {
                 type: 'string',
                 enum: ['strength', 'cardio', 'mobility', 'hiit', 'custom'],
               },
-              slots: {
+              exercises: {
                 type: 'array',
-                description:
-                  'One entry per exercise slot in the workout. Order matters — slot[0] is exercise #1. Build a BALANCED workout: max 2 slots per muscle_group, the rest spread across complementary groups (Chest↔Triceps/Shoulders, Back↔Biceps, Legs↔Core). When the user names a specific lift in `focus` ("bench press", "deadlift"), put exactly ONE slot in that lift\'s muscle_group as the primary, optionally ONE accessory slot in the SAME group, and use the remaining slots for supporting groups — never fill 4–5 slots with the same muscle_group just because the user named a lift.',
                 items: {
                   type: 'object',
                   properties: {
-                    muscle_group: {
-                      type: 'string',
-                      enum: [
-                        'Chest',
-                        'Back',
-                        'Legs',
-                        'Shoulders',
-                        'Arms',
-                        'Core',
-                      ],
-                    },
+                    library_exercise_id: { type: 'string' },
+                    name: { type: 'string' },
+                    muscle_group: { type: 'string' },
                     sets_display: {
                       type: 'string',
                       description:
-                        'Sets and reps in "N × M" format, e.g. "4 × 8". Optional — defaults to "3 × 10".',
+                        'Sets and reps in "N × M" format, e.g. "3 × 10", "4 × 8". Always use the × character.',
                     },
                   },
-                  required: ['muscle_group'],
+                  required: ['name', 'muscle_group', 'sets_display'],
                 },
-              },
-              focus: {
-                type: 'string',
-                description:
-                  'Optional. Pass the user\'s message verbatim when they named either a specific lift ("dumbbell bench press", "deadlift", "front squat") OR a specific equipment type ("dumbbells", "barbell only", "machines"). The server parses this to (a) narrow the candidate pool to that equipment when an equipment word is present, or (b) force-include the matching library entry when a specific lift is named. Omit only when the user gave no equipment or lift preference.',
               },
               duration_minutes: {
                 type: 'number',
@@ -109,7 +89,7 @@ export class CoachToolsService {
                 description: 'Short explanation of why you chose this workout',
               },
             },
-            required: ['title', 'type', 'slots', 'ai_message'],
+            required: ['title', 'type', 'exercises', 'ai_message'],
           },
         },
       },
@@ -194,11 +174,6 @@ export class CoachToolsService {
                 description:
                   'If true, replaces the current active plan. Set to true when the user already has a plan and wants a new one.',
               },
-              focus: {
-                type: 'string',
-                description:
-                  'Optional free-form focus from the user\'s message. If they asked for a "bench press plan" or "powerlifting week" or "arms-heavy plan", pass that phrasing verbatim here. The plan generator uses it to bias the skeleton (more compound slots for that movement) and exercise selection (prefer the named lift and its variations). Omit when no specific focus was requested.',
-              },
             },
           },
         },
@@ -233,67 +208,9 @@ export class CoachToolsService {
   > {
     try {
       const args = safeParseToolArgs(params.toolCallArgs) as any;
-
-      // Two-stage workout assembly:
-      //   1. Coach proposes the structure (slots = muscle group sequence
-      //      + optional rep schemes + optional named-lift focus).
-      //   2. Server filters its library per group, force-includes the named
-      //      lift if any, then runs a second AI pass to pick specific
-      //      exercises from those small pools.
-      // This mirrors the plan-generation flow and prevents Coach from
-      // picking a variant ("Decline DB Bench Press") when the user asked
-      // for the canonical lift ("Dumbbell Bench Press").
-      const slots: WorkoutSlotInput[] = Array.isArray(args.slots)
-        ? args.slots
-            .filter((s: any) => s && typeof s.muscle_group === 'string')
-            .map((s: any) => ({
-              muscle_group: s.muscle_group,
-              sets_display:
-                typeof s.sets_display === 'string'
-                  ? s.sets_display
-                  : undefined,
-            }))
-        : [];
-      const focus =
-        typeof args.focus === 'string' && args.focus.trim().length > 0
-          ? args.focus.trim()
-          : undefined;
-
-      const picked =
-        slots.length > 0
-          ? await this.planGenerator.pickExercisesForWorkout(
-              params.userId,
-              slots,
-              focus,
-            )
-          : [];
-
-      // Build the createWorkoutSession arg shape from the picked exercises.
-      const sessionArgs = {
-        title: args.title,
-        type: args.type,
-        ai_message: args.ai_message,
-        duration_minutes: args.duration_minutes,
-        exercises: picked.map((p) => ({
-          library_exercise_id: p.library_exercise_id,
-          name: p.name,
-          muscle_group: p.muscle_group,
-          sets_display: p.sets_display,
-        })),
-      };
-
-      // Belt-and-suspenders: even with the two-stage flow + focus-injection,
-      // double-check the user's named lifts ended up in the session and
-      // inject any that didn't. Cheap insurance.
-      this.enforceNamedLifts(
-        sessionArgs,
-        params.userMessage,
-        params.exerciseLibrary,
-      );
-
       const session = await this.createWorkoutSession(
         params.userId,
-        sessionArgs,
+        args,
         params.exerciseLibrary,
       );
 
@@ -606,15 +523,7 @@ export class CoachToolsService {
     try {
       const args = safeParseToolArgs(params.toolCallArgs);
       const force = args.force === true || !!params.activePlanData?.plan;
-      const focus =
-        typeof args.focus === 'string' && args.focus.trim().length > 0
-          ? args.focus.trim()
-          : undefined;
-      const result = await this.plansService.generatePlan(
-        params.userId,
-        force,
-        focus,
-      );
+      const result = await this.plansService.generatePlan(params.userId, force);
 
       yield {
         type: 'plan_generated',
@@ -838,90 +747,6 @@ export class CoachToolsService {
     });
 
     return { todayUpdated: true, movedToDayLabel };
-  }
-
-  /**
-   * Parses the user's message for explicit lift names that exist in the
-   * library and ensures they appear in the AI's chosen exercises. Auto-
-   * injects missing ones at the front of the list.
-   *
-   * Why: the system prompt asks the model to honor the user's exact lift
-   * name, but the model still substitutes ("dumbbell bench press" becomes
-   * "decline dumbbell bench press" or "incline dumbbell bench press"). The
-   * priority chain is the user's intent, and that must hold deterministically
-   * — prompt rules alone don't, so we enforce server-side.
-   *
-   * Matching:
-   *  - Longest library-name substring match wins per position in the
-   *    message (so "dumbbell bench press" doesn't also pull in "bench press").
-   *  - Case-insensitive.
-   *  - Idempotent against what the AI already chose: skips lifts the AI
-   *    included by library_exercise_id or by exact name.
-   */
-  private enforceNamedLifts(
-    args: any,
-    userMessage: string,
-    exerciseLibrary: any[],
-  ): void {
-    if (!userMessage || !Array.isArray(args.exercises)) return;
-    const lower = userMessage.toLowerCase();
-
-    // Collect (exercise, startIndex) hits. Sort by name length desc so the
-    // most specific phrasing wins when two library entries both substring-
-    // match overlapping spans.
-    type Hit = { ex: any; start: number };
-    const hits: Hit[] = [];
-    for (const ex of exerciseLibrary) {
-      const name = (ex.name as string).toLowerCase();
-      // Minimum length filter to avoid trivial matches (e.g. "Pull" or
-      // single-word generic lifts triggering on unrelated chatter).
-      if (name.length < 6) continue;
-      const idx = lower.indexOf(name);
-      if (idx >= 0) hits.push({ ex, start: idx });
-    }
-    hits.sort((a, b) => b.ex.name.length - a.ex.name.length);
-
-    // Resolve overlapping spans — keep the longest, drop overlaps.
-    const claimed = new Array<boolean>(lower.length).fill(false);
-    const required: any[] = [];
-    for (const { ex, start } of hits) {
-      const end = start + ex.name.length;
-      let conflict = false;
-      for (let i = start; i < end; i++) {
-        if (claimed[i]) { conflict = true; break; }
-      }
-      if (conflict) continue;
-      for (let i = start; i < end; i++) claimed[i] = true;
-      required.push(ex);
-    }
-
-    if (required.length === 0) return;
-
-    // Skip any the AI already included (by library_exercise_id or exact name).
-    const aiNames = new Set<string>(
-      args.exercises
-        .map((e: any) => (e.name as string | undefined)?.toLowerCase())
-        .filter((n: string | undefined) => !!n),
-    );
-    const aiIds = new Set<string>(
-      args.exercises
-        .map((e: any) => e.library_exercise_id as string | undefined)
-        .filter((id: string | undefined) => !!id),
-    );
-    const missing = required.filter(
-      (ex) => !aiIds.has(ex.id) && !aiNames.has(ex.name.toLowerCase()),
-    );
-    if (missing.length === 0) return;
-
-    // Inject at the front. The AI's other exercises follow as accessories.
-    const injected = missing.map((ex) => ({
-      library_exercise_id: ex.id,
-      name: ex.name,
-      muscle_group: ex.muscle_group ?? null,
-      // Sensible default — compound lifts read well as 4 × 8 in this app.
-      sets_display: '4 × 8',
-    }));
-    args.exercises = [...injected, ...args.exercises];
   }
 
   private detectMuscleGroupMismatch(

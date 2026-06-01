@@ -365,10 +365,8 @@ export class CoachService {
     }
 
     // 5. Save assistant message and emit 'done'. Wrap in try/finally so the
-    // client always receives a 'done' (or at minimum the conversation_id)
-    // even if the DB write or anything above blew up — without it the iOS
-    // chat view stays stuck on isStreaming=true and the user can't send
-    // another message.
+    // client always receives a 'done' even if the DB write blew up —
+    // without it the iOS chat view stays stuck on isStreaming=true.
     let assistantMessageId = '';
     try {
       const contentToSave = fullContent.trim();
@@ -390,9 +388,6 @@ export class CoachService {
       console.error('[coach.chat] Failed to persist assistant message', err);
     }
 
-    console.log(
-      `[coach.chat] yielding done: conv=${conversationId} msg=${assistantMessageId}`,
-    );
     yield {
       type: 'done',
       data: {
