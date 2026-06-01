@@ -133,12 +133,14 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
         idx++;
       }
     }
+    // Compact format: id|name|muscle|equipment per line. IDs are
+    // required for modify_plan_days; create_workout_session takes only
+    // muscle_group + focus so coach doesn't pick IDs there.
     const exerciseList =
       cappedLibrary.length > 0
-        ? `Available exercises (use these library_exercise_id values when creating workouts — ${exerciseLibrary.length} total, showing ${cappedLibrary.length}):\n${cappedLibrary
+        ? `Available exercises (id|name|muscle|equipment — ${exerciseLibrary.length} total, showing ${cappedLibrary.length}):\n${cappedLibrary
             .map(
-              (e) =>
-                `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
+              (e) => `${e.id}|${e.name}|${e.muscle_group}|${e.equipment}`,
             )
             .join('\n')}`
         : 'No exercise library available.';
@@ -183,8 +185,13 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
       planContext = `Current training plan (Week ${weekNum}):\nDay mapping: Monday=0, Tuesday=1, Wednesday=2, Thursday=3, Friday=4, Saturday=5, Sunday=6\n${dayLines.join('\n')}`;
     }
 
+    // System prompt layout — STATIC blocks first so OpenAI's automatic
+    // prompt-prefix cache (≥1024 tokens of identical prefix) catches
+    // them. The exercise library is the biggest single block (~30KB)
+    // and changes rarely, so it sits inside the cached prefix. User-
+    // specific dynamic context (today's date, profile, sessions, plan)
+    // lives below the marker and is re-sent in full each request.
     return `You are a no-nonsense strength coach for the GymJam app.
-Today is ${dayFullNames[todayDow]} ${todayDate} (day_of_week=${todayDow}).
 You have full context about the user's training. Help them with workout plans, exercise adjustments, and training advice.
 
 Tool usage rules:
@@ -213,11 +220,25 @@ Plan integration (server auto-handles this):
 - create_workout_session for today automatically replaces today's entry in the active plan with the new workout. Today's original training day (if any) is auto-shifted to the next pending training day this week.
 - After the tool runs, the follow-up tool result includes "plan_today_updated" and "plan_displaced_to" (a day name like "Friday", or null). In the text reply you stream after the tool, briefly mention this if plan_today_updated is true — e.g. "Plugged it in as today; your original Pull Day moved to Friday." Keep it one sentence, no apology.
 
-- Reference the training plan context above when user asks about their plan.
+- Reference the training plan context (below) when user asks about their plan.
 - When creating workouts, ALWAYS use the tool — never list exercises as plain text.
 - For greetings, questions, advice, or general conversation — respond in text only. Do NOT call any tool unless the user explicitly asks for a workout, plan, or plan change.
 
+Rules:
+- Pick 4-6 exercises when creating workouts (fewer for short durations: 3-4 for ≤30 min)
+- When the user requests a specific duration (e.g. "30 min workout"), pass that duration_minutes in the tool call and scale the exercise count accordingly
+- Vary muscle groups for balanced sessions
+- Avoid exercises that would aggravate listed injuries
+- Match rep scheme to the user's goal
+- ONLY use library_exercise_id values from the available exercises list below when modifying plan days
+- Be direct and concise — no cheerleading
+
 Keep responses concise (2-3 sentences max for text replies).
+
+${exerciseList}
+
+=== USER CONTEXT (varies per request) ===
+Today is ${dayFullNames[todayDow]} ${todayDate} (day_of_week=${todayDow}).
 
 ${profile}
 
@@ -227,17 +248,6 @@ ${planContext}
 
 ${sessionsContext}
 
-${currentSession}
-
-${exerciseList}
-
-Rules:
-- Pick 4-6 exercises when creating workouts (fewer for short durations: 3-4 for ≤30 min)
-- When the user requests a specific duration (e.g. "30 min workout"), pass that duration_minutes in the tool call and scale the exercise count accordingly
-- Vary muscle groups for balanced sessions
-- Avoid exercises that would aggravate listed injuries
-- Match rep scheme to the user's goal
-- ONLY use library_exercise_id values from the available exercises list above when creating workouts
-- Be direct and concise — no cheerleading`;
+${currentSession}`;
   }
 }

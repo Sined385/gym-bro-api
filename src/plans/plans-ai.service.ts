@@ -19,6 +19,17 @@ export class PlansAiService {
     private readonly aiUsage: AiUsageService,
   ) {}
 
+  /// Constrained-task model used by plan skeleton generation and the
+  /// exercise selection pass. Both are bounded JSON tasks where a
+  /// smaller/faster model performs comparably to gpt-4o at 3-5x lower
+  /// latency. Override via OPENAI_MODEL_FAST. Coach chat keeps the
+  /// larger OPENAI_MODEL — it needs the bigger model for reasoning.
+  private get fastModel(): string {
+    return (
+      this.configService.get('OPENAI_MODEL_FAST') ?? 'gpt-4o-mini'
+    );
+  }
+
   async generateWeeklyPlan(
     userId: string,
     onboarding: any,
@@ -76,8 +87,13 @@ Rules:
 - Match rep scheme to goal (build_muscle: 3-4×8-10, lose_fat: 3×12-15, get_stronger: 4-5×5-6, improve_endurance: 3×15-20, stay_healthy: 3×10-12)
 - Avoid muscle groups that aggravate listed injuries
 - Distribute training days evenly through the partial week
-- Return exactly ${totalDays} days (${startDayOfWeek} through 6)`;
+- Return exactly ${totalDays} days (${startDayOfWeek} through 6)
+- HARD REQUIREMENT: every training day MUST have between 4 and 6 entries in exercise_slots. Days with 1, 2, or 3 slots are invalid and will be rejected.`;
 
+    // Skeleton stays on the larger reasoning model — gpt-4o-mini drops
+    // slot counts when the rules block gets long (yielded plans with 1
+    // exercise/day in testing). Selection from candidate pools is a
+    // simpler constrained task and still uses fastModel.
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
     try {
@@ -261,7 +277,7 @@ Rules:
     recentExerciseNames: string[],
     userFocus?: string,
   ): Promise<AiExerciseSelection | null> {
-    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
+    const model = this.fastModel;
 
     // Build pool descriptions: "id | name | mechanic | equipment"
     const poolLines: string[] = [];
