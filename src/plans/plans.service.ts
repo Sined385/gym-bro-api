@@ -204,9 +204,12 @@ export class PlansService {
     const allowedEquipment =
       EQUIPMENT_MAP[onboarding.available_equipment] ?? [];
 
-    // Calculate start day of week (0=Mon..6=Sun)
+    // Calculate start day of week (0=Mon..6=Sun). Always anchor on
+    // today, even on force-regen — generating a Monday training day
+    // on a Tuesday-regen would leave the user staring at a "do this
+    // workout" card for a day that's already in the past.
     const now = new Date();
-    const startDow = force ? 0 : toMondayDow(now);
+    const startDow = toMondayDow(now);
 
     // Fetch skeleton, exercise library, recent exercises, recent sessions
     // (for progressive-overload context), and previous week number in
