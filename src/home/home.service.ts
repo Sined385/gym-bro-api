@@ -13,8 +13,8 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { formatSessionResponse } from '../common/format-session';
-import { NotificationsService } from '../notifications/notifications.service';
 import { ChallengesService } from './challenges.service';
+import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 
 @Injectable()
 export class HomeService {
@@ -22,8 +22,8 @@ export class HomeService {
     private readonly prisma: PrismaService,
     private readonly homeAiService: HomeAiService,
     private readonly analytics: AnalyticsService,
-    private readonly notificationsService: NotificationsService,
     private readonly challengesService: ChallengesService,
+    private readonly orchestrator: WorkoutOrchestratorService,
   ) {}
 
   // ── Dashboard ────────────────────────────────────────────
@@ -746,6 +746,12 @@ export class HomeService {
     return Math.round(met * 70 * (durationMinutes / 60));
   }
 
+  /**
+   * Thin call site — the orchestrator owns the actual cache
+   * invalidations, plan-day linkage, AI completion notes, analytics,
+   * and reminder recalc. Phase 1 moves the prior inline body into
+   * WorkoutOrchestratorService.recordCompletion.
+   */
   private async postCompletionEffects(
     userId: string,
     sessionId: string,
@@ -753,37 +759,11 @@ export class HomeService {
     calories: number | null,
     effortLevel?: number,
   ): Promise<void> {
-    this.analytics.track(userId, 'session_completed', {
-      duration_minutes: durationMinutes,
+    await this.orchestrator.recordCompletion(userId, sessionId, {
+      durationMinutes,
       calories,
-      effort_level: effortLevel ?? null,
+      effortLevel,
     });
-
-    // Invalidate cached motivation so the next dashboard load regenerates it
-    // with the just-completed session included
-    await this.prisma.motivationInsight.deleteMany({
-      where: { user_id: userId },
-    });
-
-    // Invalidate cached weekly overview so it reflects the new session
-    const weekStart = getWeekStart(new Date());
-    await this.prisma.weeklyOverview.deleteMany({
-      where: { user_id: userId, week_start: weekStart },
-    });
-
-    // Update plan day status if this session is linked to a plan
-    const linkedPlanDay = await this.prisma.planDay.findFirst({
-      where: { workout_session_id: sessionId },
-    });
-    if (linkedPlanDay) {
-      await this.prisma.planDay.update({
-        where: { id: linkedPlanDay.id },
-        data: { status: 'completed' },
-      });
-    }
-
-    // Recalculate preferred workout hour for smart reminders
-    this.notificationsService.recalculatePreferredHour(userId).catch(() => {});
   }
 
   private async fetchCompletedSession(sessionId: string) {

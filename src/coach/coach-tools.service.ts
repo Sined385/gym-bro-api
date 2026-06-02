@@ -3,9 +3,9 @@ import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
+import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { exerciseImageUrl } from '../common/exercise-image';
-import { toMondayDow } from '../common/date-utils';
 import {
   matchExercisesToSlots,
   normalizeMuscleGroup,
@@ -44,6 +44,7 @@ export class CoachToolsService {
     private readonly prisma: PrismaService,
     private readonly plansService: PlansService,
     private readonly aiUsage: AiUsageService,
+    private readonly orchestrator: WorkoutOrchestratorService,
   ) {}
 
   getToolDefinitions(): OpenAI.Chat.Completions.ChatCompletionTool[] {
@@ -74,6 +75,31 @@ export class CoachToolsService {
                       type: 'string',
                       description:
                         'Sets and reps in "N × M" format, e.g. "3 × 10", "4 × 8". Always use the × character.',
+                    },
+                    target_sets: {
+                      type: 'array',
+                      description:
+                        'Per-set targets (warmup ladder + working sets). REQUIRED when this exercise appears in "Your recent lifts" — mirror the recorded ladder with the top working set bumped to the suggested value, so the user sees real progression instead of generic prefills. Optional for novel exercises.',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          weight_kg: {
+                            type: 'number',
+                            description:
+                              'Target weight in kilograms. Omit for bodyweight sets.',
+                          },
+                          reps: {
+                            type: 'integer',
+                            description: 'Target rep count.',
+                          },
+                          is_bodyweight: {
+                            type: 'boolean',
+                            description:
+                              'True when this is a bodyweight set (no external load).',
+                          },
+                        },
+                        required: ['reps'],
+                      },
                     },
                   },
                   required: ['name', 'muscle_group', 'sets_display'],
@@ -174,6 +200,11 @@ export class CoachToolsService {
                 description:
                   'If true, replaces the current active plan. Set to true when the user already has a plan and wants a new one.',
               },
+              focus: {
+                type: 'string',
+                description:
+                  'Optional. When the user named a specific lift or equipment in their message ("bench press plan", "deadlift week", "dumbbell plan"), pass that phrase verbatim. The plan generator features the named focus on ONE training day and keeps the rest of the week balanced across other muscle groups. Omit when no specific focus was named.',
+              },
             },
           },
         },
@@ -208,6 +239,29 @@ export class CoachToolsService {
   > {
     try {
       const args = safeParseToolArgs(params.toolCallArgs) as any;
+
+      // Diagnostic: dump what the AI actually returned per exercise so we
+      // can verify the PROGRESSIVE OVERLOAD rule is being followed (i.e.,
+      // target_sets is populated for exercises that appear in the
+      // "Your recent lifts" prompt block).
+      for (const ex of args.exercises ?? []) {
+        const ts = Array.isArray(ex.target_sets) ? ex.target_sets : [];
+        if (ts.length === 0) {
+          console.log(
+            `[create_workout_session] ${ex.name} (lib:${ex.library_exercise_id ?? 'none'}) sets_display="${ex.sets_display}" — NO target_sets`,
+          );
+        } else {
+          const topSet = ts.reduce(
+            (a: any, b: any) =>
+              (b.weight_kg ?? 0) > (a.weight_kg ?? 0) ? b : a,
+            ts[0],
+          );
+          console.log(
+            `[create_workout_session] ${ex.name} (lib:${ex.library_exercise_id ?? 'none'}) sets_display="${ex.sets_display}" — target_sets.length=${ts.length} top=${topSet.weight_kg ?? 'BW'}×${topSet.reps}`,
+          );
+        }
+      }
+
       const session = await this.createWorkoutSession(
         params.userId,
         args,
@@ -216,11 +270,29 @@ export class CoachToolsService {
 
       // Wire the new session into the user's plan: today's plan day adopts
       // it; today's original workout (if any) is bumped to the next pending
-      // training day so the week stays coherent.
-      const planChange = await this.linkSessionToTodayAndRebalance(
+      // training day so the week stays coherent. Implementation lives on
+      // WorkoutOrchestratorService (Phase 1 hoist out of this service).
+      const planChange = await this.orchestrator.linkSessionToToday(
         params.userId,
         session.id,
       );
+
+      // Re-fetch with sets so the SSE payload carries the AI-supplied
+      // target_sets that were just persisted. Without these, iOS would
+      // fall back to its sets_display placeholder ladder and the user
+      // would never see the progression we worked out.
+      const sessionWithSets =
+        await this.prisma.workoutSession.findUnique({
+          where: { id: session.id },
+          include: {
+            exercises: {
+              orderBy: { step_number: 'asc' },
+              include: {
+                exercise_sets: { orderBy: { set_number: 'asc' } },
+              },
+            },
+          },
+        });
 
       yield {
         type: 'session_created',
@@ -230,19 +302,28 @@ export class CoachToolsService {
             title: session.title,
             type: session.type,
             duration_minutes: session.duration_minutes,
-            exercises: session.exercises.map((e) => ({
-              id: e.id,
-              name: e.name,
-              step_number: e.step_number,
-              sets_display: e.sets_display,
-              accent_color: e.accent_color,
-              library_exercise_id: e.library_exercise_id ?? null,
-              muscle_group: e.muscle_group,
-              equipment: e.equipment,
-              suggested_weight: e.suggested_weight ?? null,
-              image_url: exerciseImageUrl(e.external_id),
-              external_id: e.external_id ?? null,
-            })),
+            exercises: (sessionWithSets?.exercises ?? session.exercises).map(
+              (e: any) => ({
+                id: e.id,
+                name: e.name,
+                step_number: e.step_number,
+                sets_display: e.sets_display,
+                accent_color: e.accent_color,
+                library_exercise_id: e.library_exercise_id ?? null,
+                muscle_group: e.muscle_group,
+                equipment: e.equipment,
+                suggested_weight: e.suggested_weight ?? null,
+                image_url: exerciseImageUrl(e.external_id),
+                external_id: e.external_id ?? null,
+                sets: (e.exercise_sets ?? []).map((s: any) => ({
+                  set_number: s.set_number,
+                  weight: s.weight !== null ? Number(s.weight) : null,
+                  weight_unit: s.weight_unit ?? 'kg',
+                  reps: s.reps,
+                  is_bodyweight: s.is_bodyweight ?? false,
+                })),
+              }),
+            ),
           },
         },
         _sessionId: session.id,
@@ -523,7 +604,15 @@ export class CoachToolsService {
     try {
       const args = safeParseToolArgs(params.toolCallArgs);
       const force = args.force === true || !!params.activePlanData?.plan;
-      const result = await this.plansService.generatePlan(params.userId, force);
+      const focus =
+        typeof args.focus === 'string' && args.focus.trim().length > 0
+          ? args.focus.trim()
+          : undefined;
+      const result = await this.plansService.generatePlan(
+        params.userId,
+        force,
+        focus,
+      );
 
       yield {
         type: 'plan_generated',
@@ -575,6 +664,11 @@ export class CoachToolsService {
         name: string;
         muscle_group: string;
         sets_display: string;
+        target_sets?: Array<{
+          weight_kg?: number;
+          reps: number;
+          is_bodyweight?: boolean;
+        }>;
       }[];
       ai_message: string;
       duration_minutes?: number;
@@ -609,6 +703,34 @@ export class CoachToolsService {
             const libEx = ex.library_exercise_id
               ? exerciseMap.get(ex.library_exercise_id)
               : null;
+            const hasTargets =
+              Array.isArray(ex.target_sets) && ex.target_sets.length > 0;
+            // Pre-create the per-set rows when the AI supplied
+            // target_sets — these become the "Today" defaults the user
+            // sees in the active session view, replacing the generic
+            // sets_display + prev-set-by-set-number prefill.
+            const exerciseSets = hasTargets
+              ? {
+                  create: ex.target_sets!.map((s, sIdx) => ({
+                    set_number: sIdx + 1,
+                    weight:
+                      s.is_bodyweight || s.weight_kg === undefined
+                        ? null
+                        : s.weight_kg,
+                    weight_unit: 'kg',
+                    reps: s.reps,
+                    is_bodyweight: s.is_bodyweight ?? false,
+                    is_completed: false,
+                  })),
+                }
+              : undefined;
+            // When target_sets is present, override the AI's sets_display
+            // so the card pill matches the actual ladder. The AI sometimes
+            // still ships a stale "4 × 8" alongside a 5-set 87.5 kg
+            // ladder — without this, the chat card would lie.
+            const setsDisplay = hasTargets
+              ? `${ex.target_sets!.length} × ${ex.target_sets!.reduce((m, s) => Math.max(m, s.reps), 0)}`
+              : ex.sets_display || '3 × 10';
             return {
               library_exercise_id: libEx ? ex.library_exercise_id : null,
               external_id: libEx?.external_id ?? null,
@@ -616,8 +738,9 @@ export class CoachToolsService {
               muscle_group: libEx?.muscle_group ?? ex.muscle_group,
               equipment: libEx?.equipment ?? null,
               step_number: i + 1,
-              sets_display: ex.sets_display || '3 × 10',
+              sets_display: setsDisplay,
               accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+              ...(exerciseSets ? { exercise_sets: exerciseSets } : {}),
             };
           }),
         },
@@ -630,123 +753,6 @@ export class CoachToolsService {
     });
 
     return session;
-  }
-
-  /**
-   * Splice a freshly created workout into the user's active plan:
-   *   - Today's PlanDay adopts the session (title, exercises, muscle groups,
-   *     workout_session_id, status='pending', day_type='training').
-   *   - If today was originally a training day with exercises, those original
-   *     exercises move to the next pending training day this week so the week
-   *     stays coherent (chest swapped with what was scheduled for that day).
-   *
-   * Silently no-ops when there's no active plan, today isn't in the plan,
-   * or today's plan day is already completed (don't overwrite a finished day).
-   */
-  private async linkSessionToTodayAndRebalance(
-    userId: string,
-    sessionId: string,
-  ): Promise<{
-    todayUpdated: boolean;
-    movedToDayLabel: string | null;
-  }> {
-    const dayLabels = [
-      'Monday',
-      'Tuesday',
-      'Wednesday',
-      'Thursday',
-      'Friday',
-      'Saturday',
-      'Sunday',
-    ];
-    const todayDow = toMondayDow(new Date());
-
-    const plan = await this.prisma.trainingPlan.findFirst({
-      where: { user_id: userId, is_active: true },
-      include: { days: { orderBy: { day_of_week: 'asc' } } },
-    });
-    if (!plan) return { todayUpdated: false, movedToDayLabel: null };
-
-    const todayDay = plan.days.find((d) => d.day_of_week === todayDow);
-    if (!todayDay || todayDay.status === 'completed') {
-      return { todayUpdated: false, movedToDayLabel: null };
-    }
-
-    const session = await this.prisma.workoutSession.findUnique({
-      where: { id: sessionId },
-      include: { exercises: { orderBy: { step_number: 'asc' } } },
-    });
-    if (!session) return { todayUpdated: false, movedToDayLabel: null };
-
-    // Snapshot today's original workout so we can relocate it.
-    const originalDayType = todayDay.day_type;
-    const originalTitle = todayDay.session_title;
-    const originalSessionType = todayDay.session_type;
-    const originalMuscleGroups = todayDay.muscle_groups;
-    const originalExercises = todayDay.exercises_json;
-    const originalIsTrainingWithContent =
-      originalDayType === 'training' &&
-      Array.isArray(originalExercises) &&
-      (originalExercises as unknown[]).length > 0;
-
-    // Shape today's PlanDay.exercises_json from the new session's exercises.
-    const newExercisesJson = session.exercises.map((e) => ({
-      library_exercise_id: e.library_exercise_id ?? null,
-      external_id: e.external_id ?? null,
-      name: e.name,
-      muscle_group: e.muscle_group ?? null,
-      equipment: e.equipment ?? null,
-      sets_display: e.sets_display,
-    }));
-    const muscleGroups = [
-      ...new Set(
-        session.exercises
-          .map((e) => e.muscle_group)
-          .filter((m): m is string => !!m),
-      ),
-    ];
-
-    let movedToDayLabel: string | null = null;
-    await this.prisma.$transaction(async (tx) => {
-      await tx.planDay.update({
-        where: { id: todayDay.id },
-        data: {
-          day_type: 'training',
-          session_title: session.title,
-          session_type: session.type,
-          muscle_groups: muscleGroups,
-          exercises_json: newExercisesJson,
-          workout_session_id: session.id,
-          status: 'pending',
-          adapted_at: new Date(),
-        },
-      });
-
-      if (!originalIsTrainingWithContent) return;
-      const targetDay = plan.days.find(
-        (d) =>
-          d.day_of_week > todayDow &&
-          d.day_type === 'training' &&
-          d.status === 'pending' &&
-          d.id !== todayDay.id,
-      );
-      if (!targetDay) return;
-      await tx.planDay.update({
-        where: { id: targetDay.id },
-        data: {
-          session_title: originalTitle,
-          session_type: originalSessionType,
-          muscle_groups: originalMuscleGroups,
-          exercises_json: originalExercises as any,
-          status: 'pending',
-          workout_session_id: null,
-          adapted_at: new Date(),
-        },
-      });
-      movedToDayLabel = dayLabels[targetDay.day_of_week] ?? null;
-    });
-
-    return { todayUpdated: true, movedToDayLabel };
   }
 
   private detectMuscleGroupMismatch(

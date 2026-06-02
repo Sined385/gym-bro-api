@@ -20,6 +20,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { UserModule } from './user/user.module';
 import { ShareModule } from './share/share.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { WorkoutsModule } from './workouts/workouts.module';
 import { AuthThrottlerGuard } from './common/guards/auth-throttler.guard';
 
 @Module({
@@ -38,6 +39,7 @@ import { AuthThrottlerGuard } from './common/guards/auth-throttler.guard';
     ExercisesModule,
     CoachModule,
     PlansModule,
+    WorkoutsModule,
     CommunityModule,
     NotificationsModule,
     AnalyticsModule,

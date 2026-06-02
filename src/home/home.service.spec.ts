@@ -3,7 +3,8 @@ import { HomeService } from './home.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { NotificationsService } from '../notifications/notifications.service';
+import { ChallengesService } from './challenges.service';
+import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 
 const mockPrisma = {
   workoutSession: {
@@ -21,8 +22,15 @@ const mockAnalytics = {
   track: jest.fn(),
 };
 
-const mockNotificationsService = {
-  recalculatePreferredHour: jest.fn(),
+const mockChallengesService = {
+  getOrAssignDaily: jest.fn(),
+  getTomorrow: jest.fn(),
+};
+
+const mockOrchestrator = {
+  recordCompletion: jest.fn(),
+  linkSessionToToday: jest.fn(),
+  reconcileWithAdHocSessions: jest.fn(),
 };
 
 describe('HomeService', () => {
@@ -35,7 +43,11 @@ describe('HomeService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: HomeAiService, useValue: mockHomeAiService },
         { provide: AnalyticsService, useValue: mockAnalytics },
-        { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: ChallengesService, useValue: mockChallengesService },
+        {
+          provide: WorkoutOrchestratorService,
+          useValue: mockOrchestrator,
+        },
       ],
     }).compile();
 
