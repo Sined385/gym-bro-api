@@ -135,6 +135,13 @@ export class CompleteSessionDto {
   @IsPositive()
   duration_minutes?: number;
 
+  /// Apple Watch / HealthKit-derived average heart rate over the session.
+  /// Optional — not every user wears a watch.
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  avg_heart_rate?: number;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => FeedbackDto)
@@ -214,6 +221,11 @@ export class CompleteSessionFullDto {
   @IsInt()
   @IsPositive()
   duration_minutes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  avg_heart_rate?: number;
 
   @IsOptional()
   @ValidateNested()

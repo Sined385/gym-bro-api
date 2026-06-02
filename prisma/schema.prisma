@@ -37,6 +37,7 @@ model WorkoutSession {
   completed_at      DateTime?
   duration_minutes  Int?
   calories          Int?
+  avg_heart_rate    Int?
   performance_score Int?
   ai_generated      Boolean           @default(false)
   ai_message        String?

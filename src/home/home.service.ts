@@ -523,6 +523,7 @@ export class HomeService {
             completed_at: completedAt,
             duration_minutes: durationMinutes,
             calories,
+            avg_heart_rate: dto.avg_heart_rate ?? null,
             updated_at: new Date(),
           },
         });
@@ -654,6 +655,7 @@ export class HomeService {
           completed_at: completedAt,
           duration_minutes: durationMinutes,
           calories,
+          avg_heart_rate: dto.avg_heart_rate ?? null,
           updated_at: new Date(),
         },
       });
@@ -885,6 +887,14 @@ export class HomeService {
       (sum, s) => sum + (s.calories ?? 0),
       0,
     );
+    // Average heart rate across sessions, ignoring nulls (no Watch).
+    const hrSamples = sessions
+      .map((s) => s.avg_heart_rate)
+      .filter((hr): hr is number => hr !== null && hr !== undefined);
+    const avgHeartRate =
+      hrSamples.length > 0
+        ? Math.round(hrSamples.reduce((a, b) => a + b, 0) / hrSamples.length)
+        : null;
     const scores = sessions
       .map((s) => s.performance_score)
       .filter((s): s is number => s !== null);
@@ -911,6 +921,7 @@ export class HomeService {
         status: 'completed',
         duration_minutes: totalDuration || null,
         calories: totalCalories || null,
+        avg_heart_rate: avgHeartRate,
         performance_score: avgScore,
         started_at: first.started_at?.toISOString() ?? null,
         completed_at: last.completed_at?.toISOString() ?? null,
