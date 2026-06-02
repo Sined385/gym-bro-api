@@ -22,6 +22,17 @@ export interface AiExerciseSelection {
       target_sets?: AiTargetSet[];
     }[];
   }[];
+  /// Alt sessions for rest days that carry an alt_session in the
+  /// skeleton. Same shape as days[], keyed by the rest day's
+  /// day_of_week.
+  alts?: {
+    day_of_week: number;
+    exercises: {
+      library_exercise_id: string;
+      name: string;
+      target_sets?: AiTargetSet[];
+    }[];
+  }[];
 }
 
 export interface ExerciseSlot {
@@ -30,12 +41,44 @@ export interface ExerciseSlot {
   focus: 'compound' | 'isolation' | null;
 }
 
+export interface AltSessionSpec {
+  session_title: string;
+  session_type: string;
+  exercise_slots: ExerciseSlot[];
+}
+
 export interface SkeletonDay {
   day_of_week: number;
   day_type: 'training' | 'rest';
   session_title?: string;
   session_type?: string;
   exercise_slots: ExerciseSlot[];
+  /// Anticipatory alt session — present on rest days so adaptation can
+  /// promote a missed prior training day into this day without an AI
+  /// call. The AI plans these at week-start with whole-week balance in
+  /// mind.
+  alt_session?: AltSessionSpec;
+}
+
+export interface PlanGeneratedExercise {
+  library_exercise_id: string;
+  external_id: string | null;
+  name: string;
+  muscle_group: string;
+  equipment: string;
+  sets_display: string;
+  /// Optional per-set ladder when the AI returned target_sets for
+  /// this exercise (progressive overload path). Persisted into
+  /// PlanDay.exercises_json and materialized as exercise_sets rows
+  /// in startPlanSession.
+  target_sets?: AiTargetSet[];
+}
+
+export interface PlanGeneratedAltSession {
+  session_title: string;
+  session_type: string;
+  muscle_groups: string[];
+  exercises: PlanGeneratedExercise[];
 }
 
 export interface PlanDayGenerated {
@@ -44,19 +87,11 @@ export interface PlanDayGenerated {
   session_title?: string;
   session_type?: string;
   muscle_groups: string[];
-  exercises: {
-    library_exercise_id: string;
-    external_id: string | null;
-    name: string;
-    muscle_group: string;
-    equipment: string;
-    sets_display: string;
-    /// Optional per-set ladder when the AI returned target_sets for
-    /// this exercise (progressive overload path). Persisted into
-    /// PlanDay.exercises_json and materialized as exercise_sets rows
-    /// in startPlanSession.
-    target_sets?: AiTargetSet[];
-  }[];
+  exercises: PlanGeneratedExercise[];
+  /// Persisted into PlanDay.alt_session_json for rest days. Adaptation
+  /// uses this to promote a rest day to training when an earlier
+  /// training day was skipped — zero AI call at adapt time.
+  alt_session?: PlanGeneratedAltSession;
 }
 
 export interface LibraryExercise {
@@ -173,11 +208,18 @@ export function filterCandidates(
   exerciseLibrary: LibraryExercise[],
   recentExerciseIds: Set<string>,
 ): Map<string, LibraryExercise[]> {
-  // Collect all unique muscle groups needed by the skeleton
+  // Collect all unique muscle groups needed by the skeleton — primary
+  // slots AND alt-session slots (rest days carry alts that need their
+  // own candidate pools).
   const neededGroups = new Set<string>();
   for (const day of skeleton) {
     for (const slot of day.exercise_slots) {
       neededGroups.add(normalizeMuscleGroup(slot.muscle_group));
+    }
+    if (day.alt_session) {
+      for (const slot of day.alt_session.exercise_slots) {
+        neededGroups.add(normalizeMuscleGroup(slot.muscle_group));
+      }
     }
   }
 
@@ -259,28 +301,32 @@ export function assembleFromAiSelection(
   }
 
   // Index AI selections by day_of_week
-  const aiDayMap = new Map<number, AiExerciseSelection['days'][number]['exercises']>();
+  const aiDayMap = new Map<
+    number,
+    AiExerciseSelection['days'][number]['exercises']
+  >();
   for (const aiDay of aiSelection.days) {
     aiDayMap.set(aiDay.day_of_week, aiDay.exercises);
   }
 
-  return skeleton.map((day) => {
-    if (day.day_type === 'rest' || day.exercise_slots.length === 0) {
-      return {
-        day_of_week: day.day_of_week,
-        day_type: day.day_type,
-        session_title: day.session_title,
-        session_type: day.session_type,
-        muscle_groups: [],
-        exercises: [],
-      };
-    }
+  // Index alt selections by day_of_week
+  const aiAltMap = new Map<
+    number,
+    AiExerciseSelection['days'][number]['exercises']
+  >();
+  for (const aiAlt of aiSelection.alts ?? []) {
+    aiAltMap.set(aiAlt.day_of_week, aiAlt.exercises);
+  }
 
-    const aiExercises = aiDayMap.get(day.day_of_week) ?? [];
-
-    const exercises = aiExercises.map((aiEx, i) => {
+  const resolveExercises = (
+    slots: ExerciseSlot[],
+    aiExercises: AiExerciseSelection['days'][number]['exercises'],
+  ): PlanGeneratedExercise[] => {
+    return aiExercises.map((aiEx, i) => {
       const libEx = exerciseById.get(aiEx.library_exercise_id);
-      const targets = Array.isArray(aiEx.target_sets) ? aiEx.target_sets : undefined;
+      const targets = Array.isArray(aiEx.target_sets)
+        ? aiEx.target_sets
+        : undefined;
       // When target_sets is supplied, override sets_display so the
       // plan-day card pill reflects the actual ladder — same trick
       // used for Coach single-workout creation. e.g. a 5-set ladder
@@ -289,7 +335,7 @@ export function assembleFromAiSelection(
       const setsDisplay =
         targets && targets.length > 0
           ? `${targets.length} × ${targets.reduce((m, s) => Math.max(m, s.reps), 0)}`
-          : (day.exercise_slots[i]?.rep_scheme ?? '3 × 10');
+          : (slots[i]?.rep_scheme ?? '3 × 10');
       return {
         library_exercise_id: aiEx.library_exercise_id,
         external_id: libEx?.external_id ?? null,
@@ -300,7 +346,44 @@ export function assembleFromAiSelection(
         ...(targets && targets.length > 0 ? { target_sets: targets } : {}),
       };
     });
+  };
 
+  return skeleton.map((day) => {
+    let alt: PlanGeneratedAltSession | undefined;
+    if (day.alt_session) {
+      const aiAltExercises = aiAltMap.get(day.day_of_week);
+      if (aiAltExercises) {
+        const altExercises = resolveExercises(
+          day.alt_session.exercise_slots,
+          aiAltExercises,
+        );
+        if (altExercises.length > 0) {
+          alt = {
+            session_title: day.alt_session.session_title,
+            session_type: day.alt_session.session_type,
+            muscle_groups: [
+              ...new Set(altExercises.map((e) => e.muscle_group)),
+            ],
+            exercises: altExercises,
+          };
+        }
+      }
+    }
+
+    if (day.day_type === 'rest' || day.exercise_slots.length === 0) {
+      return {
+        day_of_week: day.day_of_week,
+        day_type: day.day_type,
+        session_title: day.session_title,
+        session_type: day.session_type,
+        muscle_groups: [],
+        exercises: [],
+        ...(alt ? { alt_session: alt } : {}),
+      };
+    }
+
+    const aiExercises = aiDayMap.get(day.day_of_week) ?? [];
+    const exercises = resolveExercises(day.exercise_slots, aiExercises);
     const muscleGroups = [...new Set(exercises.map((e) => e.muscle_group))];
 
     return {

@@ -8,20 +8,15 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import {
   matchSkeletonToDays,
-  matchExercisesToSlots,
-  normalizeMuscleGroup,
   filterCandidates,
   assembleFromAiSelection,
-  ExerciseSlot,
 } from './exercise-matcher';
-import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import { computeRecentLifts } from '../common/recent-lifts';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from './format-plan';
-
 
 @Injectable()
 export class PlansService {
@@ -247,7 +242,9 @@ export class PlansService {
         where: {
           user_id: userId,
           status: 'completed',
-          completed_at: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
+          completed_at: {
+            gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
+          },
         },
         orderBy: { completed_at: 'desc' },
         include: {
@@ -296,14 +293,20 @@ export class PlansService {
           onboarding.experience_level ?? null,
         );
 
-    // Enrich exercises with suggested weights
-    const allExercises = generatedDays.flatMap((day: any) =>
-      (day.exercises ?? []).map((ex: any) => ({
+    // Enrich exercises with suggested weights — include alt-session
+    // exercises so promoted rest days carry pre-computed weights too.
+    const allExercises = generatedDays.flatMap((day: any) => [
+      ...(day.exercises ?? []).map((ex: any) => ({
         library_exercise_id: ex.library_exercise_id ?? null,
         muscle_group: ex.muscle_group ?? '',
         equipment: ex.equipment ?? '',
       })),
-    );
+      ...((day.alt_session?.exercises ?? []) as any[]).map((ex: any) => ({
+        library_exercise_id: ex.library_exercise_id ?? null,
+        muscle_group: ex.muscle_group ?? '',
+        equipment: ex.equipment ?? '',
+      })),
+    ]);
     const weightMap = await this.weightSuggestionService.suggestWeights(
       userId,
       allExercises,
@@ -312,6 +315,13 @@ export class PlansService {
     for (const day of generatedDays) {
       if (day.exercises) {
         for (const ex of day.exercises as any[]) {
+          if (ex.library_exercise_id) {
+            ex.suggested_weight = weightMap.get(ex.library_exercise_id) ?? null;
+          }
+        }
+      }
+      if (day.alt_session?.exercises) {
+        for (const ex of day.alt_session.exercises as any[]) {
           if (ex.library_exercise_id) {
             ex.suggested_weight = weightMap.get(ex.library_exercise_id) ?? null;
           }
@@ -338,6 +348,7 @@ export class PlansService {
             // which doesn't match strict object types with optional
             // fields like `target_sets`. The shape is still valid JSON.
             exercises_json: (day.exercises ?? []) as any,
+            alt_session_json: day.alt_session ? (day.alt_session as any) : null,
             status: 'pending',
           })),
         },
@@ -362,12 +373,7 @@ export class PlansService {
         include: { days: { orderBy: { day_of_week: 'asc' } } },
       });
       if (refreshed) {
-        await this.redistributeDeficit(
-          refreshed,
-          todayDow,
-          userId,
-          onboarding,
-        );
+        await this.redistributeDeficit(refreshed, todayDow, userId, onboarding);
       }
     }
 
@@ -669,23 +675,24 @@ export class PlansService {
   }
 
   /**
-   * Distribute muscle-group deficit from skipped past training days
-   * across remaining pending training days this week (and, if needed,
-   * convert the earliest future rest day to training). Public so the
-   * orchestrator can call it eagerly from recordCompletion in
-   * addition to the lazy adaptSkippedDays path.
+   * Promote AI-planned alt sessions in place of skipped training days.
    *
-   * "Skipped" here means: past pending training days with no
-   * adapted_at — recovery from ad-hoc completed sessions has already
-   * run upstream, so anything left in this set is truly missed.
+   * Every rest day carries an alt_session_json planned by the AI at
+   * week-start. When an earlier training day is missed, we promote the
+   * next pending rest day that has an alt — no AI call at adapt time.
+   * Today's rest day is preferred so the user can still train today.
+   * Returns true if anything changed. Surfaces unabsorbed skips via
+   * the `plan_adapted` analytics event; the dashboard reads the live
+   * day rows to decide whether to show `plan_needs_regen`.
    */
   async redistributeDeficit(
     plan: any,
     todayDow: number,
     userId: string,
-    onboarding: any | null,
+    _onboarding: any | null,
   ): Promise<boolean> {
-    // 1. Find skipped days — pending training days before today with no prior adaptation
+    void _onboarding; // legacy signature; alts make onboarding unnecessary at adapt time
+
     const skippedDays = plan.days.filter(
       (d: any) =>
         d.status === 'pending' &&
@@ -694,294 +701,76 @@ export class PlansService {
         !d.adapted_at,
     );
 
-    // Fast path — nothing to redistribute
     if (skippedDays.length === 0) return false;
 
-    // 3. Find future pending training days (after today)
-    const futureDays = plan.days.filter(
-      (d: any) =>
-        d.status === 'pending' &&
-        d.day_type === 'training' &&
-        d.day_of_week > todayDow,
-    );
-
-    // Include today if it's a pending training day
-    const todayDay = plan.days.find(
-      (d: any) =>
-        d.day_of_week === todayDow &&
-        d.status === 'pending' &&
-        d.day_type === 'training',
-    );
-
-    // 4. Collect missed muscle groups from skipped days
-    const missedGroups: string[] = [];
-    for (const day of skippedDays) {
-      missedGroups.push(...(day.muscle_groups ?? []));
-    }
-
-    // 5. Collect already-planned muscle groups (today + future)
-    const plannedGroups: string[] = [];
-    if (todayDay) plannedGroups.push(...(todayDay.muscle_groups ?? []));
-    for (const day of futureDays) {
-      plannedGroups.push(...(day.muscle_groups ?? []));
-    }
-
-    // 6. Compute deficit
-    const deficit = this.computeMuscleGroupDeficit(missedGroups, plannedGroups);
+    // Eligible alt destinations: pending rest days with a non-null
+    // alt_session_json that haven't already been promoted. Prefer
+    // today first (user is here, can still train today), then
+    // chronological future rest days.
+    const altCandidates = plan.days
+      .filter(
+        (d: any) =>
+          d.day_type === 'rest' &&
+          d.status === 'pending' &&
+          d.day_of_week >= todayDow &&
+          !d.adapted_at &&
+          d.alt_session_json,
+      )
+      .sort((a: any, b: any) => {
+        if (a.day_of_week === todayDow && b.day_of_week !== todayDow) return -1;
+        if (b.day_of_week === todayDow && a.day_of_week !== todayDow) return 1;
+        return a.day_of_week - b.day_of_week;
+      });
 
     const now = new Date();
-    const skippedIds = skippedDays.map((d: any) => d.id);
+    const promotedRestDays: number[] = [];
+    const absorbedSkippedDays: number[] = [];
+    const unabsorbedSkippedDays: number[] = [];
 
-    // 7. Pending pending today as a rest day — eligible candidate for
-    // conversion to training when there's deficit. The user opened the
-    // app today and didn't train yesterday; converting today honours
-    // their intent (they're here, they can lift) rather than pushing
-    // the missed work to Wed/Fri.
-    const todayRestDay = plan.days.find(
-      (d: any) =>
-        d.day_of_week === todayDow &&
-        d.day_type === 'rest' &&
-        d.status === 'pending',
-    );
-
-    // 8. No deficit OR no destination — just mark skipped, no redistribution needed
-    const hasAnyDestination =
-      futureDays.length > 0 || todayRestDay !== undefined;
-    if (deficit.length === 0 || !hasAnyDestination) {
-      await this.prisma.planDay.updateMany({
-        where: { id: { in: skippedIds } },
-        data: { status: 'skipped', adapted_at: now },
-      });
-      this.analytics.track(userId, 'plan_adapted', {
-        plan_id: plan.id,
-        skipped_days: skippedDays.map((d: any) => d.day_of_week),
-        adapted_days: [],
-      });
-      return true;
-    }
-
-    // 9. Distribute deficit
-    const allowedEquipment =
-      EQUIPMENT_MAP[onboarding?.available_equipment ?? ''] ?? [];
-
-    const [exerciseLibrary, recentExerciseIds] = await Promise.all([
-      this.prisma.exerciseLibrary.findMany({
-        where: {
-          OR: [{ is_system: true }, { user_id: userId }],
-          ...(allowedEquipment.length > 0
-            ? { equipment: { in: allowedEquipment } }
-            : {}),
-        },
-        orderBy: { name: 'asc' },
-      }),
-      this.getRecentExerciseIds(userId),
-    ]);
-
-    const repScheme = this.getRepScheme(onboarding?.primary_goals ?? []);
-    const userLevel = onboarding?.experience_level ?? null;
-
-    const adaptedDayIds: string[] = [];
-    let remainingDeficit = [...deficit];
-
-    // Persist everything in a single transaction
     await this.prisma.$transaction(async (tx) => {
-      // 9a. Priority: convert today's rest day to training if it's
-      // pending. Pulls up to 3 muscle groups (a full make-up session)
-      // before pushing the rest forward.
-      if (todayRestDay && remainingDeficit.length > 0) {
-        const toAdd = remainingDeficit.splice(0, 3);
-        const slots: ExerciseSlot[] = toAdd.map((group) => ({
-          muscle_group: group,
-          rep_scheme: repScheme,
-          focus: null,
-        }));
-        const picks = matchExercisesToSlots(
-          slots,
-          exerciseLibrary,
-          recentExerciseIds,
-          userLevel,
-        );
-        const newExercises = picks.map((pick, i) => ({
-          library_exercise_id: pick.id,
-          external_id: pick.external_id,
-          name: pick.name,
-          muscle_group: pick.muscle_group,
-          equipment: pick.equipment,
-          sets_display: slots[i].rep_scheme,
-        }));
-        const muscleGroups = [
-          ...new Set(newExercises.map((e) => e.muscle_group)),
-        ];
-        const title = muscleGroups.join(' & ') + ' Day';
-        await tx.planDay.update({
-          where: { id: todayRestDay.id },
-          data: {
-            day_type: 'training',
-            session_title: title,
-            session_type: 'strength',
-            muscle_groups: muscleGroups,
-            exercises_json: newExercises,
-            adapted_at: now,
-          },
-        });
-        adaptedDayIds.push(todayRestDay.id);
-      }
-
-      // 9b. Distribute remaining deficit to existing future training days (max +2 groups per day)
-      for (const day of futureDays) {
-        if (remainingDeficit.length === 0) break;
-
-        const toAdd = remainingDeficit.splice(0, 2);
-
-        const slots: ExerciseSlot[] = toAdd.map((group) => ({
-          muscle_group: group,
-          rep_scheme: repScheme,
-          focus: null,
-        }));
-
-        const picks = matchExercisesToSlots(
-          slots,
-          exerciseLibrary,
-          recentExerciseIds,
-          userLevel,
-        );
-
-        const newExercises = picks.map((pick, i) => ({
-          library_exercise_id: pick.id,
-          external_id: pick.external_id,
-          name: pick.name,
-          muscle_group: pick.muscle_group,
-          equipment: pick.equipment,
-          sets_display: slots[i].rep_scheme,
-        }));
-
-        const existingExercises = day.exercises_json as any[];
-        const updatedExercises = [...existingExercises, ...newExercises];
-
-        const existingGroups = day.muscle_groups as string[];
-        const addedGroups = [
-          ...new Set(newExercises.map((e) => e.muscle_group)),
-        ];
-        const mergedGroups = [...new Set([...existingGroups, ...addedGroups])];
-
-        const updatedTitle = mergedGroups.join(' & ') + ' Day';
-
-        await tx.planDay.update({
-          where: { id: day.id },
-          data: {
-            exercises_json: updatedExercises,
-            muscle_groups: mergedGroups,
-            session_title: updatedTitle,
-            adapted_at: now,
-          },
-        });
-
-        adaptedDayIds.push(day.id);
-      }
-
-      // 9. If deficit remains — convert earliest future rest day to training
-      if (remainingDeficit.length > 0) {
-        const futureRestDays = plan.days.filter(
-          (d: any) =>
-            d.day_type === 'rest' &&
-            d.day_of_week > todayDow &&
-            d.status === 'pending',
-        );
-
-        if (futureRestDays.length > 0) {
-          const restDay = futureRestDays[0];
-          const slots: ExerciseSlot[] = remainingDeficit.map((group) => ({
-            muscle_group: group,
-            rep_scheme: repScheme,
-            focus: null,
-          }));
-
-          const picks = matchExercisesToSlots(
-            slots,
-            exerciseLibrary,
-            recentExerciseIds,
-            userLevel,
-          );
-
-          const exercises = picks.map((pick, i) => ({
-            library_exercise_id: pick.id,
-            external_id: pick.external_id,
-            name: pick.name,
-            muscle_group: pick.muscle_group,
-            equipment: pick.equipment,
-            sets_display: slots[i].rep_scheme,
-          }));
-
-          const muscleGroups = [
-            ...new Set(exercises.map((e) => e.muscle_group)),
-          ];
-          const title = muscleGroups.join(' & ') + ' Day';
-
+      let altIdx = 0;
+      for (const skipped of skippedDays) {
+        const restDay = altCandidates[altIdx];
+        if (restDay) {
+          const alt = restDay.alt_session_json as {
+            session_title?: string;
+            session_type?: string;
+            muscle_groups?: string[];
+            exercises?: any[];
+          };
           await tx.planDay.update({
             where: { id: restDay.id },
             data: {
               day_type: 'training',
-              session_title: title,
-              session_type: 'strength',
-              muscle_groups: muscleGroups,
-              exercises_json: exercises,
+              session_title: alt.session_title ?? 'Make-up Session',
+              session_type: alt.session_type ?? 'strength',
+              muscle_groups: alt.muscle_groups ?? [],
+              exercises_json: (alt.exercises ?? []) as any,
               adapted_at: now,
             },
           });
-
-          adaptedDayIds.push(restDay.id);
-          remainingDeficit = [];
+          promotedRestDays.push(restDay.day_of_week);
+          absorbedSkippedDays.push(skipped.day_of_week);
+          altIdx++;
+        } else {
+          unabsorbedSkippedDays.push(skipped.day_of_week);
         }
       }
 
-      // Mark skipped days
       await tx.planDay.updateMany({
-        where: { id: { in: skippedIds } },
+        where: { id: { in: skippedDays.map((d: any) => d.id) } },
         data: { status: 'skipped', adapted_at: now },
       });
     });
 
-    // 10. Track analytics
     this.analytics.track(userId, 'plan_adapted', {
       plan_id: plan.id,
       skipped_days: skippedDays.map((d: any) => d.day_of_week),
-      adapted_days: adaptedDayIds,
-      deficit_groups: deficit,
+      promoted_alt_days: promotedRestDays,
+      absorbed_days: absorbedSkippedDays,
+      unabsorbed_days: unabsorbedSkippedDays,
     });
 
     return true;
-  }
-
-  private computeMuscleGroupDeficit(
-    missed: string[],
-    planned: string[],
-  ): string[] {
-    const missedCounts = new Map<string, number>();
-    for (const g of missed) {
-      const norm = normalizeMuscleGroup(g);
-      missedCounts.set(norm, (missedCounts.get(norm) ?? 0) + 1);
-    }
-
-    const plannedCounts = new Map<string, number>();
-    for (const g of planned) {
-      const norm = normalizeMuscleGroup(g);
-      plannedCounts.set(norm, (plannedCounts.get(norm) ?? 0) + 1);
-    }
-
-    const deficit: string[] = [];
-    for (const [group, count] of missedCounts) {
-      const diff = count - (plannedCounts.get(group) ?? 0);
-      for (let i = 0; i < diff; i++) {
-        deficit.push(group);
-      }
-    }
-
-    return deficit;
-  }
-
-  private getRepScheme(goals: string[]): string {
-    if (goals.includes('get_stronger')) return '4 \u00D7 6';
-    if (goals.includes('lose_fat')) return '3 \u00D7 12';
-    return '3 \u00D7 10';
   }
 }

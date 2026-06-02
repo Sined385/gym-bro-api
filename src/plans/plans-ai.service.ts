@@ -10,7 +10,6 @@ import {
   LibraryExercise,
 } from './exercise-matcher';
 import {
-  computeRecentLifts,
   formatRecentLiftsBlock,
   type RecentLift,
 } from '../common/recent-lifts';
@@ -71,6 +70,19 @@ Respond with a JSON object:
         { "muscle_group": "Chest", "rep_scheme": "4 × 8", "focus": "compound" },
         { "muscle_group": "Back", "rep_scheme": "3 × 10", "focus": "isolation" }
       ]
+    },
+    {
+      "day_of_week": ${startDayOfWeek + 1},
+      "day_type": "rest",
+      "exercise_slots": [],
+      "alt_session": {
+        "session_title": "Make-up Push Day",
+        "session_type": "strength",
+        "exercise_slots": [
+          { "muscle_group": "Chest", "rep_scheme": "4 × 8", "focus": "compound" },
+          { "muscle_group": "Shoulders", "rep_scheme": "3 × 10", "focus": "isolation" }
+        ]
+      }
     }
   ]
 }
@@ -87,7 +99,15 @@ Rules:
 - Distribute training days evenly through the partial week
 - BALANCE: across the week, cover at least three of {Chest/Push, Back/Pull, Legs} — never make the same muscle group the dominant group on more than ONE training day, even if the user named a specific lift.
 - Return exactly ${totalDays} days (${startDayOfWeek} through 6)
-- HARD REQUIREMENT: every training day MUST have between 4 and 6 entries in exercise_slots.`;
+- HARD REQUIREMENT: every training day MUST have between 4 and 6 entries in exercise_slots.
+
+ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
+- Every rest day MUST also include an "alt_session" — a full training session this rest day would become if an earlier training day in the week were skipped.
+- Plan alts strategically across the week: an early-week rest day's alt should target the muscle groups most likely to be missed before it (e.g., Tuesday's alt makes sense as a Monday make-up); a mid-week rest day's alt covers Tue-Thu range; a late-week rest day's alt covers anything earlier.
+- Alts should anchor balance: heavier compound work earlier in the week, lighter or hypertrophy work later.
+- Alts MUST NOT duplicate the same primary lift used elsewhere in the week — even when they fire, the user's week should not become "5x bench press week".
+- alt_session shape: { session_title, session_type, exercise_slots[] } — 3-5 exercise_slots per alt, same muscle_group/rep_scheme/focus shape as a training day.
+- If the user has 0 training days (full rest week), alt_sessions are optional (week has nothing to make up).`;
 
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
@@ -102,7 +122,7 @@ Rules:
           },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 1200,
+        max_tokens: 2000,
         temperature: 0.7,
       });
 
@@ -299,6 +319,23 @@ Rules:
       return `Day ${day.day_of_week} — "${day.session_title}":\n${slots}`;
     });
 
+    // Build alt-session descriptions: rest days that carry an alt
+    // session for anticipatory adaptation.
+    const altDays = skeleton.filter(
+      (d) =>
+        d.day_type === 'rest' &&
+        d.alt_session &&
+        d.alt_session.exercise_slots.length > 0,
+    );
+    const altDescriptions = altDays.map((day) => {
+      const slots = day
+        .alt_session!.exercise_slots.map(
+          (s, i) => `  Slot ${i + 1}: ${s.muscle_group} (${s.focus ?? 'any'})`,
+        )
+        .join('\n');
+      return `Alt for day ${day.day_of_week} — "${day.alt_session!.session_title}":\n${slots}`;
+    });
+
     const recentLiftsBlock = formatRecentLiftsBlock(recentLifts);
     const focusLine = focus
       ? `\nUser focus for this plan: "${focus}". When the focus muscle group's primary day has an open slot for it, you MUST pick the canonical named lift if it's in that day's candidate pool (e.g. focus "bench press" → pick Barbell Bench Press for the chest compound slot on the push day). Any subsequent slot in that muscle group across the week picks a DIFFERENT exercise — don't repeat the same lift.`
@@ -316,6 +353,7 @@ ${focusLine}
 Training days:
 ${dayDescriptions.join('\n\n')}
 
+${altDescriptions.length > 0 ? `Alt sessions (for rest days that may be promoted on adaptation — pick exercises that work as make-ups for earlier training in the week):\n${altDescriptions.join('\n\n')}\n` : ''}
 Candidate pools:
 ${poolLines.join('\n')}
 
@@ -338,7 +376,7 @@ Rules:
 - Pick well-known, effective exercises over obscure ones
 - You MUST only use exercise IDs from the pools above
 
-Respond with JSON:
+Respond with JSON. Include "alts" only if alt sessions were listed above:
 {
   "days": [
     {
@@ -347,6 +385,12 @@ Respond with JSON:
         { "library_exercise_id": "<uuid>", "name": "<exercise name>",
           "target_sets": [{"weight_kg":<number?>,"reps":<int>,"is_bodyweight":<bool?>}] }
       ]
+    }
+  ],
+  "alts": [
+    {
+      "day_of_week": <rest day's day_of_week>,
+      "exercises": [ ... same shape as days[].exercises ... ]
     }
   ]
 }`;
@@ -363,7 +407,7 @@ Respond with JSON:
             },
           ],
           response_format: { type: 'json_object' },
-          max_tokens: 800,
+          max_tokens: 1400,
           temperature: 0.4,
         });
 
@@ -423,6 +467,41 @@ Respond with JSON:
             dayIds.add(ex.library_exercise_id);
           }
           if (!valid) break;
+        }
+
+        // Validate alts when present. Missing alts is acceptable — we
+        // degrade gracefully (rest days get null alt_session_json,
+        // adaptation logs a banner instead of promoting).
+        if (valid && Array.isArray(parsed.alts) && parsed.alts.length > 0) {
+          const altDayMap = new Map(altDays.map((d) => [d.day_of_week, d]));
+          // Drop alts that don't match a known alt-day so they don't
+          // poison the response; keep only validated entries.
+          const cleanedAlts: AiExerciseSelection['alts'] = [];
+          for (const aiAlt of parsed.alts) {
+            const skelAlt = altDayMap.get(aiAlt.day_of_week);
+            if (!skelAlt || !skelAlt.alt_session) continue;
+            if (
+              aiAlt.exercises.length !==
+              skelAlt.alt_session.exercise_slots.length
+            ) {
+              continue;
+            }
+            const dayIds = new Set<string>();
+            let altValid = true;
+            for (const ex of aiAlt.exercises) {
+              if (!validIds.has(ex.library_exercise_id)) {
+                altValid = false;
+                break;
+              }
+              if (dayIds.has(ex.library_exercise_id)) {
+                altValid = false;
+                break;
+              }
+              dayIds.add(ex.library_exercise_id);
+            }
+            if (altValid) cleanedAlts.push(aiAlt);
+          }
+          parsed.alts = cleanedAlts;
         }
 
         if (valid) return parsed;

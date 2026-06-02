@@ -352,6 +352,24 @@ export class HomeService {
       ? activePlan.days.map((day: any) => formatPlanDay(day))
       : [];
 
+    // plan_needs_regen surfaces when the user has missed more training
+    // days than the AI's anticipatory alts could absorb. iOS uses this
+    // to nudge the user toward force-regenerating their plan. Past
+    // training days marked `skipped` outnumber promoted alts (rest
+    // days now flagged as training with adapted_at set).
+    const skippedDayCount = activePlan
+      ? activePlan.days.filter((d: any) => d.status === 'skipped').length
+      : 0;
+    const promotedAltCount = activePlan
+      ? activePlan.days.filter(
+          (d: any) =>
+            d.adapted_at !== null &&
+            d.day_type === 'training' &&
+            d.status !== 'skipped',
+        ).length
+      : 0;
+    const planNeedsRegen = skippedDayCount > promotedAltCount;
+
     return {
       user: {
         name,
@@ -405,6 +423,7 @@ export class HomeService {
       daily_challenge: dailyChallenge,
       tomorrow_challenge: tomorrowChallenge,
       plan_days: planDays,
+      plan_needs_regen: planNeedsRegen,
       completed_dates_current_month: completedCurrentMonth.completed_dates,
       completed_dates_previous_month: completedPrevMonth.completed_dates,
       recent_lifts_summary: recentLiftsSummary,

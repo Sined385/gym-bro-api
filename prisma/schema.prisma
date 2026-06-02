@@ -224,6 +224,7 @@ model PlanDay {
   session_type       String?
   muscle_groups      String[]
   exercises_json     Json            @default("[]")
+  alt_session_json   Json?
   status             String          @default("pending")
   workout_session_id String?         @unique
   ai_notes           String?
