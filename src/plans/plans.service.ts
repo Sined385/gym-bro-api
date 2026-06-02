@@ -20,8 +20,8 @@ import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import { computeRecentLifts } from '../common/recent-lifts';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
+import { formatPlanDay } from './format-plan';
 
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 @Injectable()
 export class PlansService {
@@ -151,38 +151,7 @@ export class PlansService {
         primaryGoals: onboarding?.primary_goals ?? ['build_muscle'],
         experienceLevel: onboarding?.experience_level ?? 'intermediate',
       },
-      days: plan.days.map((day) => {
-        const exercises = day.exercises_json as any[];
-        return {
-          id: day.id,
-          dayOfWeek: day.day_of_week,
-          dayLabel: DAY_LABELS[day.day_of_week] ?? 'Day',
-          dayType: day.day_type,
-          status: day.status,
-          sessionTitle: day.session_title,
-          sessionType: day.session_type,
-          muscleGroups: day.muscle_groups,
-          exercises: exercises.map((e: any, i: number) => ({
-            name: e.name,
-            muscleGroup: e.muscle_group,
-            setsDisplay: e.sets_display,
-            libraryExerciseId: e.library_exercise_id ?? null,
-            accentColor: ACCENT_COLORS[i % ACCENT_COLORS.length],
-            suggestedWeight: e.suggested_weight ?? null,
-            imageUrl: exerciseImageUrl(e.external_id),
-            externalId: e.external_id ?? null,
-          })),
-          workoutSession: day.workout_session
-            ? {
-                id: day.workout_session.id,
-                durationMinutes: day.workout_session.duration_minutes,
-                completedAt:
-                  day.workout_session.completed_at?.toISOString() ?? null,
-              }
-            : null,
-          aiNotes: day.ai_notes,
-        };
-      }),
+      days: plan.days.map((day) => formatPlanDay(day)),
       todayIndex,
     };
   }

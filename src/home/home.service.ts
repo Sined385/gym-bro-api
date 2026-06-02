@@ -15,6 +15,8 @@ import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { formatSessionResponse } from '../common/format-session';
 import { ChallengesService } from './challenges.service';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
+import { formatPlanDay } from '../plans/format-plan';
+import { computeRecentLifts } from '../common/recent-lifts';
 
 @Injectable()
 export class HomeService {
@@ -298,6 +300,58 @@ export class HomeService {
       this.challengesService.getTomorrowChallenge(userId, now),
     ]);
 
+    // Phase 3 additions — feed the unified iOS AppContext snapshot so
+    // Plan and Coach tabs can read directly from the dashboard payload
+    // instead of round-tripping to /plans + /completed-days separately.
+    const monthStr = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const previousMonth = new Date(now);
+    previousMonth.setMonth(previousMonth.getMonth() - 1);
+    const fourteenDaysAgo = new Date(now);
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+
+    const [completedCurrentMonth, completedPrevMonth, recentForLifts] =
+      await Promise.all([
+        this.getCompletedDays(userId, monthStr(now)),
+        this.getCompletedDays(userId, monthStr(previousMonth)),
+        this.prisma.workoutSession.findMany({
+          where: {
+            user_id: userId,
+            status: 'completed',
+            completed_at: { gte: fourteenDaysAgo },
+          },
+          orderBy: { completed_at: 'desc' },
+          include: {
+            exercises: {
+              orderBy: { step_number: 'asc' },
+              include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+            },
+          },
+        }),
+      ]);
+
+    const recentLifts = computeRecentLifts(recentForLifts);
+    const recentLiftsSummary = recentLifts.map((l) => ({
+      name: l.name,
+      library_exercise_id: l.libraryExerciseId,
+      muscle_group: l.muscleGroup,
+      last_date: l.lastDate,
+      top_set: {
+        weight: l.topSet.weight,
+        reps: l.topSet.reps,
+        is_bodyweight: l.topSet.isBodyweight,
+      },
+      suggested_top_set: {
+        weight: l.suggestedTopSet.weight,
+        reps: l.suggestedTopSet.reps,
+        is_bodyweight: l.suggestedTopSet.isBodyweight,
+      },
+    }));
+
+    const planDays = activePlan
+      ? activePlan.days.map((day: any) => formatPlanDay(day))
+      : [];
+
     return {
       user: {
         name,
@@ -350,6 +404,10 @@ export class HomeService {
       today_completed_session: todayHistory.session,
       daily_challenge: dailyChallenge,
       tomorrow_challenge: tomorrowChallenge,
+      plan_days: planDays,
+      completed_dates_current_month: completedCurrentMonth.completed_dates,
+      completed_dates_previous_month: completedPrevMonth.completed_dates,
+      recent_lifts_summary: recentLiftsSummary,
     };
   }
 
