@@ -328,19 +328,52 @@ export class CommunityService {
     });
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const commenterName = user?.full_name ?? 'Someone';
+    const snippet =
+      dto.content.length > 150
+        ? dto.content.slice(0, 150) + '...'
+        : dto.content;
 
     // Notify post author about new comment
     if (post.user_id !== userId) {
-      const commenterName = user?.full_name ?? 'Someone';
       this.notificationsService.sendToUser(post.user_id, {
         type: 'comment',
         title: `${commenterName} commented on your post`,
-        body:
-          dto.content.length > 150
-            ? dto.content.slice(0, 150) + '...'
-            : dto.content,
+        body: snippet,
         data: { post_id: postId, user_id: userId },
       });
+    }
+
+    // Watch-the-thread: notify everyone else who has already commented on
+    // this post. Commenting implicitly subscribes a user to further
+    // activity on that post. Excluded recipients: the post author (already
+    // notified above) and the current commenter (no self-pings).
+    const priorCommenters = await this.prisma.postComment.findMany({
+      where: {
+        post_id: postId,
+        user_id: { notIn: [userId, post.user_id] },
+      },
+      distinct: ['user_id'],
+      select: { user_id: true },
+    });
+
+    if (priorCommenters.length > 0) {
+      const author = await this.prisma.user.findUnique({
+        where: { id: post.user_id },
+        select: { full_name: true },
+      });
+      const possessive = author?.full_name
+        ? `${author.full_name}'s`
+        : 'a';
+
+      for (const w of priorCommenters) {
+        this.notificationsService.sendToUser(w.user_id, {
+          type: 'comment',
+          title: `${commenterName} also commented on ${possessive} post`,
+          body: snippet,
+          data: { post_id: postId, user_id: userId },
+        });
+      }
     }
 
     return {
@@ -789,6 +822,7 @@ export class CommunityService {
         type: s.type,
         duration_minutes: s.duration_minutes,
         calories: s.calories,
+        avg_heart_rate: s.avg_heart_rate ?? null,
         completed_at:
           s.completed_at?.toISOString() ?? s.created_at.toISOString(),
         exercises: s.exercises.map((e, index) => ({
@@ -1289,6 +1323,8 @@ export class CommunityService {
             sessionId: session.id,
             title: session.title,
             durationMinutes: session.duration_minutes,
+            calories: session.calories ?? null,
+            avgHeartRate: session.avg_heart_rate ?? null,
             exerciseCount: session.exercises.length,
             aiGenerated: session.ai_generated,
             rpe: session.feedback?.effort_level ?? null,
