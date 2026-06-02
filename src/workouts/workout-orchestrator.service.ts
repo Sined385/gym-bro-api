@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -25,6 +25,9 @@ import { getWeekStart, toMondayDow } from '../common/date-utils';
 export class WorkoutOrchestratorService {
   constructor(
     private readonly prisma: PrismaService,
+    // forwardRef: PlansService injects this orchestrator (lazy fallback
+    // in adaptSkippedDays). Both sides resolve via forwardRef.
+    @Inject(forwardRef(() => PlansService))
     private readonly plansService: PlansService,
     private readonly analytics: AnalyticsService,
     private readonly notificationsService: NotificationsService,
@@ -61,9 +64,7 @@ export class WorkoutOrchestratorService {
 
     // 2. Reconcile against ad-hoc sessions — if this session happened
     // on a past pending plan day's calendar date, mark that plan day
-    // completed and link the session. Phase 1 keeps the parallel
-    // recovery block in `adaptSkippedDays` for defence in depth; Phase
-    // 2 will delete it.
+    // completed and link the session.
     await this.reconcileWithAdHocSessions(userId);
 
     // 3. Plan-domain completion hook: marks PlanDay completed and
@@ -71,18 +72,49 @@ export class WorkoutOrchestratorService {
     // plan day. No-op for unlinked sessions.
     await this.plansService.onSessionCompleted(sessionId);
 
-    // 4. Analytics.
+    // 4. Eagerly redistribute any unfulfilled muscle groups from
+    // truly-skipped past days across the rest of the week. Previously
+    // only ran lazily on the next getActivePlan fetch (Phase 2 makes
+    // it reactive to completions too).
+    await this.redistributeAfterCompletion(userId);
+
+    // 5. Analytics.
     this.analytics.track(userId, 'session_completed', {
       duration_minutes: metrics.durationMinutes,
       calories: metrics.calories,
       effort_level: metrics.effortLevel ?? null,
     });
 
-    // 5. Reminder recalc (fire-and-forget — slow notification math
+    // 6. Reminder recalc (fire-and-forget — slow notification math
     // shouldn't fail a completion).
     this.notificationsService
       .recalculatePreferredHour(userId)
       .catch(() => {});
+  }
+
+  /**
+   * Helper: fetch the active plan + onboarding and ask PlansService to
+   * redistribute any muscle-group deficit from truly-skipped past days
+   * (i.e. past pending training days with no completed session that
+   * calendar date) into the remaining pending days. Idempotent — guards
+   * by adapted_at on the plan side.
+   */
+  private async redistributeAfterCompletion(userId: string): Promise<void> {
+    const plan = await this.prisma.trainingPlan.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: { days: { orderBy: { day_of_week: 'asc' } } },
+    });
+    if (!plan) return;
+    const onboarding = await this.prisma.onboardingData.findUnique({
+      where: { user_id: userId },
+    });
+    const todayDow = toMondayDow(new Date());
+    await this.plansService.redistributeDeficit(
+      plan,
+      todayDow,
+      userId,
+      onboarding,
+    );
   }
 
   /**

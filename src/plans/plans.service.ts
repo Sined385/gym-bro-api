@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import { PlansAiService } from './plans-ai.service';
@@ -19,6 +19,7 @@ import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import { computeRecentLifts } from '../common/recent-lifts';
+import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -30,6 +31,10 @@ export class PlansService {
     private readonly weightSuggestionService: WeightSuggestionService,
     private readonly analytics: AnalyticsService,
     private readonly subscriptionService: SubscriptionService,
+    // forwardRef: PlansService is injected back into the orchestrator,
+    // so we use forwardRef to resolve the constructor-time cycle.
+    @Inject(forwardRef(() => WorkoutOrchestratorService))
+    private readonly orchestrator: WorkoutOrchestratorService,
   ) {}
 
   async getActivePlan(userId: string) {
@@ -640,8 +645,49 @@ export class PlansService {
     userId: string,
     onboarding: any | null,
   ): Promise<boolean> {
-    // 1. Find skipped-candidate days — pending training days before today with no prior adaptation
-    const skippedCandidates = plan.days.filter(
+    // Lazy fallback: defer recovery to the orchestrator (eager path
+    // runs from recordCompletion; this catches anything missed). The
+    // method is idempotent — uses adapted_at to avoid double work.
+    const { recoveredDayIds } =
+      await this.orchestrator.reconcileWithAdHocSessions(userId);
+
+    // Refetch since the reconcile may have flipped some plan days to
+    // completed.
+    const refreshed = await this.prisma.trainingPlan.findUnique({
+      where: { id: plan.id },
+      include: { days: { orderBy: { day_of_week: 'asc' } } },
+    });
+    if (!refreshed) return recoveredDayIds.length > 0;
+    plan = refreshed;
+
+    const redistributed = await this.redistributeDeficit(
+      plan,
+      todayDow,
+      userId,
+      onboarding,
+    );
+    return redistributed || recoveredDayIds.length > 0;
+  }
+
+  /**
+   * Distribute muscle-group deficit from skipped past training days
+   * across remaining pending training days this week (and, if needed,
+   * convert the earliest future rest day to training). Public so the
+   * orchestrator can call it eagerly from recordCompletion in
+   * addition to the lazy adaptSkippedDays path.
+   *
+   * "Skipped" here means: past pending training days with no
+   * adapted_at — recovery from ad-hoc completed sessions has already
+   * run upstream, so anything left in this set is truly missed.
+   */
+  async redistributeDeficit(
+    plan: any,
+    todayDow: number,
+    userId: string,
+    onboarding: any | null,
+  ): Promise<boolean> {
+    // 1. Find skipped days — pending training days before today with no prior adaptation
+    const skippedDays = plan.days.filter(
       (d: any) =>
         d.status === 'pending' &&
         d.day_type === 'training' &&
@@ -649,58 +695,8 @@ export class PlansService {
         !d.adapted_at,
     );
 
-    // 2. Fast path — nothing to adapt
-    if (skippedCandidates.length === 0) return false;
-
-    // 2a. Reconcile against ad-hoc completed sessions: a user can show
-    // up to the gym on Monday and crush a workout that isn't this plan's
-    // Monday session (e.g., a Coach-created bench day or a custom
-    // workout from Home). We shouldn't mark that day "skipped" — the
-    // user trained. Look up completed sessions whose completed_at falls
-    // on the plan day's calendar date; for any match, mark the plan day
-    // completed and link the session.
-    const planWeekStart = new Date(plan.week_start_date);
-    planWeekStart.setHours(0, 0, 0, 0);
-    const recoveredDayIds: string[] = [];
-    for (const day of skippedCandidates) {
-      const dayStart = new Date(planWeekStart);
-      dayStart.setDate(dayStart.getDate() + day.day_of_week);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
-      const completedThatDay = await this.prisma.workoutSession.findFirst({
-        where: {
-          user_id: userId,
-          status: 'completed',
-          completed_at: { gte: dayStart, lt: dayEnd },
-        },
-        orderBy: { completed_at: 'asc' },
-        select: { id: true },
-      });
-      if (completedThatDay) {
-        await this.prisma.planDay.update({
-          where: { id: day.id },
-          data: {
-            status: 'completed',
-            workout_session_id:
-              day.workout_session_id ?? completedThatDay.id,
-            adapted_at: new Date(),
-          },
-        });
-        recoveredDayIds.push(day.id);
-        this.analytics.track(userId, 'plan_day_recovered_from_session', {
-          plan_id: plan.id,
-          plan_day_id: day.id,
-          session_id: completedThatDay.id,
-          day_of_week: day.day_of_week,
-        });
-      }
-    }
-    const skippedDays = skippedCandidates.filter(
-      (d: any) => !recoveredDayIds.includes(d.id),
-    );
-
-    // After recovery, there may be nothing left to actually skip.
-    if (skippedDays.length === 0) return recoveredDayIds.length > 0;
+    // Fast path — nothing to redistribute
+    if (skippedDays.length === 0) return false;
 
     // 3. Find future pending training days (after today)
     const futureDays = plan.days.filter(
