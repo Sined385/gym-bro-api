@@ -204,12 +204,18 @@ export class PlansService {
     const allowedEquipment =
       EQUIPMENT_MAP[onboarding.available_equipment] ?? [];
 
-    // Calculate start day of week (0=Mon..6=Sun). Always anchor on
-    // today, even on force-regen — generating a Monday training day
-    // on a Tuesday-regen would leave the user staring at a "do this
-    // workout" card for a day that's already in the past.
+    // Calculate start day of week (0=Mon..6=Sun).
+    //   - force regen → generate the FULL Mon-Sun week so past days
+    //     are present in the plan (UI shows them as "skipped,
+    //     redistributed" rather than missing entirely); the
+    //     redistributeDeficit call below moves their muscle groups
+    //     forward.
+    //   - first-time generation → start from today; the user has no
+    //     past plan history to redistribute from, so generating past
+    //     days would just create phantom skips.
     const now = new Date();
-    const startDow = toMondayDow(now);
+    const todayDow = toMondayDow(now);
+    const startDow = force ? 0 : todayDow;
 
     // Fetch skeleton, exercise library, recent exercises, recent sessions
     // (for progressive-overload context), and previous week number in
@@ -343,6 +349,27 @@ export class PlansService {
       plan_id: plan.id,
       week_number: newWeekNumber,
     });
+
+    // Mid-week regen: past days were just persisted as `pending`. Run
+    // reconcile + redistribute right now so they get marked `skipped`
+    // and their muscle groups flow into today + future. Without this,
+    // the user opens the app immediately after regen and sees Monday
+    // as a phantom "do this workout" card.
+    if (force && todayDow > 0) {
+      await this.orchestrator.reconcileWithAdHocSessions(userId);
+      const refreshed = await this.prisma.trainingPlan.findUnique({
+        where: { id: plan.id },
+        include: { days: { orderBy: { day_of_week: 'asc' } } },
+      });
+      if (refreshed) {
+        await this.redistributeDeficit(
+          refreshed,
+          todayDow,
+          userId,
+          onboarding,
+        );
+      }
+    }
 
     return { message: 'Plan generated', planId: plan.id };
   }
