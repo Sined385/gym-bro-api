@@ -702,8 +702,22 @@ export class PlansService {
     const now = new Date();
     const skippedIds = skippedDays.map((d: any) => d.id);
 
-    // 7. No deficit — just mark skipped, no redistribution needed
-    if (deficit.length === 0 || futureDays.length === 0) {
+    // 7. Pending pending today as a rest day — eligible candidate for
+    // conversion to training when there's deficit. The user opened the
+    // app today and didn't train yesterday; converting today honours
+    // their intent (they're here, they can lift) rather than pushing
+    // the missed work to Wed/Fri.
+    const todayRestDay = plan.days.find(
+      (d: any) =>
+        d.day_of_week === todayDow &&
+        d.day_type === 'rest' &&
+        d.status === 'pending',
+    );
+
+    // 8. No deficit OR no destination — just mark skipped, no redistribution needed
+    const hasAnyDestination =
+      futureDays.length > 0 || todayRestDay !== undefined;
+    if (deficit.length === 0 || !hasAnyDestination) {
       await this.prisma.planDay.updateMany({
         where: { id: { in: skippedIds } },
         data: { status: 'skipped', adapted_at: now },
@@ -716,7 +730,7 @@ export class PlansService {
       return true;
     }
 
-    // 8. Distribute deficit across future days
+    // 9. Distribute deficit
     const allowedEquipment =
       EQUIPMENT_MAP[onboarding?.available_equipment ?? ''] ?? [];
 
@@ -741,7 +755,49 @@ export class PlansService {
 
     // Persist everything in a single transaction
     await this.prisma.$transaction(async (tx) => {
-      // Distribute to existing future training days (max +2 groups per day)
+      // 9a. Priority: convert today's rest day to training if it's
+      // pending. Pulls up to 3 muscle groups (a full make-up session)
+      // before pushing the rest forward.
+      if (todayRestDay && remainingDeficit.length > 0) {
+        const toAdd = remainingDeficit.splice(0, 3);
+        const slots: ExerciseSlot[] = toAdd.map((group) => ({
+          muscle_group: group,
+          rep_scheme: repScheme,
+          focus: null,
+        }));
+        const picks = matchExercisesToSlots(
+          slots,
+          exerciseLibrary,
+          recentExerciseIds,
+          userLevel,
+        );
+        const newExercises = picks.map((pick, i) => ({
+          library_exercise_id: pick.id,
+          external_id: pick.external_id,
+          name: pick.name,
+          muscle_group: pick.muscle_group,
+          equipment: pick.equipment,
+          sets_display: slots[i].rep_scheme,
+        }));
+        const muscleGroups = [
+          ...new Set(newExercises.map((e) => e.muscle_group)),
+        ];
+        const title = muscleGroups.join(' & ') + ' Day';
+        await tx.planDay.update({
+          where: { id: todayRestDay.id },
+          data: {
+            day_type: 'training',
+            session_title: title,
+            session_type: 'strength',
+            muscle_groups: muscleGroups,
+            exercises_json: newExercises,
+            adapted_at: now,
+          },
+        });
+        adaptedDayIds.push(todayRestDay.id);
+      }
+
+      // 9b. Distribute remaining deficit to existing future training days (max +2 groups per day)
       for (const day of futureDays) {
         if (remainingDeficit.length === 0) break;
 
