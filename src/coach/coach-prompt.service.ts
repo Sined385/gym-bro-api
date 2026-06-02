@@ -4,6 +4,10 @@ import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
 import { aiContextLine } from '../common/ai-context';
+import {
+  computeRecentLifts as computeRecentLiftsShared,
+  formatRecentLiftsBlock,
+} from '../common/recent-lifts';
 
 @Injectable()
 export class CoachPromptService {
@@ -100,6 +104,15 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
       : 'No onboarding profile available.';
 
     const sessionsContext = formatRecentSessions(recentSessions);
+
+    // One-line summary per exercise the user has performed recently,
+    // with a server-computed "suggest" load for the top working set.
+    // The AI uses this to drive progressive overload when reusing
+    // familiar exercises — see the tool-usage rules below. Shared with
+    // the plan-generation flow via common/recent-lifts.ts.
+    const recentLiftsBlock = formatRecentLiftsBlock(
+      computeRecentLiftsShared(recentSessions),
+    );
 
     // Cap exercise list to avoid bloating the system prompt (~15K+ tokens with 700+ exercises)
     // Diversify by muscle group so all groups are represented
@@ -215,6 +228,19 @@ ${planContext}
 ${sessionsContext}
 
 ${currentSession}
+
+${recentLiftsBlock}
+
+PROGRESSIVE OVERLOAD (highest-priority workout-creation rule — read this before composing exercises):
+For ANY exercise listed under "Your recent lifts" above, when you include it in a workout:
+  1. REUSE the exercise — pass its library_exercise_id from the recent-lifts line.
+  2. REQUIRED: pass target_sets that mirror the recorded ladder one-for-one, then bump the top working set to the "suggest top set" value at the end of that recent-lifts line. Warm-up sets stay where they were.
+  3. REQUIRED: set sets_display to "<target_sets.length> × <top-set reps>" so the chat card pill reflects the actual ladder you're proposing.
+Example — if a recent-lifts line says: "Barbell Bench Press (lib_id: abc) — last 2026-06-01: 50kg × 10, 60kg × 8, 80kg × 6, 85kg × 5, 85kg × 5 — suggest top set 87.5kg × 5", you MUST return for that exercise:
+  library_exercise_id = "abc"
+  sets_display = "5 × 5"
+  target_sets = [{weight_kg:50,reps:10},{weight_kg:60,reps:8},{weight_kg:80,reps:6},{weight_kg:87.5,reps:5},{weight_kg:87.5,reps:5}]
+NEVER return a generic "4 × 8" or "3 × 10" for an exercise that has load data — that throws away the user's progression. target_sets is optional only for novel exercises that don't appear in the recent-lifts block.
 
 ${exerciseList}
 

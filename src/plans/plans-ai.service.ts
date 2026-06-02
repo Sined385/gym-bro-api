@@ -9,6 +9,11 @@ import {
   AiExerciseSelection,
   LibraryExercise,
 } from './exercise-matcher';
+import {
+  computeRecentLifts,
+  formatRecentLiftsBlock,
+  type RecentLift,
+} from '../common/recent-lifts';
 
 @Injectable()
 export class PlansAiService {
@@ -23,6 +28,7 @@ export class PlansAiService {
     userId: string,
     onboarding: any,
     startDayOfWeek: number = 0,
+    focus?: string,
   ): Promise<SkeletonDay[]> {
     const dayNames = [
       'Monday',
@@ -38,6 +44,10 @@ export class PlansAiService {
       (onboarding.training_frequency || 3) * (totalDays / 7),
     );
 
+    const focusBlock = focus
+      ? `\nUser focus for this week: "${focus}". Treat the focus as the WEEK'S THEME — feature it on ONE primary training day (e.g. for "bench press" make ONE day a chest-led push day with a low-rep compound slot for that lift, sets like 4×5 or 5×5). Optionally include the focus muscle group as a single accessory slot on ONE other training day. The remaining training days MUST cover the OTHER muscle groups (Legs, Back/Pull, Shoulders, Arms, Core) for balance and recovery. DO NOT repeat the same primary lift across multiple days — three bench-press days in one week is wrong; a "bench press plan" is a balanced week that *features* bench press on its push day.\n`
+      : '';
+
     const prompt = `You are a fitness coach AI. Generate a ${totalDays}-day training plan skeleton from ${dayNames[startDayOfWeek]} through Sunday.
 
 User profile:
@@ -48,7 +58,7 @@ User profile:
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
 - Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
-
+${focusBlock}
 Respond with a JSON object:
 {
   "days": [
@@ -75,7 +85,9 @@ Rules:
 - Match rep scheme to goal (build_muscle: 3-4×8-10, lose_fat: 3×12-15, get_stronger: 4-5×5-6, improve_endurance: 3×15-20, stay_healthy: 3×10-12)
 - Avoid muscle groups that aggravate listed injuries
 - Distribute training days evenly through the partial week
-- Return exactly ${totalDays} days (${startDayOfWeek} through 6)`;
+- BALANCE: across the week, cover at least three of {Chest/Push, Back/Pull, Legs} — never make the same muscle group the dominant group on more than ONE training day, even if the user named a specific lift.
+- Return exactly ${totalDays} days (${startDayOfWeek} through 6)
+- HARD REQUIREMENT: every training day MUST have between 4 and 6 entries in exercise_slots.`;
 
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
@@ -258,6 +270,8 @@ Rules:
     candidatePools: Map<string, LibraryExercise[]>,
     onboarding: any,
     recentExerciseNames: string[],
+    recentLifts: RecentLift[] = [],
+    focus?: string,
   ): Promise<AiExerciseSelection | null> {
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
@@ -285,13 +299,19 @@ Rules:
       return `Day ${day.day_of_week} — "${day.session_title}":\n${slots}`;
     });
 
+    const recentLiftsBlock = formatRecentLiftsBlock(recentLifts);
+    const focusLine = focus
+      ? `\nUser focus for this plan: "${focus}". When the focus muscle group's primary day has an open slot for it, you MUST pick the canonical named lift if it's in that day's candidate pool (e.g. focus "bench press" → pick Barbell Bench Press for the chest compound slot on the push day). Any subsequent slot in that muscle group across the week picks a DIFFERENT exercise — don't repeat the same lift.`
+      : '';
+
     const prompt = `You are a fitness coach. Pick the best exercises for each slot from the candidate pools below.
 
 User profile:
 - Goal: ${onboarding.primary_goals?.[0] ?? 'build_muscle'}
 - Experience: ${onboarding.experience_level ?? 'intermediate'}
 - Injuries: ${JSON.stringify(onboarding.injuries ?? [])}${aiContextLine(onboarding)}
-- Recently used exercises (avoid repeating): ${recentExerciseNames.slice(0, 20).join(', ') || 'none'}
+- Recently used exercises (avoid repeating unless they're in "Your recent lifts" below — those are explicitly preferred for progression): ${recentExerciseNames.slice(0, 20).join(', ') || 'none'}
+${focusLine}
 
 Training days:
 ${dayDescriptions.join('\n\n')}
@@ -299,11 +319,22 @@ ${dayDescriptions.join('\n\n')}
 Candidate pools:
 ${poolLines.join('\n')}
 
+${recentLiftsBlock}
+
+PROGRESSIVE OVERLOAD (highest-priority rule):
+For ANY slot where the candidate pool contains an exercise listed in "Your recent lifts" above, you MUST:
+  1. Pick that exercise (use its library_exercise_id from the pool).
+  2. Return target_sets that mirror the recorded ladder one-for-one, with the top working set bumped to the "suggest top set" value at the end of that recent-lifts line. Warm-up sets stay where they were.
+Example — if Barbell Bench Press shows "last 2026-06-01: 50kg×10, 60kg×8, 80kg×6, 85kg×5, 85kg×5 — suggest top set 87.5kg × 5", the exercise entry for that slot is:
+  { "library_exercise_id": "<bench id>", "name": "Barbell Bench Press - Medium Grip",
+    "target_sets": [{"weight_kg":50,"reps":10},{"weight_kg":60,"reps":8},{"weight_kg":80,"reps":6},{"weight_kg":87.5,"reps":5},{"weight_kg":87.5,"reps":5}] }
+For novel exercises (not in the recent-lifts block) target_sets is optional — omit it.
+
 Rules:
 - Pick EXACTLY one exercise per slot from the matching muscle group pool
 - Prefer compound exercises for "compound" focus slots, isolation for "isolation" slots
 - Avoid exercises that aggravate listed injuries
-- Vary exercises — don't repeat the same exercise across days unless the pool is very small
+- Vary exercises across days (except where Progressive Overload mandates reusing a recent lift)
 - Pick well-known, effective exercises over obscure ones
 - You MUST only use exercise IDs from the pools above
 
@@ -313,7 +344,8 @@ Respond with JSON:
     {
       "day_of_week": <number>,
       "exercises": [
-        { "library_exercise_id": "<uuid>", "name": "<exercise name>" }
+        { "library_exercise_id": "<uuid>", "name": "<exercise name>",
+          "target_sets": [{"weight_kg":<number?>,"reps":<int>,"is_bodyweight":<bool?>}] }
       ]
     }
   ]

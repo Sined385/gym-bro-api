@@ -18,6 +18,7 @@ import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStart, toMondayDow } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
+import { computeRecentLifts } from '../common/recent-lifts';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -181,7 +182,7 @@ export class PlansService {
     };
   }
 
-  async generatePlan(userId: string, force: boolean) {
+  async generatePlan(userId: string, force: boolean, focus?: string) {
     // Premium check: first plan after onboarding is free; re-generation requires premium
     if (force) {
       const hasPlan = await this.subscriptionService.hasAnyPlan(userId);
@@ -233,25 +234,51 @@ export class PlansService {
     const now = new Date();
     const startDow = force ? 0 : toMondayDow(now);
 
-    // Fetch skeleton, exercise library, recent exercises, and previous week number in parallel
-    const [skeleton, exerciseLibrary, recentExerciseIds, previousPlan] =
-      await Promise.all([
-        this.plansAiService.generateWeeklyPlan(userId, onboarding, startDow),
-        this.prisma.exerciseLibrary.findMany({
-          where: {
-            OR: [{ is_system: true }, { user_id: userId }],
-            ...(allowedEquipment.length > 0
-              ? { equipment: { in: allowedEquipment } }
-              : {}),
+    // Fetch skeleton, exercise library, recent exercises, recent sessions
+    // (for progressive-overload context), and previous week number in
+    // parallel.
+    const [
+      skeleton,
+      exerciseLibrary,
+      recentExerciseIds,
+      recentSessions,
+      previousPlan,
+    ] = await Promise.all([
+      this.plansAiService.generateWeeklyPlan(
+        userId,
+        onboarding,
+        startDow,
+        focus,
+      ),
+      this.prisma.exerciseLibrary.findMany({
+        where: {
+          OR: [{ is_system: true }, { user_id: userId }],
+          ...(allowedEquipment.length > 0
+            ? { equipment: { in: allowedEquipment } }
+            : {}),
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.getRecentExerciseIds(userId),
+      this.prisma.workoutSession.findMany({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
+        },
+        orderBy: { completed_at: 'desc' },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
           },
-          orderBy: { name: 'asc' },
-        }),
-        this.getRecentExerciseIds(userId),
-        this.prisma.trainingPlan.findFirst({
-          where: { user_id: userId },
-          orderBy: { week_number: 'desc' },
-        }),
-      ]);
+        },
+      }),
+      this.prisma.trainingPlan.findFirst({
+        where: { user_id: userId },
+        orderBy: { week_number: 'desc' },
+      }),
+    ]);
     const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
 
     // Stage 2: Build curated candidate pools per muscle group
@@ -261,14 +288,19 @@ export class PlansService {
       recentExerciseIds,
     );
 
-    // Stage 3: AI picks specific exercises from candidates
+    // Stage 3: AI picks specific exercises from candidates, supplying
+    // target_sets for any pool entry that appears in the user's
+    // recent-lifts data (progressive overload path).
     const recentExerciseNames = await this.getRecentExerciseNames(userId);
+    const recentLifts = computeRecentLifts(recentSessions);
     const aiSelection = await this.plansAiService.selectExercises(
       userId,
       skeleton,
       candidatePools,
       onboarding,
       recentExerciseNames,
+      recentLifts,
+      focus,
     );
 
     // Use AI selection if valid, otherwise fall back to deterministic matcher
@@ -319,7 +351,10 @@ export class PlansService {
             session_title: day.session_title ?? null,
             session_type: day.session_type ?? null,
             muscle_groups: day.muscle_groups ?? [],
-            exercises_json: day.exercises ?? [],
+            // Cast to any — Prisma's Json column expects InputJsonValue
+            // which doesn't match strict object types with optional
+            // fields like `target_sets`. The shape is still valid JSON.
+            exercises_json: (day.exercises ?? []) as any,
             status: 'pending',
           })),
         },
@@ -457,6 +492,28 @@ export class PlansService {
               libId = libEx.id;
               externalId = libEx.external_id ?? externalId;
             }
+            // Materialize per-set targets persisted at plan time as
+            // pre-filled exercise_sets rows. Same trick the Coach
+            // single-workout path uses — gives the active session view
+            // a real ladder to render instead of falling back to the
+            // generic sets_display placeholders.
+            const targets = Array.isArray(ex.target_sets) ? ex.target_sets : [];
+            const exerciseSets =
+              targets.length > 0
+                ? {
+                    create: targets.map((s: any, sIdx: number) => ({
+                      set_number: sIdx + 1,
+                      weight:
+                        s.is_bodyweight || s.weight_kg === undefined
+                          ? null
+                          : s.weight_kg,
+                      weight_unit: 'kg',
+                      reps: s.reps,
+                      is_bodyweight: s.is_bodyweight ?? false,
+                      is_completed: false,
+                    })),
+                  }
+                : undefined;
             return {
               library_exercise_id: libId,
               external_id: externalId,
@@ -467,6 +524,7 @@ export class PlansService {
               sets_display: ex.sets_display || '3 × 10',
               accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
               suggested_weight: ex.suggested_weight ?? null,
+              ...(exerciseSets ? { exercise_sets: exerciseSets } : {}),
             };
           }),
         },
@@ -582,8 +640,8 @@ export class PlansService {
     userId: string,
     onboarding: any | null,
   ): Promise<boolean> {
-    // 1. Find skipped days — pending training days before today with no prior adaptation
-    const skippedDays = plan.days.filter(
+    // 1. Find skipped-candidate days — pending training days before today with no prior adaptation
+    const skippedCandidates = plan.days.filter(
       (d: any) =>
         d.status === 'pending' &&
         d.day_type === 'training' &&
@@ -592,7 +650,57 @@ export class PlansService {
     );
 
     // 2. Fast path — nothing to adapt
-    if (skippedDays.length === 0) return false;
+    if (skippedCandidates.length === 0) return false;
+
+    // 2a. Reconcile against ad-hoc completed sessions: a user can show
+    // up to the gym on Monday and crush a workout that isn't this plan's
+    // Monday session (e.g., a Coach-created bench day or a custom
+    // workout from Home). We shouldn't mark that day "skipped" — the
+    // user trained. Look up completed sessions whose completed_at falls
+    // on the plan day's calendar date; for any match, mark the plan day
+    // completed and link the session.
+    const planWeekStart = new Date(plan.week_start_date);
+    planWeekStart.setHours(0, 0, 0, 0);
+    const recoveredDayIds: string[] = [];
+    for (const day of skippedCandidates) {
+      const dayStart = new Date(planWeekStart);
+      dayStart.setDate(dayStart.getDate() + day.day_of_week);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const completedThatDay = await this.prisma.workoutSession.findFirst({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: dayStart, lt: dayEnd },
+        },
+        orderBy: { completed_at: 'asc' },
+        select: { id: true },
+      });
+      if (completedThatDay) {
+        await this.prisma.planDay.update({
+          where: { id: day.id },
+          data: {
+            status: 'completed',
+            workout_session_id:
+              day.workout_session_id ?? completedThatDay.id,
+            adapted_at: new Date(),
+          },
+        });
+        recoveredDayIds.push(day.id);
+        this.analytics.track(userId, 'plan_day_recovered_from_session', {
+          plan_id: plan.id,
+          plan_day_id: day.id,
+          session_id: completedThatDay.id,
+          day_of_week: day.day_of_week,
+        });
+      }
+    }
+    const skippedDays = skippedCandidates.filter(
+      (d: any) => !recoveredDayIds.includes(d.id),
+    );
+
+    // After recovery, there may be nothing left to actually skip.
+    if (skippedDays.length === 0) return recoveredDayIds.length > 0;
 
     // 3. Find future pending training days (after today)
     const futureDays = plan.days.filter(

@@ -5,10 +5,22 @@ export interface CandidatePool {
   exercises: LibraryExercise[];
 }
 
+export interface AiTargetSet {
+  weight_kg?: number;
+  reps: number;
+  is_bodyweight?: boolean;
+}
+
 export interface AiExerciseSelection {
   days: {
     day_of_week: number;
-    exercises: { library_exercise_id: string; name: string }[];
+    exercises: {
+      library_exercise_id: string;
+      name: string;
+      /// Per-set targets — required by the prompt for any exercise that
+      /// appears in the "Recent lifts" block, optional for novel lifts.
+      target_sets?: AiTargetSet[];
+    }[];
   }[];
 }
 
@@ -39,6 +51,11 @@ export interface PlanDayGenerated {
     muscle_group: string;
     equipment: string;
     sets_display: string;
+    /// Optional per-set ladder when the AI returned target_sets for
+    /// this exercise (progressive overload path). Persisted into
+    /// PlanDay.exercises_json and materialized as exercise_sets rows
+    /// in startPlanSession.
+    target_sets?: AiTargetSet[];
   }[];
 }
 
@@ -242,10 +259,7 @@ export function assembleFromAiSelection(
   }
 
   // Index AI selections by day_of_week
-  const aiDayMap = new Map<
-    number,
-    { library_exercise_id: string; name: string }[]
-  >();
+  const aiDayMap = new Map<number, AiExerciseSelection['days'][number]['exercises']>();
   for (const aiDay of aiSelection.days) {
     aiDayMap.set(aiDay.day_of_week, aiDay.exercises);
   }
@@ -266,13 +280,24 @@ export function assembleFromAiSelection(
 
     const exercises = aiExercises.map((aiEx, i) => {
       const libEx = exerciseById.get(aiEx.library_exercise_id);
+      const targets = Array.isArray(aiEx.target_sets) ? aiEx.target_sets : undefined;
+      // When target_sets is supplied, override sets_display so the
+      // plan-day card pill reflects the actual ladder — same trick
+      // used for Coach single-workout creation. e.g. a 5-set ladder
+      // with a top set of 5 reps becomes "5 × 5", not whatever
+      // generic rep_scheme the skeleton was carrying.
+      const setsDisplay =
+        targets && targets.length > 0
+          ? `${targets.length} × ${targets.reduce((m, s) => Math.max(m, s.reps), 0)}`
+          : (day.exercise_slots[i]?.rep_scheme ?? '3 × 10');
       return {
         library_exercise_id: aiEx.library_exercise_id,
         external_id: libEx?.external_id ?? null,
         name: libEx?.name ?? aiEx.name,
         muscle_group: libEx?.muscle_group ?? '',
         equipment: libEx?.equipment ?? '',
-        sets_display: day.exercise_slots[i]?.rep_scheme ?? '3 × 10',
+        sets_display: setsDisplay,
+        ...(targets && targets.length > 0 ? { target_sets: targets } : {}),
       };
     });
 
