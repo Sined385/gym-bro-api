@@ -217,6 +217,27 @@ export class CompleteSessionFullDto {
   @IsString()
   title?: string;
 
+  // Optional metadata for the create-on-complete path. When iOS
+  // completes a session that never had a server-side row (the new
+  // "store on complete only" flow), the client sends the full
+  // descriptor so the server can construct the WorkoutSession from
+  // scratch and link it to the plan day.
+  @IsOptional()
+  @IsString()
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  ai_message?: string;
+
+  @IsOptional()
+  @IsString()
+  started_at?: string;
+
+  @IsOptional()
+  @IsString()
+  plan_day_id?: string;
+
   @IsOptional()
   @IsInt()
   @IsPositive()

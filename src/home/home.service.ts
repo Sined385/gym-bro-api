@@ -527,12 +527,17 @@ export class HomeService {
       where: { id: sessionId, user_id: userId },
     });
 
+    // Idempotent: with the "store on complete" flow, /start no longer
+    // creates a row, so iOS can issue /cancel against a session id that
+    // was only ever local. Return a no-op response in that case rather
+    // than 404 — keeps old iOS clients harmless and lets the new
+    // local-only cancel path stay simple.
     if (!session) {
-      throw new AppException(
-        'session_not_found',
-        'Session not found',
-        HttpStatus.NOT_FOUND,
-      );
+      return { id: sessionId, status: 'cancelled' as const };
+    }
+
+    if (session.status === 'cancelled' || session.status === 'completed') {
+      return { id: sessionId, status: session.status };
     }
 
     if (session.status !== 'proposed' && session.status !== 'active') {
@@ -647,43 +652,65 @@ export class HomeService {
     sessionId: string,
     dto: CompleteSessionFullDto,
   ) {
-    // Idempotent for already-completed sessions. iOS keeps a
-    // PendingSessionCompletion on disk when the original /complete-full
-    // call fails (e.g. backgrounded → URLSession killed) and retries on
-    // every dashboard reload. If the session was meanwhile flipped to
-    // 'completed' by another path (a successful earlier retry that
-    // didn't clear cache, or a manual SQL fix), the strict
-    // findActiveSession would 409 every retry until iOS hits 20 max
-    // retries and silently drops the user's logged sets. Accept both
-    // statuses; preserve existing completion metadata in the
-    // recovery path.
-    const session = await this.prisma.workoutSession.findFirst({
+    // Three paths:
+    //   1. CREATE — session id doesn't exist server-side. Happens with
+    //      the "store on complete only" flow where /start no longer
+    //      writes anything. We construct the WorkoutSession + nested
+    //      exercises + sets in one transaction from the payload, link
+    //      the plan_day if provided, and run post-completion effects.
+    //   2. ACTIVE → COMPLETED — original flow for sessions that were
+    //      created by the legacy start path (still in use for Coach /
+    //      ad-hoc proposed sessions). Recreate exercises + sets,
+    //      stamp completion fields, run side effects.
+    //   3. RECOVERY — session already exists at status='completed'.
+    //      iOS retry queue is replaying after a manual fix or a stale
+    //      cache file. Re-attach the exercises + sets but preserve
+    //      existing completion metadata and skip side effects so we
+    //      don't double-fire analytics or re-adapt the plan.
+    const existing = await this.prisma.workoutSession.findFirst({
       where: { id: sessionId, user_id: userId },
     });
-    if (!session) {
+    if (existing && existing.user_id !== userId) {
       throw new AppException(
         'session_not_found',
         'Session not found',
         HttpStatus.NOT_FOUND,
       );
     }
-    if (session.status !== 'active' && session.status !== 'completed') {
+    if (
+      existing &&
+      existing.status !== 'active' &&
+      existing.status !== 'completed'
+    ) {
       throw new AppException(
         'invalid_session_status',
-        `Cannot complete a session with status '${session.status}'`,
+        `Cannot complete a session with status '${existing.status}'`,
         HttpStatus.CONFLICT,
       );
     }
 
-    const wasAlreadyCompleted = session.status === 'completed';
-    const completedAt = wasAlreadyCompleted
-      ? (session.completed_at ?? new Date())
+    const isCreate = !existing;
+    const wasAlreadyCompleted = existing?.status === 'completed';
+
+    const startedAtFallback = dto.started_at
+      ? new Date(dto.started_at)
       : new Date();
+    const startedAt = existing?.started_at ?? startedAtFallback;
+
+    const completedAt = wasAlreadyCompleted
+      ? (existing!.completed_at ?? new Date())
+      : new Date();
+
     const durationMinutes = wasAlreadyCompleted
-      ? session.duration_minutes
-      : this.calculateDuration(dto, session, completedAt);
+      ? existing!.duration_minutes
+      : this.calculateDuration(
+          dto,
+          { started_at: startedAt },
+          completedAt,
+        );
+
     const calories = wasAlreadyCompleted
-      ? session.calories
+      ? existing!.calories
       : this.estimateCalories(durationMinutes, dto.feedback?.effort_level);
 
     // Look up external_ids for library exercises
@@ -703,13 +730,33 @@ export class HomeService {
         : new Map<string, string | null>();
 
     await this.prisma.$transaction(async (tx) => {
-      // Delete existing exercises and recreate from payload
-      await tx.exerciseSet.deleteMany({
-        where: { exercise: { session_id: sessionId } },
-      });
-      await tx.sessionExercise.deleteMany({
-        where: { session_id: sessionId },
-      });
+      if (isCreate) {
+        await tx.workoutSession.create({
+          data: {
+            id: sessionId, // client-generated UUID
+            user_id: userId,
+            title: dto.title ?? 'Training Session',
+            type: dto.type ?? 'strength',
+            status: 'completed',
+            started_at: startedAt,
+            completed_at: completedAt,
+            duration_minutes: durationMinutes,
+            calories,
+            avg_heart_rate: dto.avg_heart_rate ?? null,
+            ai_generated: !!dto.ai_message,
+            ai_message: dto.ai_message ?? null,
+            updated_at: new Date(),
+          },
+        });
+      } else {
+        // Wipe and recreate exercises so the payload is authoritative.
+        await tx.exerciseSet.deleteMany({
+          where: { exercise: { session_id: sessionId } },
+        });
+        await tx.sessionExercise.deleteMany({
+          where: { session_id: sessionId },
+        });
+      }
 
       for (const exDto of dto.exercises) {
         const externalId = exDto.library_exercise_id
@@ -754,24 +801,37 @@ export class HomeService {
         }
       }
 
-      await tx.workoutSession.update({
-        where: { id: sessionId },
-        data: {
-          // Recovery path preserves existing completion metadata so we
-          // don't clobber timestamps or stats that were set by the
-          // original completion (or a manual fix). Only the exercises +
-          // sets get refreshed from the payload.
-          title: dto.title ?? session.title,
-          status: 'completed',
-          completed_at: completedAt,
-          duration_minutes: durationMinutes,
-          calories,
-          avg_heart_rate: wasAlreadyCompleted
-            ? (session.avg_heart_rate ?? dto.avg_heart_rate ?? null)
-            : (dto.avg_heart_rate ?? null),
-          updated_at: new Date(),
-        },
-      });
+      if (!isCreate) {
+        await tx.workoutSession.update({
+          where: { id: sessionId },
+          data: {
+            title: dto.title ?? existing!.title,
+            status: 'completed',
+            completed_at: completedAt,
+            duration_minutes: durationMinutes,
+            calories,
+            avg_heart_rate: wasAlreadyCompleted
+              ? (existing!.avg_heart_rate ?? dto.avg_heart_rate ?? null)
+              : (dto.avg_heart_rate ?? null),
+            updated_at: new Date(),
+          },
+        });
+      }
+
+      // Link plan_day when iOS supplies it (the new flow's hand-off).
+      // On the legacy flow the link already exists from startPlanSession.
+      if (isCreate && dto.plan_day_id) {
+        const planDay = await tx.planDay.findFirst({
+          where: { id: dto.plan_day_id, plan: { user_id: userId } },
+          select: { id: true },
+        });
+        if (planDay) {
+          await tx.planDay.update({
+            where: { id: planDay.id },
+            data: { workout_session_id: sessionId },
+          });
+        }
+      }
 
       if (dto.feedback) {
         await tx.sessionFeedback.upsert({
@@ -791,11 +851,8 @@ export class HomeService {
       }
     });
 
-    // Post-completion side effects (cache invalidation, plan day link,
-    // analytics, reminder recalc) ran when the session was first
-    // completed. Don't re-fire them on the recovery path — they'd
-    // duplicate analytics events and re-trigger plan adaptation
-    // unnecessarily.
+    // Recovery path: side effects ran the first time. Don't re-fire
+    // them — they'd duplicate analytics + re-trigger plan adaptation.
     if (!wasAlreadyCompleted) {
       await this.postCompletionEffects(
         userId,

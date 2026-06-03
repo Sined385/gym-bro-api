@@ -1,4 +1,5 @@
 import { HttpStatus, Inject, Injectable, forwardRef } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import { PlansAiService } from './plans-ai.service';
@@ -381,6 +382,13 @@ export class PlansService {
   }
 
   async startPlanSession(userId: string, dayId: string) {
+    // Read-only since the "store on complete" refactor: returns the
+    // plan day's exercise template + a client-side session UUID without
+    // creating any WorkoutSession / SessionExercise rows or touching
+    // PlanDay. The session only materializes server-side when iOS
+    // posts /complete-full with the same UUID, at which point the
+    // server creates the row, attaches the user's logged sets, and
+    // links workout_session_id back to this plan day.
     const planDay = await this.prisma.planDay.findUnique({
       where: { id: dayId },
       include: { plan: true },
@@ -418,17 +426,6 @@ export class PlansService {
       );
     }
 
-    if (planDay.workout_session_id) {
-      // Session already exists, return it
-      const existing = await this.prisma.workoutSession.findUnique({
-        where: { id: planDay.workout_session_id },
-        include: { exercises: { orderBy: { step_number: 'asc' } } },
-      });
-      if (existing && existing.status === 'active') {
-        return formatSessionResponse(existing);
-      }
-    }
-
     const exercises = planDay.exercises_json as any[];
 
     // Validate library_exercise_ids still exist (seed script regenerates UUIDs on deploy)
@@ -440,11 +437,11 @@ export class PlansService {
       { id: string; external_id: string | null }
     >();
     if (libraryIds.length > 0) {
-      const existing = await this.prisma.exerciseLibrary.findMany({
+      const lookup = await this.prisma.exerciseLibrary.findMany({
         where: { id: { in: libraryIds } },
         select: { id: true, external_id: true },
       });
-      for (const e of existing)
+      for (const e of lookup)
         validLibExercises.set(e.id, {
           id: e.id,
           external_id: e.external_id,
@@ -475,85 +472,59 @@ export class PlansService {
         });
     }
 
-    // Create WorkoutSession + SessionExercise rows
-    const session = await this.prisma.workoutSession.create({
-      data: {
-        user_id: userId,
-        title: planDay.session_title ?? 'Training Session',
-        type: planDay.session_type ?? 'strength',
-        status: 'active',
-        started_at: new Date(),
-        ai_generated: true,
-        ai_message: `Part of your Week ${planDay.plan.week_number} training plan`,
-        updated_at: new Date(),
-        exercises: {
-          create: exercises.map((ex: any, i: number) => {
-            let libId: string | null = null;
-            let externalId: string | null = ex.external_id ?? null;
-            if (
-              ex.library_exercise_id &&
-              validLibExercises.has(ex.library_exercise_id)
-            ) {
-              const libEx = validLibExercises.get(ex.library_exercise_id)!;
-              libId = libEx.id;
-              externalId = libEx.external_id ?? externalId;
-            } else if (ex.name && nameToLibExercise.has(ex.name)) {
-              const libEx = nameToLibExercise.get(ex.name)!;
-              libId = libEx.id;
-              externalId = libEx.external_id ?? externalId;
-            }
-            // Materialize per-set targets persisted at plan time as
-            // pre-filled exercise_sets rows. Same trick the Coach
-            // single-workout path uses — gives the active session view
-            // a real ladder to render instead of falling back to the
-            // generic sets_display placeholders.
-            const targets = Array.isArray(ex.target_sets) ? ex.target_sets : [];
-            const exerciseSets =
-              targets.length > 0
-                ? {
-                    create: targets.map((s: any, sIdx: number) => ({
-                      set_number: sIdx + 1,
-                      weight:
-                        s.is_bodyweight || s.weight_kg === undefined
-                          ? null
-                          : s.weight_kg,
-                      weight_unit: 'kg',
-                      reps: s.reps,
-                      is_bodyweight: s.is_bodyweight ?? false,
-                      is_completed: false,
-                    })),
-                  }
-                : undefined;
-            return {
-              library_exercise_id: libId,
-              external_id: externalId,
-              name: ex.name,
-              muscle_group: ex.muscle_group,
-              equipment: ex.equipment ?? null,
-              step_number: i + 1,
-              sets_display: ex.sets_display || '3 × 10',
-              accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
-              suggested_weight: ex.suggested_weight ?? null,
-              ...(exerciseSets ? { exercise_sets: exerciseSets } : {}),
-            };
-          }),
-        },
-      },
-      include: { exercises: { orderBy: { step_number: 'asc' } } },
-    });
-
-    // Link PlanDay to session
-    await this.prisma.planDay.update({
-      where: { id: dayId },
-      data: { workout_session_id: session.id },
+    const now = new Date();
+    const sessionId = randomUUID();
+    const formattedExercises = exercises.map((ex: any, i: number) => {
+      let libId: string | null = null;
+      let externalId: string | null = ex.external_id ?? null;
+      if (
+        ex.library_exercise_id &&
+        validLibExercises.has(ex.library_exercise_id)
+      ) {
+        const libEx = validLibExercises.get(ex.library_exercise_id)!;
+        libId = libEx.id;
+        externalId = libEx.external_id ?? externalId;
+      } else if (ex.name && nameToLibExercise.has(ex.name)) {
+        const libEx = nameToLibExercise.get(ex.name)!;
+        libId = libEx.id;
+        externalId = libEx.external_id ?? externalId;
+      }
+      const targets = Array.isArray(ex.target_sets) ? ex.target_sets : [];
+      return {
+        id: randomUUID(),
+        library_exercise_id: libId,
+        external_id: externalId,
+        name: ex.name,
+        muscle_group: ex.muscle_group,
+        equipment: ex.equipment ?? null,
+        step_number: i + 1,
+        sets_display: ex.sets_display || '3 × 10',
+        accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+        suggested_weight: ex.suggested_weight ?? null,
+        target_sets: targets.length > 0 ? targets : undefined,
+      };
     });
 
     this.analytics.track(userId, 'plan_day_started', {
       plan_day_id: dayId,
-      session_id: session.id,
+      session_id: sessionId,
     });
 
-    return formatSessionResponse(session);
+    return formatSessionResponse({
+      id: sessionId,
+      user_id: userId,
+      title: planDay.session_title ?? 'Training Session',
+      type: planDay.session_type ?? 'strength',
+      status: 'active',
+      started_at: now,
+      completed_at: null,
+      duration_minutes: null,
+      ai_generated: true,
+      ai_message: `Part of your Week ${planDay.plan.week_number} training plan`,
+      created_at: now,
+      updated_at: now,
+      exercises: formattedExercises as any,
+    } as any);
   }
 
   async onSessionCompleted(sessionId: string) {
