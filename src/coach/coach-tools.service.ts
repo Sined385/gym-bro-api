@@ -477,25 +477,47 @@ export class CoachToolsService {
             if (dayArgs.day_type === 'rest') {
               updateData.exercises_json = [];
             } else if (dayArgs.exercises && dayArgs.exercises.length > 0) {
-              // AI provided explicit exercises — enrich with external_id
+              // STRICT library-only — match by id, fall back to exact
+              // name, drop the entry if neither resolves. Free-form
+              // exercises (no library reference) are not accepted; the
+              // AI must pick from the curated library.
               const exerciseMap = new Map(
                 params.exerciseLibrary.map((e) => [e.id, e]),
               );
-              const nameMap = new Map(
-                params.exerciseLibrary
-                  .filter((e) => e.external_id)
-                  .map((e) => [e.name, e.external_id]),
+              const exerciseByName = new Map(
+                params.exerciseLibrary.map((e: any) => [
+                  e.name.toLowerCase().trim(),
+                  e,
+                ]),
               );
-              updateData.exercises_json = dayArgs.exercises.map((ex: any) => {
-                const libEx = ex.library_exercise_id
-                  ? exerciseMap.get(ex.library_exercise_id)
-                  : null;
-                return {
-                  ...ex,
-                  external_id:
-                    libEx?.external_id ?? nameMap.get(ex.name) ?? null,
-                };
-              });
+              updateData.exercises_json = dayArgs.exercises
+                .map((ex: any) => {
+                  const fromId = ex.library_exercise_id
+                    ? exerciseMap.get(ex.library_exercise_id)
+                    : null;
+                  const fromName = !fromId && ex.name
+                    ? exerciseByName.get(ex.name.toLowerCase().trim())
+                    : null;
+                  const libEx: any = fromId ?? fromName ?? null;
+                  if (!libEx) {
+                    console.warn(
+                      `[modify_plan_days] dropping unresolved exercise: id=${ex.library_exercise_id ?? 'none'} name="${ex.name ?? ''}"`,
+                    );
+                    return null;
+                  }
+                  return {
+                    library_exercise_id: libEx.id,
+                    external_id: libEx.external_id ?? null,
+                    name: libEx.name,
+                    muscle_group: libEx.muscle_group,
+                    equipment: libEx.equipment ?? null,
+                    sets_display: ex.sets_display ?? '3 × 10',
+                    ...(Array.isArray(ex.target_sets) && ex.target_sets.length > 0
+                      ? { target_sets: ex.target_sets }
+                      : {}),
+                  };
+                })
+                .filter((x: any) => x !== null);
             } else if (
               dayArgs.muscle_groups &&
               dayArgs.muscle_groups.length > 0
@@ -676,15 +698,49 @@ export class CoachToolsService {
     exerciseLibrary: any[],
   ) {
     const exerciseMap = new Map(exerciseLibrary.map((e) => [e.id, e]));
+    const exerciseByName = new Map(
+      exerciseLibrary.map((e) => [e.name.toLowerCase().trim(), e]),
+    );
     const onboarding = await this.prisma.onboardingData.findFirst({
       where: {
         user_id: userId,
       },
     });
 
-    const exercises = args.exercises ?? [];
-    if (exercises.length === 0) {
+    const rawExercises = args.exercises ?? [];
+    if (rawExercises.length === 0) {
       throw new Error('No exercises provided for workout session');
+    }
+
+    // STRICT library-only: every exercise must resolve to a library
+    // entry by id (preferred) or by exact name (case-insensitive).
+    // Free-form entries used to slip in via the prompt's old loophole
+    // and surfaced as exercises with no image / no progression history.
+    // Drop unresolvable entries; throw if none survive so the AI gets
+    // a clear failure and can retry instead of producing junk.
+    const exercises = rawExercises
+      .map((ex) => {
+        const fromId = ex.library_exercise_id
+          ? exerciseMap.get(ex.library_exercise_id)
+          : null;
+        const fromName = !fromId && ex.name
+          ? exerciseByName.get(ex.name.toLowerCase().trim())
+          : null;
+        const libEx = fromId ?? fromName ?? null;
+        if (!libEx) {
+          console.warn(
+            `[create_workout_session] dropping unresolved exercise: id=${ex.library_exercise_id ?? 'none'} name="${ex.name ?? ''}"`,
+          );
+          return null;
+        }
+        return { ex, libEx };
+      })
+      .filter((x): x is { ex: typeof rawExercises[number]; libEx: any } => x !== null);
+
+    if (exercises.length === 0) {
+      throw new Error(
+        'No valid exercises — none of the AI-supplied entries matched the exercise library',
+      );
     }
 
     const session = await this.prisma.workoutSession.create({
@@ -699,10 +755,7 @@ export class CoachToolsService {
         ai_message: args.ai_message,
         updated_at: new Date(),
         exercises: {
-          create: exercises.map((ex, i) => {
-            const libEx = ex.library_exercise_id
-              ? exerciseMap.get(ex.library_exercise_id)
-              : null;
+          create: exercises.map(({ ex, libEx }, i) => {
             const hasTargets =
               Array.isArray(ex.target_sets) && ex.target_sets.length > 0;
             // Pre-create the per-set rows when the AI supplied
@@ -732,11 +785,11 @@ export class CoachToolsService {
               ? `${ex.target_sets!.length} × ${ex.target_sets!.reduce((m, s) => Math.max(m, s.reps), 0)}`
               : ex.sets_display || '3 × 10';
             return {
-              library_exercise_id: libEx ? ex.library_exercise_id : null,
-              external_id: libEx?.external_id ?? null,
-              name: libEx?.name ?? ex.name,
-              muscle_group: libEx?.muscle_group ?? ex.muscle_group,
-              equipment: libEx?.equipment ?? null,
+              library_exercise_id: libEx.id,
+              external_id: libEx.external_id ?? null,
+              name: libEx.name,
+              muscle_group: libEx.muscle_group,
+              equipment: libEx.equipment ?? null,
               step_number: i + 1,
               sets_display: setsDisplay,
               accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],

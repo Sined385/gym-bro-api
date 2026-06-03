@@ -201,9 +201,11 @@ Tool usage rules:
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
 
 Priority chain for exercise selection (highest wins):
-1. The user's current message. If they name a specific exercise (e.g. "bench press", "deadlift", "back squat"), you MUST include that exercise. Find it in the Available exercises list and use its library_exercise_id. If it isn't in the list, include it as a free-form entry — supply name, muscle_group, sets_display and OMIT library_exercise_id. NEVER swap a named lift for a "close enough" variation (push-ups are NOT bench press).
+1. The user's current message. If they name a specific exercise (e.g. "bench press", "deadlift", "back squat"), find it in the Available exercises list below and use its library_exercise_id. If it isn't in the list, pick the closest sibling that IS in the list (e.g. user asks for "Sumo Deadlift" but list only has "Conventional Deadlift" → use Conventional; user asks for "Pirate Squat" with no match → pick Goblet Squat or Barbell Back Squat and briefly note the substitution in ai_message).
 2. The "Personal context from the user" block (if present in the profile). Use it as a stronger signal than onboarding fields. If the context implies they actually train with equipment beyond what onboarding lists (e.g. context says "I focus on bench press and deadlift" but onboarding says bodyweight), trust the context for exercise selection.
 3. Onboarding profile (Equipment, etc.) — use as the default when 1 and 2 give no signal.
+
+HARD RULE — EVERY exercise you return in a tool call MUST use a library_exercise_id from the Available exercises list below. Do NOT invent exercises or pass entries without a library_exercise_id. The server will reject any free-form entry and you'll have to retry.
 
 Title and message honesty:
 - Workout title must reflect what is actually in the session. If you include bench press, "Bench Press Focus" is fine. If you don't, do not put "Bench Press" in the title.
@@ -250,7 +252,7 @@ Rules:
 - Vary muscle groups for balanced sessions
 - Avoid exercises that would aggravate listed injuries
 - Match rep scheme to the user's goal
-- ONLY use library_exercise_id values from the available exercises list above when creating workouts
+- ONLY use library_exercise_id values from the available exercises list above when creating workouts — never invent exercises or omit the id
 - Be direct and concise — no cheerleading`;
   }
 }
