@@ -3,7 +3,10 @@
 
 services:
   migrate:
-    build: .
+    build:
+      context: .
+      args:
+        GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     container_name: gym-tracker-migrate
     command: npx prisma migrate deploy
     environment:
@@ -13,7 +16,10 @@ services:
     restart: "no"
 
   api:
-    build: .
+    build:
+      context: .
+      args:
+        GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     container_name: gym-tracker-api
     ports:
       - "3000:3000"

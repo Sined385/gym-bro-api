@@ -119,29 +119,6 @@
     "id": "Adductor"
   },
   {
-    "name": "Adductor/Groin",
-    "force": "static",
-    "level": "intermediate",
-    "mechanic": null,
-    "equipment": null,
-    "primaryMuscles": [
-      "adductors"
-    ],
-    "secondaryMuscles": [],
-    "instructions": [
-      "Lie on your back with your feet raised towards the ceiling.",
-      "Have your partner hold your feet or ankles. Abduct your legs as far as you can. This will be your starting position.",
-      "Attempt to squeeze your legs together for 10 or more seconds, while your partner prevents you from doing so.",
-      "Now, relax the muscles in your legs as your partner pushes your feet apart, stretching as far as is comfortable for you. Be sure to let your partner know when the stretch is adequate to prevent overstretching or injury."
-    ],
-    "category": "stretching",
-    "images": [
-      "Adductor_Groin/0.jpg",
-      "Adductor_Groin/1.jpg"
-    ],
-    "id": "Adductor_Groin"
-  },
-  {
     "name": "Advanced Kettlebell Windmill",
     "force": "push",
     "level": "intermediate",
@@ -672,69 +649,6 @@
     "id": "Around_The_Worlds"
   },
   {
-    "name": "Atlas Stone Trainer",
-    "force": "pull",
-    "level": "intermediate",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "lower back"
-    ],
-    "secondaryMuscles": [
-      "biceps",
-      "forearms",
-      "glutes",
-      "hamstrings",
-      "quadriceps"
-    ],
-    "instructions": [
-      "This trainer is effective for developing Atlas Stone strength for those who don't have access to stones, and are typically made from bar ends or heavy pipe.",
-      "Begin by loading the desired weight onto the bar. Straddle the weight, wrapping your arms around the implement, bending at the hips.",
-      "Begin by pulling the weight up past the knees, extending through the hips. As the weight clears the knees, it can be lapped by resting it on your thighs and sitting back, hugging it tightly to your chest.",
-      "Finish the movement by extending through your hips and knees to raise the weight as high as possible. The weight can be returned to the lap or to the ground for successive repetitions."
-    ],
-    "category": "strongman",
-    "images": [
-      "Atlas_Stone_Trainer/0.jpg",
-      "Atlas_Stone_Trainer/1.jpg"
-    ],
-    "id": "Atlas_Stone_Trainer"
-  },
-  {
-    "name": "Atlas Stones",
-    "force": "pull",
-    "level": "expert",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "lower back"
-    ],
-    "secondaryMuscles": [
-      "abdominals",
-      "adductors",
-      "biceps",
-      "calves",
-      "forearms",
-      "glutes",
-      "hamstrings",
-      "middle back",
-      "quadriceps",
-      "traps"
-    ],
-    "instructions": [
-      "Begin with the atlas stone between your feet. Bend at the hips to wrap your arms vertically around the Atlas Stone, attempting to get your fingers underneath the stone. Many stones will have a small flat portion on the bottom, which will make the stone easier to hold.",
-      "Pulling the stone into your torso, drive through the back half of your feet to pull the stone from the ground.",
-      "As the stone passes the knees, lap it by sitting backward, pulling the stone on top of your thighs.",
-      "Sit low, getting the stone high onto your chest as you change your grip to reach over the stone. Stand, driving through with your hips. Close distance to the loading platform, and lean back, extending the hips to get the stone as high as possible."
-    ],
-    "category": "strongman",
-    "images": [
-      "Atlas_Stones/0.jpg",
-      "Atlas_Stones/1.jpg"
-    ],
-    "id": "Atlas_Stones"
-  },
-  {
     "name": "Axle Deadlift",
     "force": "pull",
     "level": "intermediate",
@@ -791,33 +705,6 @@
       "Back_Flyes_-_With_Bands/1.jpg"
     ],
     "id": "Back_Flyes_-_With_Bands"
-  },
-  {
-    "name": "Backward Drag",
-    "force": "pull",
-    "level": "beginner",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "quadriceps"
-    ],
-    "secondaryMuscles": [
-      "calves",
-      "forearms",
-      "glutes",
-      "hamstrings",
-      "lower back"
-    ],
-    "instructions": [
-      "Load a sled with the desired weight, attaching a rope or straps to the sled that you can hold onto.",
-      "Begin the exercise by moving backwards for a given distance. Leaning back, extend through the legs for short steps to move as quickly as possible."
-    ],
-    "category": "strongman",
-    "images": [
-      "Backward_Drag/0.jpg",
-      "Backward_Drag/1.jpg"
-    ],
-    "id": "Backward_Drag"
   },
   {
     "name": "Backward Medicine Ball Throw",
@@ -1448,33 +1335,6 @@
     "id": "Barbell_Rear_Delt_Row"
   },
   {
-    "name": "Barbell Rollout from Bench",
-    "force": "pull",
-    "level": "intermediate",
-    "mechanic": "compound",
-    "equipment": "barbell",
-    "primaryMuscles": [
-      "abdominals"
-    ],
-    "secondaryMuscles": [
-      "glutes",
-      "hamstrings",
-      "lats",
-      "shoulders"
-    ],
-    "instructions": [
-      "Place a loaded barbell on the ground, near the end of a bench. Kneel with both legs on the bench, and take a medium to narrow grip on the barbell. This will be your starting position.",
-      "To begin, extend through the hips to slowly roll the bar forward. As you roll out, flex the shoulder to roll the bar above your head. Ensure that your arms remain extended throughout the movement.",
-      "When the bar has been moved as far forward as possible, return to the starting position."
-    ],
-    "category": "strength",
-    "images": [
-      "Barbell_Rollout_from_Bench/0.jpg",
-      "Barbell_Rollout_from_Bench/1.jpg"
-    ],
-    "id": "Barbell_Rollout_from_Bench"
-  },
-  {
     "name": "Barbell Seated Calf Raise",
     "force": "push",
     "level": "beginner",
@@ -1601,33 +1461,6 @@
     "id": "Barbell_Side_Bend"
   },
   {
-    "name": "Barbell Side Split Squat",
-    "force": "push",
-    "level": "beginner",
-    "mechanic": "compound",
-    "equipment": "barbell",
-    "primaryMuscles": [
-      "quadriceps"
-    ],
-    "secondaryMuscles": [
-      "calves",
-      "hamstrings",
-      "lower back"
-    ],
-    "instructions": [
-      "Stand up straight while holding a barbell placed on the back of your shoulders (slightly below the neck). Your feet should be placed wide apart with the foot of the lead leg angled out to the side. This will be your starting position.",
-      "Lower your body towards the side of your angled foot by bending the knee and hip of your lead leg and while keeping the opposite leg only slightly bent. Breathe in as you lower your body.",
-      "Return to the starting position by extending the hip and knee of the lead leg. Breathe out as you perform this movement.",
-      "After performing the recommended amount of reps, repeat the movement with the opposite leg."
-    ],
-    "category": "strength",
-    "images": [
-      "Barbell_Side_Split_Squat/0.jpg",
-      "Barbell_Side_Split_Squat/1.jpg"
-    ],
-    "id": "Barbell_Side_Split_Squat"
-  },
-  {
     "name": "Barbell Squat",
     "force": "push",
     "level": "beginner",
@@ -1718,33 +1551,6 @@
     "id": "Barbell_Step_Ups"
   },
   {
-    "name": "Barbell Walking Lunge",
-    "force": "push",
-    "level": "beginner",
-    "mechanic": "compound",
-    "equipment": "barbell",
-    "primaryMuscles": [
-      "quadriceps"
-    ],
-    "secondaryMuscles": [
-      "calves",
-      "glutes",
-      "hamstrings"
-    ],
-    "instructions": [
-      "Begin standing with your feet shoulder width apart and a barbell across your upper back.",
-      "Step forward with one leg, flexing the knees to drop your hips. Descend until your rear knee nearly touches the ground. Your posture should remain upright, and your front knee should stay above the front foot.",
-      "Drive through the heel of your lead foot and extend both knees to raise yourself back up.",
-      "Step forward with your rear foot, repeating the lunge on the opposite leg."
-    ],
-    "category": "strength",
-    "images": [
-      "Barbell_Walking_Lunge/0.jpg",
-      "Barbell_Walking_Lunge/1.jpg"
-    ],
-    "id": "Barbell_Walking_Lunge"
-  },
-  {
     "name": "Battling Ropes",
     "force": "push",
     "level": "beginner",
@@ -1769,31 +1575,6 @@
       "Battling_Ropes/1.jpg"
     ],
     "id": "Battling_Ropes"
-  },
-  {
-    "name": "Bear Crawl Sled Drags",
-    "force": "push",
-    "level": "beginner",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "quadriceps"
-    ],
-    "secondaryMuscles": [
-      "calves",
-      "glutes",
-      "hamstrings"
-    ],
-    "instructions": [
-      "Wearing either a harness or a loose weight belt, attach the chain to the back so that you will be facing away from the sled. Bend down so that your hands are on the ground. Your back should be flat and knees bent. This is your starting position.",
-      "Begin by driving with legs, alternating left and right. Use your hands to maintain balance and to help pull. Try to keep your back flat as you move over a given distance."
-    ],
-    "category": "strongman",
-    "images": [
-      "Bear_Crawl_Sled_Drags/0.jpg",
-      "Bear_Crawl_Sled_Drags/1.jpg"
-    ],
-    "id": "Bear_Crawl_Sled_Drags"
   },
   {
     "name": "Behind Head Chest Stretch",
@@ -1930,33 +1711,6 @@
       "Bench_Press_-_With_Bands/1.jpg"
     ],
     "id": "Bench_Press_-_With_Bands"
-  },
-  {
-    "name": "Bench Press with Chains",
-    "force": "push",
-    "level": "expert",
-    "mechanic": "compound",
-    "equipment": "barbell",
-    "primaryMuscles": [
-      "triceps"
-    ],
-    "secondaryMuscles": [
-      "chest",
-      "lats",
-      "shoulders"
-    ],
-    "instructions": [
-      "Adjust the leader chain, shortening it to the desired length.Place the chains on the sleeves of the bar.",
-      "Lying on the bench, get your head beyond the bar if possible. Tuck your feet underneath you and arch your back. Using the bar to help support your weight, lift your shoulder off the bench and retract them, squeezing the shoulder blades together. Use your feet to drive your traps into the bench. Maintain this tight body position throughout the movement. However wide your grip, it should cover the ring on the bar.",
-      "Pull the bar out of the rack without protracting your shoulders. Focus on squeezing the bar and trying to pull it apart. Lower the bar to your lower chest or upper stomach. The bar, wrist, and elbow should stay in line at all times.",
-      "Pause when the barbell touches your torso, and then drive the bar up with as much force as possible. The elbows should be tucked in until lockout."
-    ],
-    "category": "powerlifting",
-    "images": [
-      "Bench_Press_with_Chains/0.jpg",
-      "Bench_Press_with_Chains/1.jpg"
-    ],
-    "id": "Bench_Press_with_Chains"
   },
   {
     "name": "Bench Sprint",
@@ -2390,58 +2144,6 @@
     "id": "Body-Up"
   },
   {
-    "name": "Body Tricep Press",
-    "force": "push",
-    "level": "beginner",
-    "mechanic": "isolation",
-    "equipment": "body only",
-    "primaryMuscles": [
-      "triceps"
-    ],
-    "secondaryMuscles": [],
-    "instructions": [
-      "Position a bar in a rack at chest height.",
-      "Standing, take a shoulder width grip on the bar and step a yard or two back, feet together and arms extended so that you are leaning on the bar. This will be your starting position.",
-      "Begin by flexing the elbow, lowering yourself towards the bar.",
-      "Pause, and then reverse the motion by extending the elbows.",
-      "Progress from bodyweight by adding chains over your shoulders."
-    ],
-    "category": "strength",
-    "images": [
-      "Body_Tricep_Press/0.jpg",
-      "Body_Tricep_Press/1.jpg"
-    ],
-    "id": "Body_Tricep_Press"
-  },
-  {
-    "name": "Bodyweight Flyes",
-    "force": "push",
-    "level": "intermediate",
-    "mechanic": "isolation",
-    "equipment": "e-z curl bar",
-    "primaryMuscles": [
-      "chest"
-    ],
-    "secondaryMuscles": [
-      "abdominals",
-      "shoulders",
-      "triceps"
-    ],
-    "instructions": [
-      "Position two equally loaded EZ bars on the ground next to each other. Ensure they are able to roll.",
-      "Assume a push-up position over the bars, supporting your weight on your toes and hands with your arms extended and body straight.",
-      "Place your hands on the bars. This will be your starting position.",
-      "Using a slow and controlled motion, move your hands away from the midline of your body, rolling the bars apart. Inhale during this portion of the motion.",
-      "After moving the bars as far apart as you can, return to the starting position by pulling them back together. Exhale as you perform this movement."
-    ],
-    "category": "strength",
-    "images": [
-      "Bodyweight_Flyes/0.jpg",
-      "Bodyweight_Flyes/1.jpg"
-    ],
-    "id": "Bodyweight_Flyes"
-  },
-  {
     "name": "Bodyweight Mid Row",
     "force": "pull",
     "level": "intermediate",
@@ -2709,58 +2411,6 @@
       "Box_Squat_with_Bands/1.jpg"
     ],
     "id": "Box_Squat_with_Bands"
-  },
-  {
-    "name": "Box Squat with Chains",
-    "force": "push",
-    "level": "expert",
-    "mechanic": "compound",
-    "equipment": "barbell",
-    "primaryMuscles": [
-      "quadriceps"
-    ],
-    "secondaryMuscles": [
-      "abductors",
-      "adductors",
-      "calves",
-      "glutes",
-      "hamstrings",
-      "lower back"
-    ],
-    "instructions": [
-      "Begin in a power rack with a box at the appropriate height behind you. Typically, you would aim for a box height that brings you to a parallel squat, but you can train higher or lower if desired.",
-      "To set up the chains, begin by looping the leader chain over the sleeves of the bar. The heavy chain should be attached using a snap hook. Adjust the length of the lead chain so that a few links are still on the floor at the top of the movement.",
-      "Begin by stepping under the bar and placing it across the back of the shoulders. Squeeze your shoulder blades together and rotate your elbows forward, attempting to bend the bar across your shoulders. Remove the bar from the rack, creating a tight arch in your lower back, and step back into position. Place your feet wider for more emphasis on the back, glutes, adductors, and hamstrings, or closer together for more quad development. Keep your head facing forward.",
-      "With your back, shoulders, and core tight, push your knees and butt out and you begin your descent. Sit back with your hips until you are seated on the box. Ideally, your shins should be perpendicular to the ground. Pause when you reach the box, and relax the hip flexors. Never bounce off of a box.",
-      "Keeping the weight on your heels and pushing your feet and knees out, drive upward off of the box as you lead the movement with your head. Continue upward, maintaining tightness head to toe."
-    ],
-    "category": "strength",
-    "images": [
-      "Box_Squat_with_Chains/0.jpg",
-      "Box_Squat_with_Chains/1.jpg"
-    ],
-    "id": "Box_Squat_with_Chains"
-  },
-  {
-    "name": "Brachialis-SMR",
-    "force": "static",
-    "level": "intermediate",
-    "mechanic": null,
-    "equipment": "foam roll",
-    "primaryMuscles": [
-      "biceps"
-    ],
-    "secondaryMuscles": [],
-    "instructions": [
-      "Lie on your side, with your upper arm against the foam roller. The upper arm should be more or less aligned with your body, with the outside of the bicep pressed against the foam roller.",
-      "Raise your hips off of the floor, supporting your weight on your arm and on your feet. Hold for 10-30 seconds, and then switch sides."
-    ],
-    "category": "stretching",
-    "images": [
-      "Brachialis-SMR/0.jpg",
-      "Brachialis-SMR/1.jpg"
-    ],
-    "id": "Brachialis-SMR"
   },
   {
     "name": "Bradford/Rocky Presses",
@@ -3315,32 +2965,6 @@
     "id": "Cable_Rope_Rear-Delt_Rows"
   },
   {
-    "name": "Cable Russian Twists",
-    "force": "pull",
-    "level": "beginner",
-    "mechanic": "compound",
-    "equipment": "cable",
-    "primaryMuscles": [
-      "abdominals"
-    ],
-    "secondaryMuscles": [],
-    "instructions": [
-      "Connect a standard handle attachment, and position the cable to a middle pulley position.",
-      "Lie on a stability ball perpendicular to the cable and grab the handle with one hand. You should be approximately arm's length away from the pulley, with the tension of the weight on the cable.",
-      "Grab the handle with both hands and fully extend your arms above your chest. You hands should be directly in-line with the pulley. If not, adjust the pulley up or down until they are.",
-      "Keep your hips elevated and abs engaged. Rotate your torso away from the pulley for a full-quarter rotation. Your body should be flat from head to knees.",
-      "Pause for a moment and in a slow and controlled manner reset to the starting position. You should still have side tension on the cable in the resting position.",
-      "Repeat the same movement to failure.",
-      "Then, reposition and repeat the same series of movements on the opposite side."
-    ],
-    "category": "strength",
-    "images": [
-      "Cable_Russian_Twists/0.jpg",
-      "Cable_Russian_Twists/1.jpg"
-    ],
-    "id": "Cable_Russian_Twists"
-  },
-  {
     "name": "Cable Seated Crunch",
     "force": "pull",
     "level": "beginner",
@@ -3651,35 +3275,6 @@
     "id": "Calves-SMR"
   },
   {
-    "name": "Car Deadlift",
-    "force": "pull",
-    "level": "intermediate",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "quadriceps"
-    ],
-    "secondaryMuscles": [
-      "forearms",
-      "glutes",
-      "hamstrings",
-      "lower back",
-      "traps"
-    ],
-    "instructions": [
-      "This event apparatus typically has neutral grip handles, however some have a straight bar that you can approach like a normal deadlift. The apparatus can be loaded with a vehicle or other heavy objects such as tractor tires or kegs.",
-      "Center yourself between the handles if you are a strong squatter, or back a couple inches if you are a strong deadlifter. You feet should be about hip width apart. Bend at the hip to grip the handles. With your feet and your grip set, take a big breath and then lower your hips and flex the knees.",
-      "Look forward with your head, keep your chest up and your back arched, and begin driving through the heels to move the weight upward. As the weight comes up, pull your shoulder blades together as you drive your hips forward.",
-      "Lower the weight by bending at the hips and guiding it to the floor."
-    ],
-    "category": "strongman",
-    "images": [
-      "Car_Deadlift/0.jpg",
-      "Car_Deadlift/1.jpg"
-    ],
-    "id": "Car_Deadlift"
-  },
-  {
     "name": "Car Drivers",
     "force": "push",
     "level": "beginner",
@@ -3783,53 +3378,6 @@
       "Catch_and_Overhead_Throw/1.jpg"
     ],
     "id": "Catch_and_Overhead_Throw"
-  },
-  {
-    "name": "Chain Handle Extension",
-    "force": "push",
-    "level": "intermediate",
-    "mechanic": "isolation",
-    "equipment": "other",
-    "primaryMuscles": [
-      "triceps"
-    ],
-    "secondaryMuscles": [],
-    "instructions": [
-      "You will need two cable handle attachments and a flat bench, as well as chains, for this exercise. Clip the middle of the chains to the handles, and position yourself on the flat bench. Your elbows should be pointing straight up.",
-      "Begin by extending through the elbow, keeping your upper arm still, with your wrists pronated.",
-      "Pause at the lockout, and reverse the motion to return to the starting position."
-    ],
-    "category": "powerlifting",
-    "images": [
-      "Chain_Handle_Extension/0.jpg",
-      "Chain_Handle_Extension/1.jpg"
-    ],
-    "id": "Chain_Handle_Extension"
-  },
-  {
-    "name": "Chain Press",
-    "force": "push",
-    "level": "intermediate",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "chest"
-    ],
-    "secondaryMuscles": [
-      "shoulders",
-      "triceps"
-    ],
-    "instructions": [
-      "Begin by connecting the chains to the cable handle attachments. Position yourself on the flat bench in the same position as for a dumbbell press. Your wrists should be pronated and arms perpendicular to the floor. This will be your starting position.",
-      "Lower the chains by flexing the elbows, unloading some of the chain onto the floor.",
-      "Continue until your elbow forms a 90 degree angle, and then reverse the motion by extending through the elbow to lockout."
-    ],
-    "category": "powerlifting",
-    "images": [
-      "Chain_Press/0.jpg",
-      "Chain_Press/1.jpg"
-    ],
-    "id": "Chain_Press"
   },
   {
     "name": "Chair Leg Extended Stretch",
@@ -4159,36 +3707,6 @@
       "Chin_To_Chest_Stretch/1.jpg"
     ],
     "id": "Chin_To_Chest_Stretch"
-  },
-  {
-    "name": "Circus Bell",
-    "force": "push",
-    "level": "expert",
-    "mechanic": "compound",
-    "equipment": "other",
-    "primaryMuscles": [
-      "shoulders"
-    ],
-    "secondaryMuscles": [
-      "forearms",
-      "glutes",
-      "hamstrings",
-      "lower back",
-      "traps",
-      "triceps"
-    ],
-    "instructions": [
-      "The circus bell is an oversized dumbbell with a thick handle. Begin with the dumbbell between your feet, and grip the handle with both hands.",
-      "Clean the dumbbell by extending through your hips and knees to deliver the implement to the desired shoulder, letting go with the extra hand.",
-      "Ensure that you get one of the dumbbell heads behind the shoulder to keep from being thrown off balance. To raise it overhead, dip by flexing the knees, and the drive upwards as you extend the dumbbell overhead, leaning slightly away from it as you do so.",
-      "Carefully guide the bell back to the floor, keeping it under control as much as possible. It is best to perform this event on a thick rubber mat to prevent damage to the floor."
-    ],
-    "category": "strongman",
-    "images": [
-      "Circus_Bell/0.jpg",
-      "Circus_Bell/1.jpg"
-    ],
-    "id": "Circus_Bell"
   },
   {
     "name": "Clean",

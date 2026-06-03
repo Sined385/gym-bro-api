@@ -127,3 +127,12 @@ OpenAI (`gpt-4o` default, configurable via `OPENAI_MODEL` env var):
 Requires `.env` with `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_KEY` (service_role key), `OPENAI_API_KEY`. See `.env.example`.
 
 Supabase must be running before the API starts — it provides Postgres, Auth, and the Docker network (`supabase_network_gym-tracker`).
+
+## Exercise Library Source
+
+`data/exercises.json` is consumed by `npm run seed:exercises` to populate the `exercise_library` table. The source of truth is the private repo `git@github.com:Sined385/gym-bro-exercises.git`.
+
+- **Local refresh:** `npm run refresh:exercises` — uses sibling `../exercises/` working copy if present, otherwise clones via SSH. Rebuilds and overwrites `data/exercises.json`.
+- **Docker build (local + Railway):** if `GITHUB_TOKEN` build arg is set, the Dockerfile clones the private repo via HTTPS during the builder stage and overwrites `data/exercises.json` before `npm run build`. If unset, the bundled JSON committed to this repo is used.
+- **Railway:** add `GITHUB_TOKEN` to the service's variables (fine-grained PAT, Contents: Read-only, scoped only to `Sined385/gym-bro-exercises`). Railway passes any service variable whose name matches a Dockerfile `ARG` as a build arg automatically. Trigger a redeploy to pick up new exercise data.
+- **Local docker-compose:** `export GITHUB_TOKEN=...` before `docker-compose up --build` to refresh during the image build. Unset → uses bundled JSON.

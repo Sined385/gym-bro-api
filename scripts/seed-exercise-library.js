@@ -1,3 +1,7 @@
+// Seeds the ExerciseLibrary table from data/exercises.json.
+// Source of truth: git@github.com:Sined385/gym-bro-exercises.git
+// Run `npm run refresh:exercises` to pull the latest dataset before seeding.
+
 const { PrismaClient } = require('../dist/generated/prisma/client.js');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const fs = require('fs');
