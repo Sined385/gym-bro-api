@@ -647,14 +647,44 @@ export class HomeService {
     sessionId: string,
     dto: CompleteSessionFullDto,
   ) {
-    const session = await this.findActiveSession(userId, sessionId);
+    // Idempotent for already-completed sessions. iOS keeps a
+    // PendingSessionCompletion on disk when the original /complete-full
+    // call fails (e.g. backgrounded → URLSession killed) and retries on
+    // every dashboard reload. If the session was meanwhile flipped to
+    // 'completed' by another path (a successful earlier retry that
+    // didn't clear cache, or a manual SQL fix), the strict
+    // findActiveSession would 409 every retry until iOS hits 20 max
+    // retries and silently drops the user's logged sets. Accept both
+    // statuses; preserve existing completion metadata in the
+    // recovery path.
+    const session = await this.prisma.workoutSession.findFirst({
+      where: { id: sessionId, user_id: userId },
+    });
+    if (!session) {
+      throw new AppException(
+        'session_not_found',
+        'Session not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (session.status !== 'active' && session.status !== 'completed') {
+      throw new AppException(
+        'invalid_session_status',
+        `Cannot complete a session with status '${session.status}'`,
+        HttpStatus.CONFLICT,
+      );
+    }
 
-    const completedAt = new Date();
-    const durationMinutes = this.calculateDuration(dto, session, completedAt);
-    const calories = this.estimateCalories(
-      durationMinutes,
-      dto.feedback?.effort_level,
-    );
+    const wasAlreadyCompleted = session.status === 'completed';
+    const completedAt = wasAlreadyCompleted
+      ? (session.completed_at ?? new Date())
+      : new Date();
+    const durationMinutes = wasAlreadyCompleted
+      ? session.duration_minutes
+      : this.calculateDuration(dto, session, completedAt);
+    const calories = wasAlreadyCompleted
+      ? session.calories
+      : this.estimateCalories(durationMinutes, dto.feedback?.effort_level);
 
     // Look up external_ids for library exercises
     const libraryIds = dto.exercises
@@ -727,12 +757,18 @@ export class HomeService {
       await tx.workoutSession.update({
         where: { id: sessionId },
         data: {
+          // Recovery path preserves existing completion metadata so we
+          // don't clobber timestamps or stats that were set by the
+          // original completion (or a manual fix). Only the exercises +
+          // sets get refreshed from the payload.
           title: dto.title ?? session.title,
           status: 'completed',
           completed_at: completedAt,
           duration_minutes: durationMinutes,
           calories,
-          avg_heart_rate: dto.avg_heart_rate ?? null,
+          avg_heart_rate: wasAlreadyCompleted
+            ? (session.avg_heart_rate ?? dto.avg_heart_rate ?? null)
+            : (dto.avg_heart_rate ?? null),
           updated_at: new Date(),
         },
       });
@@ -755,13 +791,20 @@ export class HomeService {
       }
     });
 
-    await this.postCompletionEffects(
-      userId,
-      sessionId,
-      durationMinutes,
-      calories,
-      dto.feedback?.effort_level,
-    );
+    // Post-completion side effects (cache invalidation, plan day link,
+    // analytics, reminder recalc) ran when the session was first
+    // completed. Don't re-fire them on the recovery path — they'd
+    // duplicate analytics events and re-trigger plan adaptation
+    // unnecessarily.
+    if (!wasAlreadyCompleted) {
+      await this.postCompletionEffects(
+        userId,
+        sessionId,
+        durationMinutes,
+        calories,
+        dto.feedback?.effort_level,
+      );
+    }
 
     return this.fetchCompletedSession(sessionId);
   }
