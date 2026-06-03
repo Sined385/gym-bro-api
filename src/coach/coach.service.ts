@@ -273,6 +273,26 @@ export class CoachService {
       ),
     ];
 
+    // Regenerate flow: iOS sends a clean "Regenerate" user bubble plus
+    // the prior assistant message id. Look up its workout and inject a
+    // "skip these exercises" directive into the OpenAI prompt only —
+    // never persist it. Without this hint the PROGRESSIVE OVERLOAD
+    // "REUSE the exercise" rule in the system prompt anchors on the
+    // user's recent-lifts block and regenerate returns the same
+    // workout every time.
+    if (dto.action === 'regenerate' && dto.regenerate_from_message_id) {
+      const priorExerciseNames = await this.getRegenerateSkipList(
+        dto.regenerate_from_message_id,
+        userId,
+      );
+      if (priorExerciseNames.length > 0) {
+        const last = messages[messages.length - 1];
+        if (last?.role === 'user' && typeof last.content === 'string') {
+          last.content = `${last.content}\n(Skip these exercises this time — pick different lifts: ${priorExerciseNames.join(', ')}.)`;
+        }
+      }
+    }
+
     const tools = this.toolsService.getToolDefinitions();
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
@@ -424,5 +444,31 @@ export class CoachService {
     }
 
     return { error: 'Unknown action' };
+  }
+
+  private async getRegenerateSkipList(
+    messageId: string,
+    userId: string,
+  ): Promise<string[]> {
+    const message = await this.prisma.coachMessage.findUnique({
+      where: { id: messageId },
+      select: {
+        session_id: true,
+        conversation: { select: { user_id: true } },
+      },
+    });
+    if (!message || message.conversation.user_id !== userId) return [];
+    if (!message.session_id) return [];
+
+    const session = await this.prisma.workoutSession.findUnique({
+      where: { id: message.session_id },
+      select: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          select: { name: true },
+        },
+      },
+    });
+    return session?.exercises.map((e) => e.name) ?? [];
   }
 }
