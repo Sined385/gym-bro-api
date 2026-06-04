@@ -129,11 +129,13 @@ export class CoachController {
       res.end();
     }
 
-    // Client gone, AI finished cleanly with content — push so the user sees
-    // the reply when they next open the app. iOS handles foreground vs
-    // background banner suppression.
+    // AI finished cleanly with content — push every time. iOS suppresses
+    // the banner via willPresent when the app is in foreground, so the
+    // user doesn't get noise while actively watching the SSE stream.
+    // Disconnect-only sends are unreliable: iOS's URLSession holds the
+    // bytes task alive through the bg-grace window, so short replies
+    // finish and close normally before the server ever sees disconnect.
     if (
-      clientDisconnected &&
       !streamErrored &&
       assistantContent.trim().length > 0 &&
       assistantMessageId

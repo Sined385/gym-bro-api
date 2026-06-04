@@ -16,6 +16,7 @@ import {
   safeParseToolArgs,
   streamToolFollowUp,
 } from './coach-stream.helper';
+import { computeRecentLifts, RecentLift } from '../common/recent-lifts';
 
 export interface ToolCallParams {
   toolName: string;
@@ -31,6 +32,10 @@ export interface ToolCallParams {
   onboarding: any;
   activePlanData: any;
   tools: OpenAI.Chat.Completions.ChatCompletionTool[];
+  // Raw recent sessions (newest first) so the tool handler can compute
+  // the recent-lifts map for server-side target_sets injection when the
+  // AI ignores the PROGRESSIVE OVERLOAD rule in the prompt.
+  recentSessions: any[];
 }
 
 export interface ToolCallResult {
@@ -262,10 +267,22 @@ export class CoachToolsService {
         }
       }
 
+      // Build recent-lifts map so createWorkoutSession can inject the
+      // per-set ladder when the AI ignored the PROGRESSIVE OVERLOAD rule
+      // (it sometimes ships a flat "8 × 12" for an exercise that was
+      // logged with a heavy warm-up ladder yesterday).
+      const recentLiftsMap = new Map<string, RecentLift>();
+      for (const lift of computeRecentLifts(params.recentSessions)) {
+        if (lift.libraryExerciseId) {
+          recentLiftsMap.set(lift.libraryExerciseId, lift);
+        }
+      }
+
       const session = await this.createWorkoutSession(
         params.userId,
         args,
         params.exerciseLibrary,
+        recentLiftsMap,
       );
 
       // Wire the new session into the user's plan: today's plan day adopts
@@ -696,6 +713,7 @@ export class CoachToolsService {
       duration_minutes?: number;
     },
     exerciseLibrary: any[],
+    recentLiftsMap: Map<string, RecentLift> = new Map(),
   ) {
     const exerciseMap = new Map(exerciseLibrary.map((e) => [e.id, e]));
     const exerciseByName = new Map(
@@ -756,6 +774,38 @@ export class CoachToolsService {
         updated_at: new Date(),
         exercises: {
           create: exercises.map(({ ex, libEx }, i) => {
+            // Server-side safety net: when the AI ignored the prompt's
+            // PROGRESSIVE OVERLOAD rule and shipped no target_sets for an
+            // exercise the user logged recently, build the ladder from
+            // the recent-lifts entry — mirror prior warm-ups, bump every
+            // set tied at the top weight to the suggested value (matches
+            // the plan-gen prompt example where two 85×5 sets both bump
+            // to 87.5×5). The user expects real progression, not 8 × 12.
+            if (
+              (!Array.isArray(ex.target_sets) || ex.target_sets.length === 0) &&
+              recentLiftsMap.has(libEx.id)
+            ) {
+              const lift = recentLiftsMap.get(libEx.id)!;
+              const topW = lift.topSet.isBodyweight
+                ? 0
+                : (lift.topSet.weight ?? 0);
+              ex.target_sets = lift.sets.map((s) => {
+                const sW = s.isBodyweight ? 0 : (s.weight ?? 0);
+                const matchesTop =
+                  s.isBodyweight === lift.topSet.isBodyweight &&
+                  sW === topW &&
+                  s.reps === lift.topSet.reps;
+                const target = matchesTop ? lift.suggestedTopSet : s;
+                return {
+                  weight_kg: target.isBodyweight
+                    ? undefined
+                    : (target.weight ?? undefined),
+                  reps: target.reps,
+                  is_bodyweight: target.isBodyweight,
+                };
+              });
+            }
+
             const hasTargets =
               Array.isArray(ex.target_sets) && ex.target_sets.length > 0;
             // Pre-create the per-set rows when the AI supplied

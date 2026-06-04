@@ -358,6 +358,7 @@ export class CoachService {
           onboarding,
           activePlanData,
           tools,
+          recentSessions,
         })) {
           // Capture session ID and follow-up content from internal events
           if ('_sessionId' in event && event._sessionId) {
