@@ -149,6 +149,10 @@ export class CoachController {
           conversation_id: conversationId ?? '',
           message_id: assistantMessageId,
         },
+        // Push-only: the assistant message already lives in
+        // CoachMessage history. Adding a duplicate row to the in-app
+        // notifications tab would be noise.
+        persist: false,
       });
     }
   }

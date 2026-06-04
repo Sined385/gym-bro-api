@@ -7,6 +7,11 @@ export interface SendNotificationPayload {
   title: string;
   body: string;
   data?: Record<string, string>;
+  /** When false, sends the FCM push but skips the DB write — the
+   * notification won't appear in the in-app notifications tab or
+   * affect the unread badge. Used for ephemeral push types (e.g.
+   * coach_reply) where the content lives elsewhere in the app. */
+  persist?: boolean;
 }
 
 @Injectable()
@@ -48,16 +53,19 @@ export class NotificationsService {
 
   async sendToUser(userId: string, payload: SendNotificationPayload) {
     try {
-      // Save to DB
-      await this.prisma.notification.create({
-        data: {
-          user_id: userId,
-          type: payload.type,
-          title: payload.title,
-          body: payload.body,
-          data: payload.data ?? undefined,
-        },
-      });
+      // Save to DB — skipped for ephemeral types (e.g. coach_reply)
+      // that shouldn't show in the in-app notifications tab.
+      if (payload.persist !== false) {
+        await this.prisma.notification.create({
+          data: {
+            user_id: userId,
+            type: payload.type,
+            title: payload.title,
+            body: payload.body,
+            data: payload.data ?? undefined,
+          },
+        });
+      }
 
       // Get active device tokens
       const tokens = await this.prisma.deviceToken.findMany({
