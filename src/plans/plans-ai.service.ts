@@ -14,6 +14,19 @@ import {
   type RecentLift,
 } from '../common/recent-lifts';
 
+// Already-done days from the current calendar week that the new plan
+// must absorb instead of treating as separate ad-hoc workouts. iOS
+// builds this from completed workout_sessions whose completed_at lies
+// in [weekStart, today].
+export interface PlanWeekContext {
+  completedDays: Array<{
+    dayOfWeek: number; // 0=Monday..6=Sunday
+    title: string;
+    muscleGroups: string[]; // distinct groups hit, in display order
+    topLifts: string[]; // 1-3 short summary lines, e.g. "Bench 100 kg × 3"
+  }>;
+}
+
 @Injectable()
 export class PlansAiService {
   constructor(
@@ -28,6 +41,7 @@ export class PlansAiService {
     onboarding: any,
     startDayOfWeek: number = 0,
     focus?: string,
+    weekContext?: PlanWeekContext,
   ): Promise<SkeletonDay[]> {
     const dayNames = [
       'Monday',
@@ -47,6 +61,18 @@ export class PlansAiService {
       ? `\nUser focus for this week: "${focus}". Treat the focus as the WEEK'S THEME — feature it on ONE primary training day (e.g. for "bench press" make ONE day a chest-led push day with a low-rep compound slot for that lift, sets like 4×5 or 5×5). Optionally include the focus muscle group as a single accessory slot on ONE other training day. The remaining training days MUST cover the OTHER muscle groups (Legs, Back/Pull, Shoulders, Arms, Core) for balance and recovery. DO NOT repeat the same primary lift across multiple days — three bench-press days in one week is wrong; a "bench press plan" is a balanced week that *features* bench press on its push day.\n`
       : '';
 
+    const completedDays = weekContext?.completedDays ?? [];
+    const completedBlock = completedDays.length > 0
+      ? `\nUSER ALREADY TRAINED THIS WEEK:\n${completedDays
+          .map((d) => {
+            const lifts = d.topLifts.length > 0
+              ? ` ${d.topLifts.join(', ')}.`
+              : '';
+            return `- ${dayNames[d.dayOfWeek]}: ${d.title} — ${d.muscleGroups.join(', ')}.${lifts}`;
+          })
+          .join('\n')}\n\nFor each of those days return a TRAINING entry with the SAME primary muscle groups the user actually hit. Do not relabel them as rest, do not propose a different focus for a day already trained — those days are FIXED. For the remaining days, structure the week so the user's frequency target (${onboarding.training_frequency}/week) is honored across the ALREADY-COMPLETED + ABOUT-TO-PLAN days combined. If the user already trained ${completedDays.length} day(s) this week, plan ${Math.max(0, (onboarding.training_frequency ?? 3) - completedDays.length)} additional training day(s).\n`
+      : '';
+
     const prompt = `You are a fitness coach AI. Generate a ${totalDays}-day training plan skeleton from ${dayNames[startDayOfWeek]} through Sunday.
 
 User profile:
@@ -57,7 +83,7 @@ User profile:
 - Workout duration: ${onboarding.workout_duration} min
 - Equipment: ${onboarding.available_equipment}
 - Injuries: ${JSON.stringify(onboarding.injuries)}${aiContextLine(onboarding)}
-${focusBlock}
+${focusBlock}${completedBlock}
 Respond with a JSON object:
 {
   "days": [
@@ -100,6 +126,12 @@ Rules:
 - BALANCE: across the week, cover at least three of {Chest/Push, Back/Pull, Legs} — never make the same muscle group the dominant group on more than ONE training day, even if the user named a specific lift.
 - Return exactly ${totalDays} days (${startDayOfWeek} through 6)
 - HARD REQUIREMENT: every training day MUST have between 4 and 6 entries in exercise_slots.
+
+RECOVERY SPACING (apply after frequency is honored):
+- Treat any days listed under "USER ALREADY TRAINED THIS WEEK" as FIXED ANCHORS.
+- For the remaining training days, MAXIMIZE the gap between any two training days (completed or planned). Do NOT schedule two training days on consecutive calendar days unless frequency exceeds 4/week AND no non-consecutive placement is possible.
+- New training days should bisect the longest gaps around the anchors, not cluster at the end of the week.
+- Concretely (day_of_week is 0=Mon..6=Sun): if day 2 (Wed) is already completed and 2 more training days are needed across days 3-6 (Thu-Sun), pick days 4 + 6 (Fri + Sun, one-day gaps), NOT days 5 + 6 (Sat + Sun, back-to-back).
 
 ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
 - Every rest day MUST also include an "alt_session" — a full training session this rest day would become if an earlier training day in the week were skipped.
@@ -407,7 +439,13 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
             },
           ],
           response_format: { type: 'json_object' },
-          max_tokens: 1400,
+          // Plans with rest-day alt sessions can push the per-day
+          // exercise list past the prior cap; we were seeing JSON parse
+          // failures at ~4 KB (truncated mid-string) in prod when the
+          // AI's per-set target ladder hits a heavy bench/back/leg week
+          // with several alts on top. 2500 leaves enough headroom for
+          // the full per-set ladder on every slot + alt.
+          max_tokens: 2500,
           temperature: 0.4,
         });
 

@@ -172,6 +172,26 @@ export class PlansService {
     }
 
     if (force) {
+      // Find the active plan's day ids so we can release the
+      // workout_session_id @unique link on each — without this, when
+      // reconcileWithAdHocSessions runs on the brand-new plan it can't
+      // claim any session that the abandoned plan day still claims,
+      // leaving the new plan's Mon/Wed/etc. pending even though the
+      // user already trained those days.
+      const activePlans = await this.prisma.trainingPlan.findMany({
+        where: { user_id: userId, is_active: true },
+        select: { id: true },
+      });
+      const activePlanIds = activePlans.map((p) => p.id);
+      if (activePlanIds.length > 0) {
+        await this.prisma.planDay.updateMany({
+          where: {
+            plan_id: { in: activePlanIds },
+            workout_session_id: { not: null },
+          },
+          data: { workout_session_id: null },
+        });
+      }
       await this.prisma.trainingPlan.updateMany({
         where: { user_id: userId, is_active: true },
         data: { is_active: false },
@@ -213,22 +233,22 @@ export class PlansService {
     const todayDow = toMondayDow(now);
     const startDow = force ? 0 : todayDow;
 
-    // Fetch skeleton, exercise library, recent exercises, recent sessions
-    // (for progressive-overload context), and previous week number in
-    // parallel.
+    // Phase A: fetch everything the AI needs in parallel BEFORE the
+    // skeleton call. The week-of-completed-sessions query feeds a new
+    // `weekContext` parameter on generateWeeklyPlan so the AI structures
+    // already-trained days as completed training days instead of
+    // proposing a duplicate workout for a day the user already finished.
+    const weekStartDate = getWeekStart(now);
+    const tomorrowStart = new Date(now);
+    tomorrowStart.setHours(0, 0, 0, 0);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
     const [
-      skeleton,
       exerciseLibrary,
       recentExerciseIds,
+      thisWeekSessions,
       recentSessions,
       previousPlan,
     ] = await Promise.all([
-      this.plansAiService.generateWeeklyPlan(
-        userId,
-        onboarding,
-        startDow,
-        focus,
-      ),
       this.prisma.exerciseLibrary.findMany({
         where: {
           OR: [{ is_system: true }, { user_id: userId }],
@@ -239,6 +259,20 @@ export class PlansService {
         orderBy: { name: 'asc' },
       }),
       this.getRecentExerciseIds(userId),
+      this.prisma.workoutSession.findMany({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: weekStartDate, lt: tomorrowStart },
+        },
+        orderBy: { completed_at: 'asc' },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+          },
+        },
+      }),
       this.prisma.workoutSession.findMany({
         where: {
           user_id: userId,
@@ -261,6 +295,70 @@ export class PlansService {
       }),
     ]);
     const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
+
+    // Build the weekContext from this-week sessions. Group by
+    // day_of_week (multiple sessions same day collapse into one
+    // completedDay entry — usually only happens for power-users; the
+    // AI just needs to know that day was hit). One pass.
+    const completedDaysMap = new Map<
+      number,
+      { dayOfWeek: number; title: string; muscleGroups: string[]; topLifts: string[] }
+    >();
+    for (const session of thisWeekSessions) {
+      if (!session.completed_at) continue;
+      const dow = toMondayDow(session.completed_at);
+      const existing = completedDaysMap.get(dow);
+      const muscleGroups: string[] = [];
+      const topLifts: string[] = [];
+      for (const ex of session.exercises) {
+        if (ex.muscle_group && !muscleGroups.includes(ex.muscle_group)) {
+          muscleGroups.push(ex.muscle_group);
+        }
+        if (topLifts.length < 3) {
+          const topSet = ex.exercise_sets.reduce<
+            (typeof ex.exercise_sets)[number] | null
+          >((best, s) => {
+            const weight = Number(s.weight ?? 0);
+            return !best || weight > Number(best.weight ?? 0) ? s : best;
+          }, null);
+          if (topSet) {
+            const w = topSet.is_bodyweight
+              ? 'BW'
+              : `${Number(topSet.weight ?? 0)} ${topSet.weight_unit}`;
+            topLifts.push(`${ex.name} ${w} × ${topSet.reps}`);
+          }
+        }
+      }
+      if (existing) {
+        for (const g of muscleGroups) {
+          if (!existing.muscleGroups.includes(g)) existing.muscleGroups.push(g);
+        }
+        for (const l of topLifts) {
+          if (existing.topLifts.length < 3) existing.topLifts.push(l);
+        }
+      } else {
+        completedDaysMap.set(dow, {
+          dayOfWeek: dow,
+          title: session.title,
+          muscleGroups,
+          topLifts,
+        });
+      }
+    }
+    const weekContext = {
+      completedDays: [...completedDaysMap.values()].sort(
+        (a, b) => a.dayOfWeek - b.dayOfWeek,
+      ),
+    };
+
+    // Now generate the skeleton with the week context.
+    const skeleton = await this.plansAiService.generateWeeklyPlan(
+      userId,
+      onboarding,
+      startDow,
+      focus,
+      weekContext,
+    );
 
     // Stage 2: Build curated candidate pools per muscle group
     const candidatePools = filterCandidates(
@@ -362,13 +460,23 @@ export class PlansService {
       week_number: newWeekNumber,
     });
 
-    // Mid-week regen: past days were just persisted as `pending`. Run
-    // reconcile + redistribute right now so they get marked `skipped`
-    // and their muscle groups flow into today + future. Without this,
-    // the user opens the app immediately after regen and sees Monday
-    // as a phantom "do this workout" card.
+    // Always run reconcile after creating a plan: even an empty-week
+    // generation can have an early-morning ad-hoc session that should
+    // adopt today's plan day instead of orphaning. reconcile is
+    // idempotent (no-op when no candidates exist), so the cost is one
+    // cheap query for the new-user case.
+    await this.orchestrator.reconcileWithAdHocSessions(userId);
+
+    // Safety net: the AI prompt directs already-trained days to be
+    // training entries with the matching muscle groups, but if it
+    // ignored the weekContext hint and labeled a trained day as rest,
+    // promote that rest day to a completed training day backed by the
+    // user's actual session.
+    await this.promoteRestDaysToCompletedSessions(plan.id, userId, todayDow);
+
+    // Mid-week regen: past pending training days redistribute their
+    // muscle groups forward via alt-session promotion.
     if (force && todayDow > 0) {
-      await this.orchestrator.reconcileWithAdHocSessions(userId);
       const refreshed = await this.prisma.trainingPlan.findUnique({
         where: { id: plan.id },
         include: { days: { orderBy: { day_of_week: 'asc' } } },
@@ -743,5 +851,101 @@ export class PlansService {
     });
 
     return true;
+  }
+
+  /**
+   * Safety net for the unified plan + history flow. The plan-gen prompt
+   * directs already-trained days to be marked TRAINING with the matching
+   * muscle groups; this catches the case where the AI ignored that hint
+   * and labeled a trained day as REST.
+   *
+   * For each pending rest day on or before today, if the user has a
+   * completed workout that calendar day that isn't already linked to
+   * any plan day, convert the rest day into a completed training day
+   * backed by that session — same shape `reconcileWithAdHocSessions`
+   * uses for already-training days.
+   */
+  private async promoteRestDaysToCompletedSessions(
+    planId: string,
+    userId: string,
+    todayDow: number,
+  ): Promise<void> {
+    const plan = await this.prisma.trainingPlan.findUnique({
+      where: { id: planId },
+      include: { days: { orderBy: { day_of_week: 'asc' } } },
+    });
+    if (!plan) return;
+
+    const candidates = plan.days.filter(
+      (d) =>
+        d.status === 'pending' &&
+        d.day_type === 'rest' &&
+        d.day_of_week <= todayDow,
+    );
+    if (candidates.length === 0) return;
+
+    const weekStart = new Date(plan.week_start_date);
+    weekStart.setHours(0, 0, 0, 0);
+    const now = new Date();
+
+    for (const day of candidates) {
+      const dayStart = new Date(weekStart);
+      dayStart.setDate(dayStart.getDate() + day.day_of_week);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const session = await this.prisma.workoutSession.findFirst({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: dayStart, lt: dayEnd },
+          plan_day: null,
+        },
+        orderBy: { completed_at: 'asc' },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+          },
+        },
+      });
+      if (!session) continue;
+
+      const muscleGroups: string[] = [];
+      for (const ex of session.exercises) {
+        if (ex.muscle_group && !muscleGroups.includes(ex.muscle_group)) {
+          muscleGroups.push(ex.muscle_group);
+        }
+      }
+
+      await this.prisma.planDay.update({
+        where: { id: day.id },
+        data: {
+          day_type: 'training',
+          session_title: session.title,
+          session_type: session.type,
+          muscle_groups: muscleGroups,
+          // Mirror the planning-time exercises_json shape so iOS
+          // renders the linked workout consistently with planned days.
+          exercises_json: session.exercises.map((ex) => ({
+            library_exercise_id: ex.library_exercise_id,
+            external_id: ex.external_id,
+            name: ex.name,
+            muscle_group: ex.muscle_group,
+            equipment: ex.equipment,
+            sets_display: ex.sets_display,
+          })) as any,
+          status: 'completed',
+          workout_session_id: session.id,
+          adapted_at: now,
+        },
+      });
+
+      this.analytics.track(userId, 'plan_day_promoted_from_rest', {
+        plan_id: plan.id,
+        plan_day_id: day.id,
+        session_id: session.id,
+        day_of_week: day.day_of_week,
+      });
+    }
   }
 }

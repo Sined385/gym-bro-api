@@ -14,6 +14,7 @@ describe('WorkoutOrchestratorService', () => {
     motivationInsight: { deleteMany: jest.Mock };
     weeklyOverview: { deleteMany: jest.Mock };
     trainingPlan: { findFirst: jest.Mock };
+    planDay: { findFirst: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -27,6 +28,9 @@ describe('WorkoutOrchestratorService', () => {
       weeklyOverview: { deleteMany: jest.fn().mockResolvedValue({}) },
       // reconcileWithAdHocSessions returns early when there's no active plan.
       trainingPlan: { findFirst: jest.fn().mockResolvedValue(null) },
+      // adaptPlanDayToActualSession returns early when no plan day is
+      // linked to the session.
+      planDay: { findFirst: jest.fn().mockResolvedValue(null) },
     };
 
     const module: TestingModule = await Test.createTestingModule({

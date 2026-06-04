@@ -67,6 +67,13 @@ export class WorkoutOrchestratorService {
     // completed and link the session.
     await this.reconcileWithAdHocSessions(userId);
 
+    // 2b. Adaptive plan: if the linked plan day expected a different
+    // set of muscle groups than what the user actually trained,
+    // overwrite the plan day's content with reality. Runs BEFORE
+    // onSessionCompleted so the AI completion notes reason about the
+    // actual session rather than the stale planned content.
+    await this.adaptPlanDayToActualSession(sessionId);
+
     // 3. Plan-domain completion hook: marks PlanDay completed and
     // generates AI completion notes when the session is linked to a
     // plan day. No-op for unlinked sessions.
@@ -115,6 +122,73 @@ export class WorkoutOrchestratorService {
       userId,
       onboarding,
     );
+  }
+
+  /**
+   * Adaptive plan hook. When a completed session is linked to a plan
+   * day, compare the muscle groups actually trained against the muscle
+   * groups the plan day expected. If they differ as sets, overwrite
+   * the plan day's content with the actual session — the original
+   * planned exercises are dropped (no redistribution to future days).
+   *
+   * Same-set deviations (e.g. user swapped one chest exercise for
+   * another but still hit Chest/Shoulders/Arms) are left alone — the
+   * plan day's planned content stays, the session_id link is enough
+   * for UIs that want to render what was actually done.
+   *
+   * Idempotent: a second call after content has already been adapted
+   * is a no-op because the muscle sets will then match.
+   */
+  private async adaptPlanDayToActualSession(sessionId: string): Promise<void> {
+    const planDay = await this.prisma.planDay.findFirst({
+      where: { workout_session_id: sessionId },
+    });
+    if (!planDay) return;
+
+    const session = await this.prisma.workoutSession.findUnique({
+      where: { id: sessionId },
+      include: { exercises: { orderBy: { step_number: 'asc' } } },
+    });
+    if (!session) return;
+
+    const actualMuscles = new Set(
+      session.exercises
+        .map((e) => e.muscle_group)
+        .filter((m): m is string => !!m),
+    );
+    const plannedMuscles = new Set(planDay.muscle_groups);
+
+    if (actualMuscles.size === plannedMuscles.size) {
+      let equal = true;
+      for (const m of actualMuscles) {
+        if (!plannedMuscles.has(m)) {
+          equal = false;
+          break;
+        }
+      }
+      if (equal) return;
+    }
+
+    const newExercisesJson = session.exercises.map((e) => ({
+      library_exercise_id: e.library_exercise_id ?? null,
+      external_id: e.external_id ?? null,
+      name: e.name,
+      muscle_group: e.muscle_group ?? null,
+      equipment: e.equipment ?? null,
+      sets_display: e.sets_display,
+    }));
+
+    await this.prisma.planDay.update({
+      where: { id: planDay.id },
+      data: {
+        day_type: 'training',
+        session_title: session.title,
+        session_type: session.type,
+        muscle_groups: [...actualMuscles],
+        exercises_json: newExercisesJson,
+        adapted_at: new Date(),
+      },
+    });
   }
 
   /**
@@ -257,11 +331,16 @@ export class WorkoutOrchestratorService {
     if (!plan) return { recoveredDayIds: [] };
 
     const todayDow = toMondayDow(new Date());
+    // Include today: when the user regenerates a plan mid-week after
+    // already completing today's session, we want today's training day
+    // in the new plan to link to that completed session — otherwise
+    // the user sees "do Pull Day" on Home for a workout they finished
+    // an hour ago.
     const skippedCandidates = plan.days.filter(
       (d) =>
         d.status === 'pending' &&
         d.day_type === 'training' &&
-        d.day_of_week < todayDow &&
+        d.day_of_week <= todayDow &&
         !d.adapted_at,
     );
     if (skippedCandidates.length === 0) return { recoveredDayIds: [] };
@@ -286,11 +365,18 @@ export class WorkoutOrchestratorService {
       dayStart.setDate(dayStart.getDate() + day.day_of_week);
       const dayEnd = new Date(dayStart);
       dayEnd.setDate(dayEnd.getDate() + 1);
+      // Filter out sessions that are already linked to another plan day
+      // (e.g. the previous active plan claimed them before being
+      // deactivated by a force-regen). PlanDay.workout_session_id is
+      // @unique, so a naive update would fail with P2002. The
+      // `plan_day: null` filter is on the relation back from
+      // WorkoutSession.
       const completedThatDay = await this.prisma.workoutSession.findFirst({
         where: {
           user_id: userId,
           status: 'completed',
           completed_at: { gte: dayStart, lt: dayEnd },
+          plan_day: null,
         },
         orderBy: { completed_at: 'asc' },
         select: { id: true },
