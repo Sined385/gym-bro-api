@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
+import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { RecentLift } from '../common/recent-lifts';
 
 /**
@@ -78,6 +79,18 @@ describe('CoachToolsService — target_sets safety net', () => {
         { provide: PlansService, useValue: {} },
         { provide: AiUsageService, useValue: {} },
         { provide: WorkoutOrchestratorService, useValue: {} },
+        {
+          provide: WeightSuggestionService,
+          // Returns empty map so the synthesis branch surfaces null
+          // weight when the recent-lifts path doesn't fire. Tests that
+          // explicitly assert weights override this via mockReturnValue
+          // before running.
+          useValue: {
+            suggestWeights: jest
+              .fn()
+              .mockResolvedValue(new Map<string, number | null>()),
+          },
+        },
       ],
     }).compile();
 
@@ -165,10 +178,10 @@ describe('CoachToolsService — target_sets safety net', () => {
     expect(persisted.sets[3]).toMatchObject({ weight: 110, reps: 5 });
   });
 
-  it('leaves novel exercises alone when not in recent lifts', async () => {
+  it('synthesizes per-set rows for novel exercises via sets_display + weight suggestion', async () => {
     const args = {
-      title: 'Mobility',
-      type: 'mobility',
+      title: 'Pull Day',
+      type: 'strength',
       exercises: [
         {
           library_exercise_id: 'deadlift-lib-id',
@@ -179,16 +192,57 @@ describe('CoachToolsService — target_sets safety net', () => {
       ],
       ai_message: 'First time doing this',
     };
-    // Empty map — exercise has no prior history.
+    // Empty recent-lifts → the new synthesis branch fires, parsing
+    // sets_display and pulling a weight from WeightSuggestionService.
     const map = new Map<string, RecentLift>();
 
     // @ts-expect-error private
     await service.createWorkoutSession('user-1', args, [deadliftLib], map);
 
     const persisted = createdExerciseSets[0];
-    // No target_sets injected → no exercise_sets persisted → sets_display
-    // falls through unchanged.
-    expect(persisted.sets).toHaveLength(0);
+    // 3 sets × 10 reps — matches sets_display.
+    expect(persisted.sets).toHaveLength(3);
+    // Barbell equipment → WEIGHTED_EQUIPMENT override forces
+    // is_bodyweight=false regardless of what the AI sent.
+    expect(persisted.sets.every((s: any) => s.is_bodyweight === false)).toBe(
+      true,
+    );
+    // Every set carries the expected rep count.
+    expect(persisted.sets.every((s: any) => s.reps === 10)).toBe(true);
+    // sets_display stays "3 × 10" since the synthesized ladder is flat.
     expect(persisted.sets_display).toBe('3 × 10');
+  });
+
+  it('does not flag weighted equipment as bodyweight even if AI did', async () => {
+    const args = {
+      title: 'Push Day',
+      type: 'strength',
+      exercises: [
+        {
+          library_exercise_id: 'deadlift-lib-id', // reuse the barbell fixture
+          name: 'Barbell Deadlift',
+          muscle_group: 'Back',
+          sets_display: '3 × 5',
+          // AI mistakenly flagged a barbell lift as bodyweight.
+          target_sets: [
+            { reps: 5, is_bodyweight: true },
+            { reps: 5, is_bodyweight: true },
+            { reps: 5, is_bodyweight: true },
+          ],
+        },
+      ],
+      ai_message: 'oops',
+    };
+    const map = new Map<string, RecentLift>();
+
+    // @ts-expect-error private
+    await service.createWorkoutSession('user-1', args, [deadliftLib], map);
+
+    const persisted = createdExerciseSets[0];
+    expect(persisted.sets).toHaveLength(3);
+    // Override forces FALSE because libEx.equipment === 'Barbell'.
+    expect(persisted.sets.every((s: any) => s.is_bodyweight === false)).toBe(
+      true,
+    );
   });
 });

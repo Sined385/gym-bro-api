@@ -5,6 +5,7 @@ import { PlansService } from '../plans/plans.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { ACCENT_COLORS } from '../home/session-exercise.service';
+import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import {
   isRateLimitError,
@@ -52,6 +53,21 @@ export interface ToolCallResult {
   sessionId: string | null;
 }
 
+// Equipment values from the seed's EQUIPMENT_MAP that clearly imply
+// external load — for these, is_bodyweight must be FALSE regardless of
+// what the AI sent. Coach has historically guessed wrong (marking
+// Dumbbell Bench Press as bodyweight, etc.) which leaves the
+// preview sheet showing "BW × 9" for obviously weighted lifts.
+const WEIGHTED_EQUIPMENT = new Set([
+  'Barbell',
+  'Dumbbells',
+  'Machine',
+  'Cable',
+  'Kettlebells',
+]);
+
+const BODYWEIGHT_EQUIPMENT = new Set(['Bodyweight', 'Bands']);
+
 @Injectable()
 export class CoachToolsService {
   constructor(
@@ -59,6 +75,7 @@ export class CoachToolsService {
     private readonly plansService: PlansService,
     private readonly aiUsage: AiUsageService,
     private readonly orchestrator: WorkoutOrchestratorService,
+    private readonly weightSuggestionService: WeightSuggestionService,
   ) {}
 
   getToolDefinitions(): OpenAI.Chat.Completions.ChatCompletionTool[] {
@@ -776,6 +793,31 @@ export class CoachToolsService {
       );
     }
 
+    // Batch-suggest weights for any resolved exercise the user has
+    // NOT recently logged (so recent-lifts injection won't fire) and
+    // the AI didn't supply target_sets for. Without this, novel
+    // exercises like "Dumbbell Bench Press" — which the user has
+    // never done in-app, but is obviously weighted — fall through
+    // with zero per-set rows and the preview sheet renders the bare
+    // "3 × 10" pill. WeightSuggestionService gives us a sensible
+    // starting load via history-then-body-weight-ratio.
+    const needsSuggestion = exercises.filter(
+      ({ ex, libEx }) =>
+        (!Array.isArray(ex.target_sets) || ex.target_sets.length === 0) &&
+        !recentLiftsMap.has(libEx.id),
+    );
+    const weightMap = onboarding
+      ? await this.weightSuggestionService.suggestWeights(
+          userId,
+          needsSuggestion.map(({ libEx }) => ({
+            library_exercise_id: libEx.id,
+            muscle_group: libEx.muscle_group,
+            equipment: libEx.equipment,
+          })),
+          onboarding as any,
+        )
+      : new Map<string, number | null>();
+
     const session = await this.prisma.workoutSession.create({
       data: {
         user_id: userId,
@@ -819,6 +861,49 @@ export class CoachToolsService {
                   is_bodyweight: target.isBodyweight,
                 };
               });
+            }
+
+            // Novel-exercise fallback. If we still have no target_sets
+            // here, parse sets_display ("3 × 10") and synthesize a
+            // flat ladder using WeightSuggestionService's per-exercise
+            // estimate. is_bodyweight is decided from the library's
+            // equipment field — that's authoritative, the AI's flag
+            // is not (it has wrongly flagged Dumbbell Bench Press
+            // bodyweight in prod).
+            if (
+              !Array.isArray(ex.target_sets) ||
+              ex.target_sets.length === 0
+            ) {
+              const { setCount, reps } = parseSetsDisplay(ex.sets_display);
+              const isBW = isBodyweightEquipment(libEx.equipment);
+              const suggested = weightMap.get(libEx.id) ?? null;
+              ex.target_sets = Array.from({ length: setCount }, () => ({
+                weight_kg: isBW || suggested === null ? undefined : suggested,
+                reps,
+                is_bodyweight: isBW,
+              }));
+            }
+
+            // Override is_bodyweight when the library equipment is
+            // categorically weighted — cleans up cases where the AI
+            // (or its target_sets array) flagged Barbell / Dumbbells
+            // / Machine / Cable / Kettlebells as bodyweight.
+            if (
+              Array.isArray(ex.target_sets) &&
+              libEx.equipment &&
+              WEIGHTED_EQUIPMENT.has(libEx.equipment)
+            ) {
+              ex.target_sets = ex.target_sets.map((s) => ({
+                ...s,
+                is_bodyweight: false,
+                // If we just untagged bodyweight but have no weight
+                // yet, fall back to the suggestion so the row isn't
+                // "— × N". Recent-lifts entries already have weights.
+                weight_kg:
+                  s.weight_kg !== undefined
+                    ? s.weight_kg
+                    : (weightMap.get(libEx.id) ?? undefined),
+              }));
             }
 
             const hasTargets =
@@ -912,4 +997,39 @@ export class CoachToolsService {
 
     return null;
   }
+}
+
+/**
+ * Parse a sets_display string into (setCount, reps). The AI ships
+ * shapes like "3 × 10", "4 × 8", "2 × 30 sec", "3 × 12s" — we only
+ * need the leading two integers; the trailing unit (sec / s / reps)
+ * is informational and the iOS side already handles it via sets_display.
+ *
+ * Falls back to (3, 10) when the string is missing or unparseable
+ * so we never end up with a 0-set synthesis.
+ */
+function parseSetsDisplay(setsDisplay: string | null | undefined): {
+  setCount: number;
+  reps: number;
+} {
+  if (!setsDisplay) return { setCount: 3, reps: 10 };
+  const match = setsDisplay.match(/(\d+)\s*[×x]\s*(\d+)/i);
+  if (!match) return { setCount: 3, reps: 10 };
+  const setCount = parseInt(match[1], 10);
+  const reps = parseInt(match[2], 10);
+  return {
+    setCount: setCount > 0 ? setCount : 3,
+    reps: reps > 0 ? reps : 10,
+  };
+}
+
+/**
+ * True when the library's equipment field describes movements that
+ * are categorically bodyweight (or band-only). Used to set the
+ * is_bodyweight flag at synthesis time. WEIGHTED_EQUIPMENT is the
+ * inverse — those override the AI's flag to FALSE no matter what.
+ */
+function isBodyweightEquipment(equipment: string | null | undefined): boolean {
+  if (!equipment) return false;
+  return BODYWEIGHT_EQUIPMENT.has(equipment);
 }
