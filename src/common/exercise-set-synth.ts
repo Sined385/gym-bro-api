@@ -63,8 +63,19 @@ export function parseSetsDisplay(
   };
 }
 
+/**
+ * The canonical shape we persist in plan_day.exercises_json[i].target_sets
+ * and in any other JSON column that holds per-set targets. MUST match
+ * the shape `serializeExerciseSets` reads on the read path and the
+ * shape iOS's `DashboardExerciseSet` decodes (post convertFromSnakeCase
+ * → setNumber / weight / weightUnit / reps / isBodyweight). The earlier
+ * AI-internal shape (`weight_kg`) is only valid in transient args to
+ * the Coach tool call — never as persisted JSON.
+ */
 export interface SynthSet {
-  weight_kg?: number;
+  set_number: number;
+  weight: number | null;
+  weight_unit: string;
   reps: number;
   is_bodyweight: boolean;
 }
@@ -86,10 +97,12 @@ export function synthesizeTargetSets(args: {
   const isBW = isBodyweightEquipment(args.equipment);
   const weight =
     isBW || args.suggestedWeight === null || args.suggestedWeight === undefined
-      ? undefined
+      ? null
       : args.suggestedWeight;
-  return Array.from({ length: setCount }, () => ({
-    weight_kg: weight,
+  return Array.from({ length: setCount }, (_, i) => ({
+    set_number: i + 1,
+    weight,
+    weight_unit: 'kg',
     reps,
     is_bodyweight: isBW,
   }));
