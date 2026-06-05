@@ -17,6 +17,10 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CoachService } from './coach.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessageActionDto, SendMessageDto } from './dto/coach.dto';
+import {
+  summarizeAiError,
+  userFacingAiErrorMessage,
+} from '../common/ai-error';
 
 /// Flatten whitespace so streamed markdown/newlines don't blow up the
 /// 140-char push body preview.
@@ -117,10 +121,16 @@ export class CoachController {
       }
     } catch (error) {
       streamErrored = true;
-      console.error('Coach chat stream error:', error);
+      // Concise log line (status / kind / request id) instead of dumping
+      // the SDK's full error object with cookies and stack — Railway logs
+      // stay scannable.
+      console.warn(summarizeAiError('coach_chat', error));
       if (!clientDisconnected) {
+        // Surface a friendly message to iOS so the user knows what
+        // happened (rate limit / timeout / etc.) rather than the
+        // generic "Stream failed" that gave no actionable signal.
         res.write(
-          `event: error\ndata: ${JSON.stringify({ message: 'Stream failed' })}\n\n`,
+          `event: error\ndata: ${JSON.stringify({ message: userFacingAiErrorMessage(error) })}\n\n`,
         );
       }
     }

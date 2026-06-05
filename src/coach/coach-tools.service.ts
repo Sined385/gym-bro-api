@@ -7,6 +7,11 @@ import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.ser
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import {
+  isRateLimitError,
+  summarizeAiError,
+  userFacingAiErrorMessage,
+} from '../common/ai-error';
+import {
   matchExercisesToSlots,
   normalizeMuscleGroup,
   ExerciseSlot,
@@ -371,10 +376,11 @@ export class CoachToolsService {
         yield event;
       }
     } catch (error) {
-      console.error('Tool execution failed:', error);
-      console.error('Tool args were:', params.toolCallArgs);
-      const errMsg =
-        "Sorry, I couldn't create that workout right now. Try again.";
+      console.warn(summarizeAiError('create_workout_session', error));
+      console.warn('[create_workout_session] args:', params.toolCallArgs);
+      const errMsg = isRateLimitError(error)
+        ? userFacingAiErrorMessage(error)
+        : "Sorry, I couldn't create that workout right now. Try again.";
       yield {
         type: 'text_delta',
         data: { content: errMsg },
@@ -627,8 +633,10 @@ export class CoachToolsService {
         data: { days_count: modifiedSummary.length },
       };
     } catch (error) {
-      console.error('Plan modification failed:', error);
-      const errMsg = "Sorry, I couldn't modify the plan right now. Try again.";
+      console.warn(summarizeAiError('modify_plan_days', error));
+      const errMsg = isRateLimitError(error)
+        ? userFacingAiErrorMessage(error)
+        : "Sorry, I couldn't modify the plan right now. Try again.";
       yield {
         type: 'text_delta',
         data: { content: errMsg },
@@ -680,9 +688,10 @@ export class CoachToolsService {
         yield event;
       }
     } catch (error) {
-      console.error('Plan generation failed:', error);
-      const errMsg =
-        "Sorry, I couldn't generate your plan right now. Try again.";
+      console.warn(summarizeAiError('generate_training_plan', error));
+      const errMsg = isRateLimitError(error)
+        ? userFacingAiErrorMessage(error)
+        : "Sorry, I couldn't generate your plan right now. Try again.";
       yield {
         type: 'text_delta',
         data: { content: errMsg },

@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { aiContextLine } from '../common/ai-context';
+import { summarizeAiError } from '../common/ai-error';
 import {
   SkeletonDay,
   AiExerciseSelection,
@@ -174,7 +175,7 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
       const parsed = JSON.parse(content) as { days: SkeletonDay[] };
       return parsed.days;
     } catch (error) {
-      console.error('AI plan generation failed, using fallback:', error);
+      console.warn(summarizeAiError('plan_generation', error));
       return this.generateFallbackPlan(onboarding, startDayOfWeek);
     }
   }
@@ -544,9 +545,8 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
 
         if (valid) return parsed;
       } catch (error) {
-        console.error(
-          `AI exercise selection attempt ${attempt + 1} failed:`,
-          error,
+        console.warn(
+          summarizeAiError(`exercise_selection_attempt_${attempt + 1}`, error),
         );
       }
     }

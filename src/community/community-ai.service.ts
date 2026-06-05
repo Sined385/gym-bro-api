@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
+import { summarizeAiError } from '../common/ai-error';
 
 interface HistorySummary {
   totalSessions: number;
@@ -147,7 +148,7 @@ export class CommunityAiService {
       });
       return result;
     } catch (error) {
-      console.error('Comparison generation failed:', error);
+      console.warn(summarizeAiError('community_comparison', error));
       return {
         currentUser: enrichedCurrentUser,
         otherUser: enrichedOtherUser,

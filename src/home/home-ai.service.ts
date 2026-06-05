@@ -9,6 +9,7 @@ import { getWeekStartInTz } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
 import { aiContextLine } from '../common/ai-context';
+import { summarizeAiError } from '../common/ai-error';
 
 const SETS_DISPLAY_BY_GOAL: Record<string, string> = {
   build_muscle: '3 × 10',
@@ -47,10 +48,7 @@ export class HomeAiService {
     try {
       return await this.generateAIMotivation(userId);
     } catch (error) {
-      console.error(
-        'AI motivation generation failed, returning fallback:',
-        error,
-      );
+      console.warn(summarizeAiError('motivation', error));
       return this.generateFallbackMotivation(userId);
     }
   }
@@ -293,7 +291,7 @@ Rules:
         prev3WeekAvgs,
       );
     } catch (error) {
-      console.error('AI weekly overview failed, using fallback:', error);
+      console.warn(summarizeAiError('weekly_overview', error));
       return this.generateFallbackOverview(currentWeekStats, prev3WeekAvgs);
     }
   }
@@ -400,10 +398,7 @@ This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volu
     try {
       return await this.generateAISession(userId, onboarding);
     } catch (error) {
-      console.error(
-        'AI session generation failed, falling back to round-robin:',
-        error,
-      );
+      console.warn(summarizeAiError('quick_workout', error));
       return this.generateFallbackSession(userId, onboarding);
     }
   }
