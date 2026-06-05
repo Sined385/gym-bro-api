@@ -130,9 +130,12 @@ Supabase must be running before the API starts — it provides Postgres, Auth, a
 
 ## Exercise Library Source
 
-`data/exercises.json` is consumed by `npm run seed:exercises` to populate the `exercise_library` table. The source of truth is the private repo `git@github.com:Sined385/gym-bro-exercises.git`.
+`data/exercises.json` is the **source of truth** — committed to this repo, no external dependency at build or runtime. `npm run seed:exercises` (`scripts/seed-exercise-library.ts`) reads the JSON and **idempotently UPSERTs** rows in `exercise_library` keyed by `external_id`. Existing rows keep their UUID; only mutable metadata fields update. New upstream entries append. This means re-seeding is now safe — it can never null a `session_exercise.library_exercise_id` FK again.
 
-- **Local refresh:** `npm run refresh:exercises` — uses sibling `../exercises/` working copy if present, otherwise clones via SSH. Rebuilds and overwrites `data/exercises.json`.
-- **Docker build (local + Railway):** if `GITHUB_TOKEN` build arg is set, the Dockerfile clones the private repo via HTTPS during the builder stage and overwrites `data/exercises.json` before `npm run build`. If unset, the bundled JSON committed to this repo is used.
-- **Railway:** add `GITHUB_TOKEN` to the service's variables (fine-grained PAT, Contents: Read-only, scoped only to `Sined385/gym-bro-exercises`). Railway passes any service variable whose name matches a Dockerfile `ARG` as a build arg automatically. Trigger a redeploy to pick up new exercise data.
-- **Local docker-compose:** `export GITHUB_TOKEN=...` before `docker-compose up --build` to refresh during the image build. Unset → uses bundled JSON.
+- **Updating the catalog:** edit `data/exercises.json` directly (or sync from the local `../exercises/` working copy of the upstream fork), commit, deploy. Run `npm run seed:exercises` against the target DB to apply.
+- **Past nulled FKs** (from the old destructive seed) were restored by migration `20260605120000_backfill_session_exercise_library_link` via `session_exercise.external_id`.
+- The legacy `GITHUB_TOKEN` Dockerfile path and the `gym-bro-exercises` private-repo runtime dependency are gone.
+
+## Exercise Images
+
+Hosted in a public Supabase Storage bucket `exercise-images` with the path scheme `<external_id>/{0,1}.jpg`. Backend exposes the URL via `src/common/exercise-image.ts` (derived from `SUPABASE_URL`); iOS mirrors it in `Services/Utilities/ExerciseImageURLBuilder.swift` via `AppEnvironment.supabaseURL`. One-time upload: `npx ts-node scripts/upload-exercise-images.ts` against the target Supabase project (reads the local `../exercises/` working copy). Re-running is safe (upsert by path).

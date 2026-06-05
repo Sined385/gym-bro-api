@@ -8,23 +8,12 @@ RUN npm ci
 
 COPY . .
 
-# Refresh data/exercises.json from the private gym-bro-exercises repo.
-# GITHUB_TOKEN is a fine-grained PAT (Contents: Read-only) scoped to Sined385/gym-bro-exercises.
-# If unset, the bundled data/exercises.json is used as-is.
-ARG GITHUB_TOKEN=""
-RUN if [ -n "$GITHUB_TOKEN" ]; then \
-      apk add --no-cache git jq && \
-      git clone --depth 1 \
-        "https://x-access-token:${GITHUB_TOKEN}@github.com/Sined385/gym-bro-exercises.git" \
-        /tmp/exercises && \
-      jq -s '.' /tmp/exercises/exercises/*.json > /app/data/exercises.json && \
-      COUNT=$(jq 'length' /app/data/exercises.json) && \
-      rm -rf /tmp/exercises && \
-      apk del git jq && \
-      echo "Refreshed data/exercises.json from private repo (${COUNT} exercises)"; \
-    else \
-      echo "GITHUB_TOKEN not set; using bundled data/exercises.json"; \
-    fi
+# data/exercises.json is the source of truth, committed to this repo.
+# Updates flow: edit the JSON, run `npm run seed:exercises` against the
+# target DB (idempotent UPSERT by external_id — UUIDs stay stable).
+# The old GITHUB_TOKEN build-arg path that cloned gym-bro-exercises at
+# build time is gone — destructive re-seeds on deploy were nulling
+# every historical session_exercise.library_exercise_id FK.
 
 RUN npx prisma generate && npm run build
 

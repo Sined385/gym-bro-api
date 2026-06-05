@@ -1,6 +1,10 @@
-import { PrismaClient } from '../generated/prisma';
+import { PrismaClient } from '../generated/prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
 
 const MUSCLE_GROUP_MAP: Record<string, string> = {
   chest: 'Chest',
@@ -48,7 +52,12 @@ interface RawExercise {
 }
 
 async function main() {
-  const prisma = new PrismaClient();
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is not set');
+  }
+  const adapter = new PrismaPg({ connectionString: databaseUrl });
+  const prisma = new PrismaClient({ adapter });
 
   try {
     const dataPath = path.join(__dirname, '..', 'data', 'exercises.json');
@@ -85,29 +94,39 @@ async function main() {
 
     console.log(`Filtered: ${filtered.length} exercises (from ${raw.length} total)`);
 
-    // Run in transaction
-    await prisma.$transaction(async (tx) => {
-      // Detach session_exercises from old system exercises
-      const detached = await tx.sessionExercise.updateMany({
-        where: {
-          library_exercise: { is_system: true },
+    // Idempotent UPSERT keyed by external_id. Existing rows keep their
+    // UUID (so session_exercise.library_exercise_id FKs stay valid),
+    // only the mutable metadata fields update. New upstream exercises
+    // get a fresh UUID on first insert and that UUID is then stable
+    // forever. Exercises removed from upstream are left in the DB
+    // because session_exercise rows likely reference them — deleting
+    // would orphan user history. Soft-deactivation via an `inactive`
+    // flag is the right move when that becomes a real concern.
+    let created = 0;
+    let updated = 0;
+    for (const ex of mapped) {
+      const result = await prisma.exerciseLibrary.upsert({
+        where: { external_id: ex.external_id },
+        update: {
+          name: ex.name,
+          muscle_group: ex.muscle_group,
+          equipment: ex.equipment,
+          is_system: true,
+          level: ex.level,
+          category: ex.category,
+          force: ex.force,
+          mechanic: ex.mechanic,
+          // Deliberately NOT touching `id`, `user_id`, `created_at`.
         },
-        data: { library_exercise_id: null },
+        create: ex,
+        select: { id: true, created_at: true },
       });
-      console.log(`Detached ${detached.count} session exercises`);
-
-      // Delete old system exercises
-      const deleted = await tx.exerciseLibrary.deleteMany({
-        where: { is_system: true },
-      });
-      console.log(`Deleted ${deleted.count} old system exercises`);
-
-      // Bulk insert new exercises
-      const created = await tx.exerciseLibrary.createMany({
-        data: mapped,
-      });
-      console.log(`Inserted ${created.count} new exercises`);
-    });
+      // created_at within the last 5s is a heuristic for "just inserted";
+      // good enough for the summary line.
+      if (Date.now() - result.created_at.getTime() < 5_000) created++;
+      else updated++;
+    }
+    console.log(`Upserted ${mapped.length} system exercises (${created} created, ${updated} updated)`);
 
     // Print summary
     const byMuscle: Record<string, number> = {};
