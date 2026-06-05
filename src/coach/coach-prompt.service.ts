@@ -123,10 +123,28 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
     // familiar exercises — see the tool-usage rules below. Shared with
     // the plan-generation flow via common/recent-lifts.ts.
     const recentLifts = computeRecentLiftsShared(recentSessions);
-    const recentLiftsBlock = formatRecentLiftsBlock(recentLifts);
-    const recentLiftIds = recentLifts
-      .map((l: any) => l.libraryExerciseId)
-      .filter((id: string | null | undefined): id is string => !!id);
+    // Pass the library through so lifts whose historical
+    // library_exercise_id was nulled by a re-seed get re-bridged to
+    // the current library row via external_id — the AI then sees a
+    // live lib_id it can echo back through the tool call.
+    const recentLiftsBlock = formatRecentLiftsBlock(
+      recentLifts,
+      exerciseLibrary,
+    );
+    // For library-filter ranking, use the resurfaced ids too — same
+    // bridge, so chest exercises the user did last week still rank
+    // high even when their historical lib id is null.
+    const externalIdToCurrent = new Map<string, string>();
+    for (const lib of exerciseLibrary) {
+      if (lib.external_id) externalIdToCurrent.set(lib.external_id, lib.id);
+    }
+    const recentLiftIds: string[] = [];
+    for (const l of recentLifts) {
+      if (l.libraryExerciseId) recentLiftIds.push(l.libraryExerciseId);
+      else if (l.externalId && externalIdToCurrent.has(l.externalId)) {
+        recentLiftIds.push(externalIdToCurrent.get(l.externalId)!);
+      }
+    }
 
     // Intent-driven library filter. The user's current message decides
     // which slice of the catalog the AI sees this turn — focused

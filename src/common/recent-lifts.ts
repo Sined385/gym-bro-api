@@ -14,6 +14,12 @@ export interface RecentLiftSet {
 
 export interface RecentLift {
   libraryExerciseId: string | null;
+  // external_id is sourced from the upstream exercise DB and survives
+  // re-seeds (the seed script wipes library_exercise_id on historical
+  // session_exercise rows when it deletes + re-inserts the system
+  // library with fresh UUIDs). external_id is the stable bridge that
+  // lets us match a past session against the current library.
+  externalId: string | null;
   name: string;
   muscleGroup: string;
   lastDate: string;
@@ -65,6 +71,7 @@ export function computeRecentLifts(recentSessions: any[]): RecentLift[] {
       }
       seen.set(key, {
         libraryExerciseId: ex.library_exercise_id ?? null,
+        externalId: ex.external_id ?? null,
         name: ex.name,
         muscleGroup: ex.muscle_group,
         lastDate: dateStr,
@@ -84,17 +91,65 @@ function formatSet(s: RecentLiftSet): string {
 }
 
 /**
+ * Re-resolve every recent lift to the CURRENT library row, using
+ * external_id as the stable bridge across re-seeds. Returns a Map keyed
+ * by current `library_exercise_id` so callers can do
+ * `map.get(libEx.id)` after the strict-library match without caring
+ * whether the historical `library_exercise_id` was nulled.
+ *
+ * Also indexes by the historical libraryExerciseId when it's still
+ * present (no re-seed has happened), so the lookup works in both
+ * regimes.
+ */
+export function buildRecentLiftsLookup(
+  lifts: RecentLift[],
+  library: Array<{ id: string; external_id: string | null }>,
+): Map<string, RecentLift> {
+  const byExternalId = new Map<string, string>();
+  for (const lib of library) {
+    if (lib.external_id) byExternalId.set(lib.external_id, lib.id);
+  }
+  const lookup = new Map<string, RecentLift>();
+  for (const lift of lifts) {
+    if (lift.libraryExerciseId) lookup.set(lift.libraryExerciseId, lift);
+    if (lift.externalId) {
+      const currentId = byExternalId.get(lift.externalId);
+      if (currentId) lookup.set(currentId, lift);
+    }
+  }
+  return lookup;
+}
+
+/**
  * Renders the recent-lifts list as a labeled block for the system
  * prompt. Same shape as the one CoachPromptService used to embed
  * inline — moved here so the plan prompt can reuse the exact format.
+ *
+ * When `library` is provided, lifts whose historical
+ * library_exercise_id was nulled by a re-seed are re-bridged via
+ * external_id to the CURRENT library row's id — so the AI sees a
+ * live lib_id it can pass back through the tool call, instead of
+ * falling back to fuzzy name matching against a drifted catalog.
  */
-export function formatRecentLiftsBlock(lifts: RecentLift[]): string {
+export function formatRecentLiftsBlock(
+  lifts: RecentLift[],
+  library?: Array<{ id: string; external_id: string | null }>,
+): string {
   if (lifts.length === 0) {
     return 'No recent lifts to anchor progression against.';
   }
+  const byExternalId = new Map<string, string>();
+  if (library) {
+    for (const lib of library) {
+      if (lib.external_id) byExternalId.set(lib.external_id, lib.id);
+    }
+  }
   return `Your recent lifts (for any of these in a new workout, REUSE the exercise and supply target_sets that mirror the last ladder with the top set bumped to the "suggest" value):\n${lifts
     .map((l) => {
-      const libRef = l.libraryExerciseId ? ` (lib_id: ${l.libraryExerciseId})` : '';
+      const liveLibId =
+        l.libraryExerciseId ??
+        (l.externalId ? byExternalId.get(l.externalId) ?? null : null);
+      const libRef = liveLibId ? ` (lib_id: ${liveLibId})` : '';
       const ladder = l.sets.map(formatSet).join(', ');
       const suggest = formatSet(l.suggestedTopSet);
       return `- ${l.name}${libRef} — last ${l.lastDate}: ${ladder} — suggest top set ${suggest}`;

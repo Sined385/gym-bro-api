@@ -21,7 +21,11 @@ import {
   safeParseToolArgs,
   streamToolFollowUp,
 } from './coach-stream.helper';
-import { computeRecentLifts, RecentLift } from '../common/recent-lifts';
+import {
+  buildRecentLiftsLookup,
+  computeRecentLifts,
+  RecentLift,
+} from '../common/recent-lifts';
 
 export interface ToolCallParams {
   toolName: string;
@@ -275,13 +279,15 @@ export class CoachToolsService {
       // Build recent-lifts map so createWorkoutSession can inject the
       // per-set ladder when the AI ignored the PROGRESSIVE OVERLOAD rule
       // (it sometimes ships a flat "8 × 12" for an exercise that was
-      // logged with a heavy warm-up ladder yesterday).
-      const recentLiftsMap = new Map<string, RecentLift>();
-      for (const lift of computeRecentLifts(params.recentSessions)) {
-        if (lift.libraryExerciseId) {
-          recentLiftsMap.set(lift.libraryExerciseId, lift);
-        }
-      }
+      // logged with a heavy warm-up ladder yesterday). Bridged via
+      // external_id because re-seeding the exercise library nulls every
+      // historical session_exercise.library_exercise_id — without the
+      // bridge, this map is empty on prod after any catalog refresh and
+      // no injection fires.
+      const recentLiftsMap = buildRecentLiftsLookup(
+        computeRecentLifts(params.recentSessions),
+        params.exerciseLibrary,
+      );
 
       const session = await this.createWorkoutSession(
         params.userId,

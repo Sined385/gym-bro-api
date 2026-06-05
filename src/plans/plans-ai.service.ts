@@ -369,7 +369,19 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
       return `Alt for day ${day.day_of_week} — "${day.alt_session!.session_title}":\n${slots}`;
     });
 
-    const recentLiftsBlock = formatRecentLiftsBlock(recentLifts);
+    // Flatten candidate pools so re-seeded historical lifts get
+    // bridged via external_id to the current library row's id.
+    const flatLibrary: Array<{ id: string; external_id: string | null }> = [];
+    const seenLibIds = new Set<string>();
+    for (const exercises of candidatePools.values()) {
+      for (const ex of exercises) {
+        if (!seenLibIds.has(ex.id)) {
+          seenLibIds.add(ex.id);
+          flatLibrary.push({ id: ex.id, external_id: ex.external_id ?? null });
+        }
+      }
+    }
+    const recentLiftsBlock = formatRecentLiftsBlock(recentLifts, flatLibrary);
     const focusLine = focus
       ? `\nUser focus for this plan: "${focus}". When the focus muscle group's primary day has an open slot for it, you MUST pick the canonical named lift if it's in that day's candidate pool (e.g. focus "bench press" → pick Barbell Bench Press for the chest compound slot on the push day). Any subsequent slot in that muscle group across the week picks a DIFFERENT exercise — don't repeat the same lift.`
       : '';
