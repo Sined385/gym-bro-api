@@ -193,10 +193,14 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
           return `- ${fullName} (day_of_week=${d.dayOfWeek}): Rest Day${todayMarker} — ${d.status}`;
         }
         const muscles = d.muscleGroups?.join(', ') ?? '';
+        // Surface library_exercise_id so the AI can preserve identity
+        // when modifying — modify_plan_days expects the full updated
+        // exercise list, and reusing the id of unchanged entries
+        // avoids re-resolving them server-side.
         const exercises = (d.exercises ?? [])
           .map(
             (e: any) =>
-              `    • ${e.name} (${e.muscleGroup}, ${e.setsDisplay}${e.suggestedWeight ? `, ${e.suggestedWeight}kg` : ''})`,
+              `    • ${e.name} (${e.muscleGroup}, ${e.setsDisplay}${e.suggestedWeight ? `, ${e.suggestedWeight}kg` : ''}${e.libraryExerciseId ? `, lib_id: ${e.libraryExerciseId}` : ''})`,
           )
           .join('\n');
         const exerciseBlock = exercises ? `\n${exercises}` : '';
@@ -211,8 +215,11 @@ You have full context about the user's training. Help them with workout plans, e
 
 Tool usage rules:
 - "Build my plan" / "Create a weekly plan" / "Generate my training plan" → call generate_training_plan. This creates a full 7-day plan. Do NOT use create_workout_session for plan requests.
-- "Create a workout" / "Build me a workout" / "Give me a workout for today" → call create_workout_session. This is for single ad-hoc workout sessions only.
-- "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
+- "Create a workout" / "Build me a workout" / "Give me a workout for today" → call create_workout_session. Use this ONLY when there is no existing planned workout for the target day, or the user explicitly wants a brand new replacement.
+- "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing the focus or day_type of existing plan days.
+- "Add bicep curls to today" / "Swap deadlift for romanian deadlift" / "Drop the squats from Tuesday" / "Add another chest exercise" → call modify_plan_days for the affected day. Read the day's current exercises from the "Current training plan" block, apply the user's edit (insert / replace / remove), and pass the FULL UPDATED exercises list. The server replaces exercises_json wholesale, so any exercise you omit will be removed.
+  - DO NOT use create_workout_session for this — that builds a fresh session from scratch and discards the user's original plan content.
+  - When passing the unchanged exercises, reuse their library_exercise_id from the Current training plan block. Only generate new exercise entries for the additions / swaps.
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
 
 HARD RULE — EVERY exercise you return in a tool call MUST use a library_exercise_id from the Available exercises list below. Do NOT invent exercises or pass entries without a library_exercise_id. The server will reject any free-form entry and you'll have to retry.

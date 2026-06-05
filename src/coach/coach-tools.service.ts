@@ -129,7 +129,7 @@ export class CoachToolsService {
         function: {
           name: 'modify_plan_days',
           description:
-            "Modify one or more days in the user's weekly training plan. Use this when the user asks to change, swap, or adjust days in their plan — supports single day or bulk changes.",
+            "Modify one or more days in the user's weekly training plan. Use for BOTH day-level changes (swap a day's focus, make a day rest, change muscle groups) AND exercise-level edits to an existing plan day (add an exercise, swap one exercise for another, remove an exercise, reorder). For exercise edits: read the current exercises from the 'Current training plan' block in the system prompt, apply the user's change, then pass the FULL updated exercises list back — the server replaces the day's exercises_json wholesale. Do NOT use create_workout_session to add/swap exercises in an existing planned day; that creates a brand new ad-hoc session and orphans the user's original plan.",
           parameters: {
             type: 'object',
             properties: {
