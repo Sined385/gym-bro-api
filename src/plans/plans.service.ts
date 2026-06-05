@@ -16,6 +16,7 @@ import {
   getWeekStartInTz,
   toMondayDowInTz,
 } from '../common/date-utils';
+import { synthesizeTargetSets } from '../common/exercise-set-synth';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import { computeRecentLifts } from '../common/recent-lifts';
@@ -426,20 +427,30 @@ export class PlansService {
       allExercises,
       onboarding,
     );
+    // Per-exercise weight + per-set ladder. suggested_weight is the
+    // single-number estimate iOS uses on dense list rows; target_sets
+    // is the full ladder the preview sheet renders. Without target_sets
+    // here, plan_day.exercises_json ships without per-set data and
+    // every plan exercise's preview falls back to the bare "3 × 10"
+    // pill — which is exactly the symptom users reported on Plan /
+    // Home tabs even after a regen.
+    const synthesizeForExercise = (ex: any) => {
+      if (!ex.library_exercise_id) return;
+      const suggested = weightMap.get(ex.library_exercise_id) ?? null;
+      ex.suggested_weight = suggested;
+      // Don't clobber an AI-supplied target_sets array (rare but
+      // possible when the AI ladder is more nuanced than a flat synth).
+      if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) return;
+      ex.target_sets = synthesizeTargetSets({
+        setsDisplay: ex.sets_display,
+        equipment: ex.equipment,
+        suggestedWeight: suggested,
+      });
+    };
     for (const day of generatedDays) {
-      if (day.exercises) {
-        for (const ex of day.exercises as any[]) {
-          if (ex.library_exercise_id) {
-            ex.suggested_weight = weightMap.get(ex.library_exercise_id) ?? null;
-          }
-        }
-      }
+      if (day.exercises) for (const ex of day.exercises as any[]) synthesizeForExercise(ex);
       if (day.alt_session?.exercises) {
-        for (const ex of day.alt_session.exercises as any[]) {
-          if (ex.library_exercise_id) {
-            ex.suggested_weight = weightMap.get(ex.library_exercise_id) ?? null;
-          }
-        }
+        for (const ex of day.alt_session.exercises as any[]) synthesizeForExercise(ex);
       }
     }
 
