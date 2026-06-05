@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { getWeekStart, toMondayDow } from '../common/date-utils';
+import { getWeekStartInTz, toMondayDowInTz } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
 import { aiContextLine } from '../common/ai-context';
@@ -8,6 +8,11 @@ import {
   computeRecentLifts as computeRecentLiftsShared,
   formatRecentLiftsBlock,
 } from '../common/recent-lifts';
+import {
+  inferUserIntent,
+  filterLibraryForContext,
+  type UserIntent,
+} from './prompt-intent';
 
 @Injectable()
 export class CoachPromptService {
@@ -50,7 +55,11 @@ export class CoachPromptService {
 
   async getWeekStats(userId: string) {
     const now = new Date();
-    const weekStart = getWeekStart(now);
+    const tzRow = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const weekStart = getWeekStartInTz(now, tzRow?.timezone ?? null);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const [completedCount, onboarding] = await Promise.all([
@@ -89,6 +98,9 @@ export class CoachPromptService {
     exerciseLibrary: any[],
     quickWorkout: any,
     activePlanData?: any,
+    tz: string | null = null,
+    latestUserMessage: string | null = null,
+    thisWeekExercises: Array<{ name: string; muscleGroup: string | null }> = [],
   ): string {
     const nameLine = userName ? `User name: ${userName}` : '';
 
@@ -110,45 +122,39 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
     // The AI uses this to drive progressive overload when reusing
     // familiar exercises — see the tool-usage rules below. Shared with
     // the plan-generation flow via common/recent-lifts.ts.
-    const recentLiftsBlock = formatRecentLiftsBlock(
-      computeRecentLiftsShared(recentSessions),
-    );
+    const recentLifts = computeRecentLiftsShared(recentSessions);
+    const recentLiftsBlock = formatRecentLiftsBlock(recentLifts);
+    const recentLiftIds = recentLifts
+      .map((l: any) => l.libraryExerciseId)
+      .filter((id: string | null | undefined): id is string => !!id);
 
-    // Cap exercise list to avoid bloating the system prompt (~15K+ tokens with 700+ exercises)
-    // Diversify by muscle group so all groups are represented
-    const MAX_EXERCISES = 150;
-    let cappedLibrary = exerciseLibrary;
-    if (exerciseLibrary.length > MAX_EXERCISES) {
-      const byGroup = new Map<string, any[]>();
-      for (const e of exerciseLibrary) {
-        const group = e.muscle_group ?? 'Other';
-        if (!byGroup.has(group)) byGroup.set(group, []);
-        byGroup.get(group)!.push(e);
-      }
-      cappedLibrary = [];
-      const groups = [...byGroup.keys()];
-      let idx = 0;
-      while (
-        cappedLibrary.length < MAX_EXERCISES &&
-        idx < exerciseLibrary.length
-      ) {
-        for (const g of groups) {
-          const arr = byGroup.get(g)!;
-          if (idx < arr.length) cappedLibrary.push(arr[idx]);
-          if (cappedLibrary.length >= MAX_EXERCISES) break;
-        }
-        idx++;
-      }
-    }
+    // Intent-driven library filter. The user's current message decides
+    // which slice of the catalog the AI sees this turn — focused
+    // muscle/equipment slice when they're specific, balanced fallback
+    // when they're vague. See `prompt-intent.ts` for the rules.
+    const intent = inferUserIntent(latestUserMessage, exerciseLibrary);
+    const filteredLibrary = filterLibraryForContext({
+      library: exerciseLibrary,
+      intent,
+      onboarding,
+      recentLiftIds,
+      cap: 120,
+    });
     const exerciseList =
-      cappedLibrary.length > 0
-        ? `Available exercises (use these library_exercise_id values when creating workouts — ${exerciseLibrary.length} total, showing ${cappedLibrary.length}):\n${cappedLibrary
+      filteredLibrary.length > 0
+        ? `Available exercises (use these library_exercise_id values when creating workouts — ${exerciseLibrary.length} total in library, ${filteredLibrary.length} surfaced this turn based on your message):\n${filteredLibrary
             .map(
               (e) =>
                 `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
             )
             .join('\n')}`
         : 'No exercise library available.';
+
+    // Dedup signal: exercises the user already did THIS CALENDAR WEEK
+    // (user-local Monday → now). The rule defers to direct user intent
+    // so it doesn't block "repeat Monday's bench" — see the priority
+    // block at the end of the prompt.
+    const thisWeekBlock = formatThisWeekDedupBlock(thisWeekExercises);
 
     const currentSession = quickWorkout
       ? `Current quick workout: "${quickWorkout.title}" with ${quickWorkout.exercises.length} exercises: ${quickWorkout.exercises.map((e: any) => e.name).join(', ')}`
@@ -164,8 +170,17 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
       'Sunday',
     ];
     const now = new Date();
-    const todayDow = toMondayDow(now);
-    const todayDate = now.toISOString().split('T')[0];
+    const todayDow = toMondayDowInTz(now, tz);
+    // Format today in the user's tz, not UTC — otherwise late-night
+    // sessions get tagged with yesterday's date in the prompt.
+    const todayDate = tz
+      ? new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(now)
+      : now.toISOString().split('T')[0];
 
     let planContext = 'No active training plan.';
     if (activePlanData?.plan && activePlanData.days?.length > 0) {
@@ -199,11 +214,6 @@ Tool usage rules:
 - "Create a workout" / "Build me a workout" / "Give me a workout for today" → call create_workout_session. This is for single ad-hoc workout sessions only.
 - "Swap Tuesday to chest" / "Focus this week on arms" / "Make Friday a rest day" → call modify_plan_days. For changing existing plan days.
 - CRITICAL: When the user specifies a muscle group or focus (e.g. "arms", "back", "chest"), you MUST use exactly that focus in the tool call. Never substitute a different muscle group. If the user says "arms", the session titles, muscle groups, and exercises MUST target arms — not legs, not chest, not any other group.
-
-Priority chain for exercise selection (highest wins):
-1. The user's current message. If they name a specific exercise (e.g. "bench press", "deadlift", "back squat"), find it in the Available exercises list below and use its library_exercise_id. If it isn't in the list, pick the closest sibling that IS in the list (e.g. user asks for "Sumo Deadlift" but list only has "Conventional Deadlift" → use Conventional; user asks for "Pirate Squat" with no match → pick Goblet Squat or Barbell Back Squat and briefly note the substitution in ai_message).
-2. The "Personal context from the user" block (if present in the profile). Use it as a stronger signal than onboarding fields. If the context implies they actually train with equipment beyond what onboarding lists (e.g. context says "I focus on bench press and deadlift" but onboarding says bodyweight), trust the context for exercise selection.
-3. Onboarding profile (Equipment, etc.) — use as the default when 1 and 2 give no signal.
 
 HARD RULE — EVERY exercise you return in a tool call MUST use a library_exercise_id from the Available exercises list below. Do NOT invent exercises or pass entries without a library_exercise_id. The server will reject any free-form entry and you'll have to retry.
 
@@ -246,6 +256,8 @@ NEVER return a generic "4 × 8" or "3 × 10" for an exercise that has load data 
 
 ${exerciseList}
 
+${thisWeekBlock}
+
 Rules:
 - Pick 4-6 exercises when creating workouts (fewer for short durations: 3-4 for ≤30 min)
 - When the user requests a specific duration (e.g. "30 min workout"), pass that duration_minutes in the tool call and scale the exercise count accordingly
@@ -253,6 +265,42 @@ Rules:
 - Avoid exercises that would aggravate listed injuries
 - Match rep scheme to the user's goal
 - ONLY use library_exercise_id values from the available exercises list above when creating workouts — never invent exercises or omit the id
-- Be direct and concise — no cheerleading`;
+- Be direct and concise — no cheerleading
+
+## Priority — the user's current message is law
+The user's message in THIS turn overrides every other signal above — onboarding equipment, personal context, recent lifts, the plan, the week-dedup list. Everything else is a hint; the user's direct ask is the order.
+
+Concrete cases:
+- If onboarding says "bodyweight" but the user asks for a "gym workout" / "barbell" / "machines", USE the gym library this turn. Ignore the onboarding equipment field entirely — the surfaced Available exercises list has already been filtered to honor the user's request.
+- If the user names a specific exercise that's in the Available exercises list, use its library_exercise_id even if the equipment doesn't match onboarding (e.g. "do bench press today" while onboarding=bodyweight → use Barbell Bench Press).
+- If the user says "I want to repeat Monday's bench" and bench is in the "already done this calendar week" block, include it anyway. The dedup rule is for unprompted choices, not direct requests.
+- If the user names an exercise that ISN'T in the surfaced list, pick the closest sibling that IS in the list (e.g. "Sumo Deadlift" → "Conventional Deadlift"; "Pirate Squat" → "Goblet Squat" or "Barbell Back Squat") and briefly note the substitution in ai_message.
+
+Fallback chain (only when the user's message gives no signal):
+1. Personal context from the user (onboarding free-text field)
+2. Onboarding profile (equipment, injuries, goal)
+3. Recent lifts (for progression continuity)`;
   }
+}
+
+/**
+ * Render the "you already did these this calendar week" block. The
+ * inner rule is intentionally permissive — direct user requests still
+ * win via the priority block at the end of the system prompt. This
+ * just nudges the AI toward variations when the user hasn't asked for
+ * a specific lift.
+ */
+function formatThisWeekDedupBlock(
+  thisWeekExercises: Array<{ name: string; muscleGroup: string | null }>,
+): string {
+  if (!thisWeekExercises || thisWeekExercises.length === 0) {
+    return '## This week so far\nNo workouts completed yet this calendar week.';
+  }
+  const lines = thisWeekExercises
+    .map((e) => `- ${e.name}${e.muscleGroup ? ` (${e.muscleGroup})` : ''}`)
+    .join('\n');
+  return `## Already done this calendar week — vary unless asked
+${lines}
+
+Rule: If the user does NOT specifically ask for one of these, propose a variation instead (different angle, equipment, or grip). For example, if Bench Press is listed, prefer Incline Bench Press, Dumbbell Bench Press, or Decline Press. If the user names one of these directly, follow their request — see the priority block below.`;
 }

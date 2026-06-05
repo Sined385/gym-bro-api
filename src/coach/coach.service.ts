@@ -12,6 +12,7 @@ import { SSEEvent } from './coach-stream.helper';
 import { CoachPromptService } from './coach-prompt.service';
 import { CoachToolsService } from './coach-tools.service';
 import { SubscriptionService } from '../subscription/subscription.service';
+import { getWeekStartInTz } from '../common/date-utils';
 
 @Injectable()
 export class CoachService {
@@ -226,7 +227,7 @@ export class CoachService {
     ] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { full_name: true },
+        select: { full_name: true, timezone: true },
       }),
       this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
       this.promptService.getRecentSessions(userId, 14),
@@ -252,6 +253,27 @@ export class CoachService {
       include: { exercises: { orderBy: { step_number: 'asc' } } },
     });
 
+    // Extract exercises completed since this calendar week's Monday in
+    // the user's timezone. Drives the dedup block in the system prompt
+    // so Coach defaults to variations instead of re-proposing what the
+    // user already did this week. Direct user requests still win via
+    // the priority block at the end of the prompt.
+    const weekStart = getWeekStartInTz(new Date(), user?.timezone ?? null);
+    const thisWeekExerciseMap = new Map<string, string | null>();
+    for (const session of recentSessions) {
+      if (!session.completed_at) continue;
+      if (new Date(session.completed_at) < weekStart) continue;
+      for (const ex of session.exercises ?? []) {
+        if (!ex.name) continue;
+        if (!thisWeekExerciseMap.has(ex.name)) {
+          thisWeekExerciseMap.set(ex.name, ex.muscle_group ?? null);
+        }
+      }
+    }
+    const thisWeekExercises = [...thisWeekExerciseMap.entries()].map(
+      ([name, muscleGroup]) => ({ name, muscleGroup }),
+    );
+
     const systemPrompt = this.promptService.buildSystemPrompt(
       user?.full_name ?? null,
       onboarding,
@@ -260,6 +282,9 @@ export class CoachService {
       exerciseLibrary,
       quickWorkout,
       activePlanData,
+      user?.timezone ?? null,
+      dto.content,
+      thisWeekExercises,
     );
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [

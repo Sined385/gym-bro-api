@@ -12,7 +12,10 @@ import {
   filterCandidates,
   assembleFromAiSelection,
 } from './exercise-matcher';
-import { getWeekStart, toMondayDow } from '../common/date-utils';
+import {
+  getWeekStartInTz,
+  toMondayDowInTz,
+} from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import { computeRecentLifts } from '../common/recent-lifts';
@@ -98,12 +101,19 @@ export class PlansService {
       }
     }
 
-    const onboarding = await this.prisma.onboardingData.findUnique({
-      where: { user_id: userId },
-    });
+    const [onboarding, userRow] = await Promise.all([
+      this.prisma.onboardingData.findUnique({
+        where: { user_id: userId },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { timezone: true },
+      }),
+    ]);
+    const tz = userRow?.timezone ?? null;
 
     // Calculate today's index as position within the returned days array
-    const absoluteTodayDow = toMondayDow(now);
+    const absoluteTodayDow = toMondayDowInTz(now, tz);
 
     // Adapt skipped days — mark past pending training days as skipped and redistribute
     const adapted = await this.adaptSkippedDays(
@@ -230,7 +240,12 @@ export class PlansService {
     //     past plan history to redistribute from, so generating past
     //     days would just create phantom skips.
     const now = new Date();
-    const todayDow = toMondayDow(now);
+    const planUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const planTz = planUser?.timezone ?? null;
+    const todayDow = toMondayDowInTz(now, planTz);
     const startDow = force ? 0 : todayDow;
 
     // Phase A: fetch everything the AI needs in parallel BEFORE the
@@ -238,7 +253,7 @@ export class PlansService {
     // `weekContext` parameter on generateWeeklyPlan so the AI structures
     // already-trained days as completed training days instead of
     // proposing a duplicate workout for a day the user already finished.
-    const weekStartDate = getWeekStart(now);
+    const weekStartDate = getWeekStartInTz(now, planTz);
     const tomorrowStart = new Date(now);
     tomorrowStart.setHours(0, 0, 0, 0);
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
@@ -306,7 +321,7 @@ export class PlansService {
     >();
     for (const session of thisWeekSessions) {
       if (!session.completed_at) continue;
-      const dow = toMondayDow(session.completed_at);
+      const dow = toMondayDowInTz(session.completed_at, planTz);
       const existing = completedDaysMap.get(dow);
       const muscleGroups: string[] = [];
       const topLifts: string[] = [];
@@ -428,7 +443,7 @@ export class PlansService {
       }
     }
 
-    const weekStart = getWeekStart(now);
+    const weekStart = getWeekStartInTz(now, planTz);
 
     const plan = await this.prisma.trainingPlan.create({
       data: {

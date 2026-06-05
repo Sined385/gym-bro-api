@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ACCENT_COLORS } from './session-exercise.service';
 import { WeightSuggestionService } from './weight-suggestion.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
-import { getWeekStart } from '../common/date-utils';
+import { getWeekStartInTz } from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
 import { aiContextLine } from '../common/ai-context';
@@ -270,7 +270,11 @@ Rules:
       totalCalories: number;
     } | null,
   ): Promise<string | null> {
-    const weekStart = getWeekStart(new Date());
+    const tzRow = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const weekStart = getWeekStartInTz(new Date(), tzRow?.timezone ?? null);
 
     // Check cache
     const cached = await this.prisma.weeklyOverview.findUnique({
@@ -796,7 +800,11 @@ Rules:
 
   private async getWeekStats(userId: string) {
     const now = new Date();
-    const weekStart = getWeekStart(now);
+    const tzRow = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const weekStart = getWeekStartInTz(now, tzRow?.timezone ?? null);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const [completedCount, onboarding] = await Promise.all([

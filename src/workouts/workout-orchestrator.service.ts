@@ -3,7 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { getWeekStart, toMondayDow } from '../common/date-utils';
+import {
+  getWeekStartInTz,
+  toMondayDowInTz,
+  userLocalDayBoundsUtc,
+} from '../common/date-utils';
 
 /**
  * Cross-cutting workout lifecycle coordinator. Owns post-completion side
@@ -34,6 +38,20 @@ export class WorkoutOrchestratorService {
   ) {}
 
   /**
+   * Resolve the user's IANA timezone (e.g. "Europe/Bucharest"). Stored
+   * by the push-token registration flow. Returns null if the user
+   * hasn't registered a device yet — callers fall back to server-local
+   * behavior in that case.
+   */
+  private async getUserTimezone(userId: string): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    return user?.timezone ?? null;
+  }
+
+  /**
    * Canonical post-completion hook. Called by every code path that
    * transitions a `WorkoutSession.status` to `'completed'`.
    *
@@ -57,7 +75,8 @@ export class WorkoutOrchestratorService {
     await this.prisma.motivationInsight.deleteMany({
       where: { user_id: userId },
     });
-    const weekStart = getWeekStart(new Date());
+    const tz = await this.getUserTimezone(userId);
+    const weekStart = getWeekStartInTz(new Date(), tz);
     await this.prisma.weeklyOverview.deleteMany({
       where: { user_id: userId, week_start: weekStart },
     });
@@ -115,7 +134,8 @@ export class WorkoutOrchestratorService {
     const onboarding = await this.prisma.onboardingData.findUnique({
       where: { user_id: userId },
     });
-    const todayDow = toMondayDow(new Date());
+    const tz = await this.getUserTimezone(userId);
+    const todayDow = toMondayDowInTz(new Date(), tz);
     await this.plansService.redistributeDeficit(
       plan,
       todayDow,
@@ -219,7 +239,8 @@ export class WorkoutOrchestratorService {
       'Saturday',
       'Sunday',
     ];
-    const todayDow = toMondayDow(new Date());
+    const tz = await this.getUserTimezone(userId);
+    const todayDow = toMondayDowInTz(new Date(), tz);
 
     const plan = await this.prisma.trainingPlan.findFirst({
       where: { user_id: userId, is_active: true },
@@ -330,23 +351,36 @@ export class WorkoutOrchestratorService {
     });
     if (!plan) return { recoveredDayIds: [] };
 
-    const todayDow = toMondayDow(new Date());
+    const tz = await this.getUserTimezone(userId);
+    const todayBounds = userLocalDayBoundsUtc(new Date(), tz);
+    const todayDow = todayBounds.dow;
     // Include today: when the user regenerates a plan mid-week after
     // already completing today's session, we want today's training day
     // in the new plan to link to that completed session — otherwise
     // the user sees "do Pull Day" on Home for a workout they finished
     // an hour ago.
+    //
+    // Don't filter out days with `adapted_at` set: redistributeDeficit
+    // stamps adapted_at when it promotes a rest day to training, and
+    // those promoted days still need to be linked to a real completed
+    // session afterward. Idempotency is enforced inside the loop via
+    // the workout_session_id-already-pointing-at-a-completed-session
+    // check, which is the actual "don't re-do work" signal.
     const skippedCandidates = plan.days.filter(
       (d) =>
         d.status === 'pending' &&
         d.day_type === 'training' &&
-        d.day_of_week <= todayDow &&
-        !d.adapted_at,
+        d.day_of_week <= todayDow,
     );
     if (skippedCandidates.length === 0) return { recoveredDayIds: [] };
 
-    const planWeekStart = new Date(plan.week_start_date);
-    planWeekStart.setHours(0, 0, 0, 0);
+    // Anchor day-window math at the user's local midnight of TODAY,
+    // then step backward by (todayDow - day_of_week) days. plan.week_start_date
+    // is unreliable as an anchor: older plans were stamped against the
+    // server's UTC midnight (off by hours from user-local Monday) and
+    // newer plans get the user-tz Monday. Anchoring at "today in user
+    // tz" is consistent for both.
+    const userTodayStartMs = todayBounds.start.getTime();
 
     const recoveredDayIds: string[] = [];
     for (const day of skippedCandidates) {
@@ -361,10 +395,9 @@ export class WorkoutOrchestratorService {
         if (linked?.status === 'completed') continue;
       }
 
-      const dayStart = new Date(planWeekStart);
-      dayStart.setDate(dayStart.getDate() + day.day_of_week);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
+      const dayOffset = day.day_of_week - todayDow;
+      const dayStart = new Date(userTodayStartMs + dayOffset * 86_400_000);
+      const dayEnd = new Date(dayStart.getTime() + 86_400_000);
       // Filter out sessions that are already linked to another plan day
       // (e.g. the previous active plan claimed them before being
       // deactivated by a force-regen). PlanDay.workout_session_id is

@@ -11,7 +11,7 @@ import { ACCENT_COLORS } from './session-exercise.service';
 import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
-import { getWeekStart, toMondayDow } from '../common/date-utils';
+import { getWeekStartInTz, toMondayDowInTz } from '../common/date-utils';
 import { formatSessionResponse } from '../common/format-session';
 import { ChallengesService } from './challenges.service';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
@@ -32,7 +32,16 @@ export class HomeService {
 
   async getDashboard(userId: string) {
     const now = new Date();
-    const weekStart = getWeekStart(now);
+    // Anchor every per-week / per-day boundary on the user's timezone
+    // (Railway runs in UTC, which silently shifts what "this week"
+    // means for any user east of UTC). Single sequential fetch so the
+    // bounds are right before the parallel block fans out.
+    const tzRow = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const tz = tzRow?.timezone ?? null;
+    const weekStart = getWeekStartInTz(now, tz);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const todayStr = now.toISOString().split('T')[0];
@@ -118,7 +127,7 @@ export class HomeService {
     }
 
     // Compute today's plan day
-    const todayDow = toMondayDow(now);
+    const todayDow = toMondayDowInTz(now, tz);
     const todayPlanDay = activePlan?.days.find(
       (d) => d.day_of_week === todayDow,
     );
@@ -432,7 +441,11 @@ export class HomeService {
 
   async getWeekCalendar(userId: string) {
     const now = new Date();
-    const weekStart = getWeekStart(now);
+    const tzRow = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const weekStart = getWeekStartInTz(now, tzRow?.timezone ?? null);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const sessions = await this.prisma.workoutSession.findMany({

@@ -15,6 +15,7 @@ describe('WorkoutOrchestratorService', () => {
     weeklyOverview: { deleteMany: jest.Mock };
     trainingPlan: { findFirst: jest.Mock };
     planDay: { findFirst: jest.Mock };
+    user: { findUnique: jest.Mock };
   };
 
   beforeEach(async () => {
@@ -31,6 +32,9 @@ describe('WorkoutOrchestratorService', () => {
       // adaptPlanDayToActualSession returns early when no plan day is
       // linked to the session.
       planDay: { findFirst: jest.fn().mockResolvedValue(null) },
+      // getUserTimezone — null tz makes the helpers fall back to
+      // server-local behavior, preserving prior assertions.
+      user: { findUnique: jest.fn().mockResolvedValue({ timezone: null }) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
