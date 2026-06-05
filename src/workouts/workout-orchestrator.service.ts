@@ -167,14 +167,22 @@ export class WorkoutOrchestratorService {
 
     const session = await this.prisma.workoutSession.findUnique({
       where: { id: sessionId },
-      include: { exercises: { orderBy: { step_number: 'asc' } } },
+      include: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          // Same reason as linkSessionToToday — keep per-set targets
+          // attached so the plan day reflects what the user actually
+          // did, weights and all.
+          include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+        },
+      },
     });
     if (!session) return;
 
     const actualMuscles = new Set(
       session.exercises
-        .map((e) => e.muscle_group)
-        .filter((m): m is string => !!m),
+        .map((e: any) => e.muscle_group)
+        .filter((m: string | null): m is string => !!m),
     );
     const plannedMuscles = new Set(planDay.muscle_groups);
 
@@ -189,13 +197,14 @@ export class WorkoutOrchestratorService {
       if (equal) return;
     }
 
-    const newExercisesJson = session.exercises.map((e) => ({
+    const newExercisesJson = session.exercises.map((e: any) => ({
       library_exercise_id: e.library_exercise_id ?? null,
       external_id: e.external_id ?? null,
       name: e.name,
       muscle_group: e.muscle_group ?? null,
       equipment: e.equipment ?? null,
       sets_display: e.sets_display,
+      target_sets: serializeExerciseSetsForJson(e.exercise_sets),
     }));
 
     await this.prisma.planDay.update({
@@ -255,7 +264,16 @@ export class WorkoutOrchestratorService {
 
     const session = await this.prisma.workoutSession.findUnique({
       where: { id: sessionId },
-      include: { exercises: { orderBy: { step_number: 'asc' } } },
+      include: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          // Include per-set targets so we can mirror them into the
+          // plan day's exercises_json — without this, the dashboard /
+          // plan tab lose the weights between app launches because
+          // they read from exercises_json, not session_exercise rows.
+          include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+        },
+      },
     });
     if (!session) return { todayUpdated: false, movedToDayLabel: null };
 
@@ -269,13 +287,14 @@ export class WorkoutOrchestratorService {
       Array.isArray(originalExercises) &&
       (originalExercises as unknown[]).length > 0;
 
-    const newExercisesJson = session.exercises.map((e) => ({
+    const newExercisesJson = session.exercises.map((e: any) => ({
       library_exercise_id: e.library_exercise_id ?? null,
       external_id: e.external_id ?? null,
       name: e.name,
       muscle_group: e.muscle_group ?? null,
       equipment: e.equipment ?? null,
       sets_display: e.sets_display,
+      target_sets: serializeExerciseSetsForJson(e.exercise_sets),
     }));
     const muscleGroups = [
       ...new Set(
@@ -436,4 +455,46 @@ export class WorkoutOrchestratorService {
 
     return { recoveredDayIds };
   }
+}
+
+/**
+ * Project session_exercise.exercise_sets rows into the JSON shape we
+ * persist on plan_day.exercises_json[i].target_sets. Mirrors what the
+ * Coach create_workout_session tool stores so the dashboard
+ * planned_workout / plan tab / chat history all read uniformly.
+ *
+ * Returns undefined when there are no sets so the JSON stays compact
+ * and old rows (without target_sets) don't accidentally turn into an
+ * empty array that iOS would still try to render.
+ */
+function serializeExerciseSetsForJson(
+  sets: Array<{
+    set_number: number;
+    weight: any;
+    weight_unit: string | null;
+    reps: number;
+    is_bodyweight: boolean | null;
+  }> | null | undefined,
+):
+  | Array<{
+      set_number: number;
+      weight: number | null;
+      weight_unit: string;
+      reps: number;
+      is_bodyweight: boolean;
+    }>
+  | undefined {
+  if (!sets || sets.length === 0) return undefined;
+  return sets.map((s) => ({
+    set_number: s.set_number,
+    weight:
+      s.weight === null || s.weight === undefined
+        ? null
+        : typeof s.weight === 'string'
+          ? Number(s.weight)
+          : (s.weight as number),
+    weight_unit: s.weight_unit ?? 'kg',
+    reps: s.reps,
+    is_bodyweight: s.is_bodyweight ?? false,
+  }));
 }

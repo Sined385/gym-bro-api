@@ -12,7 +12,7 @@ import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStartInTz, toMondayDowInTz } from '../common/date-utils';
-import { formatSessionResponse } from '../common/format-session';
+import { formatSessionResponse, serializeExerciseSets } from '../common/format-session';
 import { ChallengesService } from './challenges.service';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from '../plans/format-plan';
@@ -99,6 +99,10 @@ export class HomeService {
         include: {
           exercises: {
             orderBy: { step_number: 'asc' },
+            // Per-set targets — without these, weights vanish from
+            // the chat card / quick workout block on app relaunch
+            // because the dashboard is what iOS re-fetches.
+            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
           },
         },
       }),
@@ -181,6 +185,7 @@ export class HomeService {
               suggested_weight: e.suggested_weight ?? null,
               image_url: exerciseImageUrl(extId),
               external_id: extId,
+              sets: serializeExerciseSets(e.target_sets),
             };
           }),
         };
@@ -413,6 +418,7 @@ export class HomeService {
               suggested_weight: e.suggested_weight ?? null,
               image_url: exerciseImageUrl(e.external_id),
               external_id: e.external_id ?? null,
+              sets: serializeExerciseSets(e.exercise_sets),
             })),
           }
         : null,

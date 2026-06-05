@@ -8,6 +8,7 @@ import { SendMessageDto } from './dto/coach.dto';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { exerciseImageUrl } from '../common/exercise-image';
+import { serializeExerciseSets } from '../common/format-session';
 import { SSEEvent } from './coach-stream.helper';
 import { CoachPromptService } from './coach-prompt.service';
 import { CoachToolsService } from './coach-tools.service';
@@ -103,7 +104,14 @@ export class CoachService {
       sessionIds.length > 0
         ? await this.prisma.workoutSession.findMany({
             where: { id: { in: sessionIds } },
-            include: { exercises: { orderBy: { step_number: 'asc' } } },
+            include: {
+              exercises: {
+                orderBy: { step_number: 'asc' },
+                // Carry per-set targets — chat workout cards in history
+                // need the weights, not just the sets_display pill.
+                include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+              },
+            },
           })
         : [];
 
@@ -125,7 +133,7 @@ export class CoachService {
                 title: session.title,
                 type: session.type,
                 duration_minutes: session.duration_minutes,
-                exercises: session.exercises.map((e) => ({
+                exercises: session.exercises.map((e: any) => ({
                   id: e.id,
                   name: e.name,
                   step_number: e.step_number,
@@ -137,6 +145,7 @@ export class CoachService {
                   suggested_weight: e.suggested_weight ?? null,
                   image_url: exerciseImageUrl(e.external_id),
                   external_id: e.external_id ?? null,
+                  sets: serializeExerciseSets(e.exercise_sets),
                 })),
               }
             : null,

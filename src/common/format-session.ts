@@ -1,5 +1,13 @@
 import { exerciseImageUrl } from './exercise-image';
 
+export interface FormattableExerciseSet {
+  set_number: number;
+  weight: number | string | null; // Decimal serializes as string from Prisma
+  weight_unit?: string | null;
+  reps: number;
+  is_bodyweight?: boolean | null;
+}
+
 export interface FormattableSession {
   id: string;
   user_id: string;
@@ -24,6 +32,14 @@ export interface FormattableSession {
     muscle_group: string | null;
     equipment: string | null;
     suggested_weight: number | null;
+    // Per-set targets (Coach injection, plan day pre-fill, or AI's
+    // explicit target_sets). Either source: live `exercise_sets`
+    // children when the row exists in DB, or `target_sets` baked into
+    // a plain object when projecting from a freshly-built session
+    // (e.g. startPlanSession's read-only response). Optional so
+    // legacy callers that don't carry per-set data still type-check.
+    exercise_sets?: FormattableExerciseSet[];
+    target_sets?: FormattableExerciseSet[];
   }[];
 }
 
@@ -53,6 +69,40 @@ export function formatSessionResponse(session: FormattableSession) {
       suggested_weight: e.suggested_weight ?? null,
       image_url: exerciseImageUrl(e.external_id),
       external_id: e.external_id ?? null,
+      sets: serializeExerciseSets(e.exercise_sets ?? e.target_sets),
     })),
   };
+}
+
+/**
+ * Normalise per-set targets into the JSON shape iOS expects across
+ * dashboard / plan / coach surfaces. Centralised so every endpoint
+ * emits the same field names (set_number / weight / weight_unit /
+ * reps / is_bodyweight) regardless of whether the source is a live
+ * `exercise_sets` row, a plain JSON `target_sets` blob, or a SSE
+ * payload's `sets`. Returns an empty array when nothing's set so
+ * iOS can rely on `sets.isEmpty` rather than null-checking.
+ */
+export function serializeExerciseSets(
+  sets: FormattableExerciseSet[] | null | undefined,
+): Array<{
+  set_number: number;
+  weight: number | null;
+  weight_unit: string;
+  reps: number;
+  is_bodyweight: boolean;
+}> {
+  if (!sets || sets.length === 0) return [];
+  return sets.map((s) => ({
+    set_number: s.set_number,
+    weight:
+      s.weight === null || s.weight === undefined
+        ? null
+        : typeof s.weight === 'string'
+          ? Number(s.weight)
+          : s.weight,
+    weight_unit: s.weight_unit ?? 'kg',
+    reps: s.reps,
+    is_bodyweight: s.is_bodyweight ?? false,
+  }));
 }

@@ -1,5 +1,6 @@
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { exerciseImageUrl } from '../common/exercise-image';
+import { serializeExerciseSets } from '../common/format-session';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -9,6 +10,11 @@ const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
  * truth) and `HomeService.getDashboard` (Phase 3 — embeds plan_days
  * so the iOS AppContext can render the full week without a second
  * round-trip).
+ *
+ * Per-set targets: read from `exercises_json[i].target_sets` (the
+ * shape we persist in linkSessionToToday and adaptPlanDayToActualSession).
+ * Falls back to an empty array — iOS treats that as "no per-set
+ * targets, use sets_display fallback".
  */
 export function formatPlanDay(day: any) {
   const exercises = (day.exercises_json ?? []) as any[];
@@ -30,6 +36,7 @@ export function formatPlanDay(day: any) {
       suggestedWeight: e.suggested_weight ?? null,
       imageUrl: exerciseImageUrl(e.external_id),
       externalId: e.external_id ?? null,
+      sets: serializeExerciseSets(e.target_sets),
     })),
     workoutSession: day.workout_session
       ? {
