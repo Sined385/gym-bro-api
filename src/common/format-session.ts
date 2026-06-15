@@ -110,13 +110,20 @@ export function serializeExerciseSets(
     const raw = s as any;
     // weight may live under `weight` (canonical) or `weight_kg`
     // (legacy AI-internal shape that leaked into some JSON rows).
+    // ANY non-number gets coerced via Number(): Prisma's Decimal
+    // column comes back as a Decimal object (typeof 'object'); a
+    // string check alone misses it and JSON.stringify silently
+    // serializes the Decimal as a string at response time, which
+    // breaks iOS Codable (it expects Double).
     const weightCandidate = raw.weight ?? raw.weight_kg;
-    const weight =
-      weightCandidate === null || weightCandidate === undefined
-        ? null
-        : typeof weightCandidate === 'string'
-          ? Number(weightCandidate)
-          : weightCandidate;
+    let weight: number | null = null;
+    if (weightCandidate !== null && weightCandidate !== undefined) {
+      const n =
+        typeof weightCandidate === 'number'
+          ? weightCandidate
+          : Number(weightCandidate);
+      weight = Number.isFinite(n) ? n : null;
+    }
     return {
       set_number:
         typeof raw.set_number === 'number' && raw.set_number > 0

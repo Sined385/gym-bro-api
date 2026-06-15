@@ -47,6 +47,38 @@ describe('serializeExerciseSets', () => {
     expect(serializeExerciseSets(input)[0].weight).toBe(87.5);
   });
 
+  it('coerces Decimal-like objects (Prisma @prisma/adapter-pg path)', () => {
+    // Prisma Decimal columns come back as Decimal instances (typeof
+    // 'object'). A plain string-check misses them and JSON.stringify
+    // silently turns them into strings at response time — iOS then
+    // throws typeMismatch(Double, found String).
+    class FakeDecimal {
+      constructor(private value: number) {}
+      valueOf() {
+        return this.value;
+      }
+      toJSON() {
+        return String(this.value);
+      }
+    }
+    const input = [
+      { set_number: 1, weight: new FakeDecimal(60), weight_unit: 'kg', reps: 8, is_bodyweight: false },
+    ] as any;
+    const out = serializeExerciseSets(input);
+    expect(typeof out[0].weight).toBe('number');
+    expect(out[0].weight).toBe(60);
+  });
+
+  it('drops NaN / Infinity to null instead of letting them reach iOS', () => {
+    const input = [
+      { set_number: 1, weight: 'oops', reps: 5, is_bodyweight: false },
+      { set_number: 2, weight: Infinity, reps: 5, is_bodyweight: false },
+    ] as any;
+    const out = serializeExerciseSets(input);
+    expect(out[0].weight).toBe(null);
+    expect(out[1].weight).toBe(null);
+  });
+
   it('coerces nullish weight to null without crashing', () => {
     const input = [
       { set_number: 1, weight: null, weight_unit: 'kg', reps: 10, is_bodyweight: true },
