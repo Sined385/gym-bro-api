@@ -119,6 +119,61 @@ export class WorkoutOrchestratorService {
   }
 
   /**
+   * Ensure the user's active plan covers the current week. If
+   * `now >= plan.week_start_date + 7d`, deactivate the stale plan
+   * and generate a fresh one.
+   *
+   * Lives here (not on PlansService) because:
+   *  1. We need to call it from /home/dashboard too — iOS reads
+   *     plan_days off the dashboard payload, so a check that only
+   *     runs in /api/v1/plans (getActivePlan) misses every cold
+   *     dashboard load. A user returning to the app after a week
+   *     would see last week's plan until they manually regenerated.
+   *  2. PlansService can't be cleanly imported into HomeService
+   *     (HomeModule is imported BY PlansModule for WeightSuggestion);
+   *     the orchestrator already injects PlansService via
+   *     forwardRef, so this is the natural seam.
+   *
+   * Bypasses the premium gate that applies to user-initiated regens.
+   * A natural week rollover is a system operation — pay-walling it
+   * would leave non-premium users stuck on a stale plan with no
+   * recourse, which is broken UX regardless of subscription tier.
+   *
+   * Idempotent: a second call on an already-current plan no-ops.
+   * Wrap in catch at the call site if a generation failure shouldn't
+   * fail the request that triggered the check.
+   */
+  async ensureCurrentWeek(userId: string): Promise<void> {
+    const plan = await this.prisma.trainingPlan.findFirst({
+      where: { user_id: userId, is_active: true },
+      select: { id: true, week_start_date: true },
+    });
+    if (!plan) return;
+    const weekEnd = new Date(
+      plan.week_start_date.getTime() + 7 * 24 * 60 * 60 * 1000,
+    );
+    if (new Date() < weekEnd) return;
+
+    // Mirror what generatePlan(force=true) does to clear the slate —
+    // null out workout_session_id FKs on the old plan's days, then
+    // mark the plan inactive so the existing-active-plan check in
+    // generatePlan(force=false) doesn't early-return.
+    await this.prisma.planDay.updateMany({
+      where: { plan_id: plan.id, workout_session_id: { not: null } },
+      data: { workout_session_id: null },
+    });
+    await this.prisma.trainingPlan.update({
+      where: { id: plan.id },
+      data: { is_active: false },
+    });
+
+    // force=false so the premium check in generatePlan stays out of
+    // the way. The deactivation above means generation proceeds
+    // without the "Plan already exists" early-return.
+    await this.plansService.generatePlan(userId, false);
+  }
+
+  /**
    * Helper: fetch the active plan + onboarding and ask PlansService to
    * redistribute any muscle-group deficit from truly-skipped past days
    * (i.e. past pending training days with no completed session that

@@ -67,39 +67,36 @@ export class PlansService {
       };
     }
 
-    // Auto-advance week if needed
-    const now = new Date();
-    const weekEnd = new Date(
-      plan.week_start_date.getTime() + 7 * 24 * 60 * 60 * 1000,
-    );
-    if (now >= weekEnd) {
-      // Generate new week and return it instead of stale plan
-      await this.generatePlan(userId, true);
-      plan = await this.prisma.trainingPlan.findFirst({
-        where: { user_id: userId, is_active: true },
-        include: {
-          days: {
-            orderBy: { day_of_week: 'asc' },
-            include: {
-              workout_session: {
-                select: {
-                  id: true,
-                  duration_minutes: true,
-                  completed_at: true,
-                },
+    // Auto-advance week if the active plan has aged past its end
+    // date. Shared helper in WorkoutOrchestratorService also runs
+    // from /home/dashboard, so both entry points keep the plan
+    // fresh consistently. Bypasses the premium gate that applies
+    // to user-initiated regens (this is a system rollover).
+    await this.orchestrator.ensureCurrentWeek(userId).catch(() => {});
+    plan = await this.prisma.trainingPlan.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: {
+        days: {
+          orderBy: { day_of_week: 'asc' },
+          include: {
+            workout_session: {
+              select: {
+                id: true,
+                duration_minutes: true,
+                completed_at: true,
               },
             },
           },
         },
-      });
-      if (!plan) {
-        return {
-          status: 'generating' as const,
-          plan: null,
-          days: [],
-          todayIndex: 0,
-        };
-      }
+      },
+    });
+    if (!plan) {
+      return {
+        status: 'generating' as const,
+        plan: null,
+        days: [],
+        todayIndex: 0,
+      };
     }
 
     const [onboarding, userRow] = await Promise.all([
@@ -114,7 +111,7 @@ export class PlansService {
     const tz = userRow?.timezone ?? null;
 
     // Calculate today's index as position within the returned days array
-    const absoluteTodayDow = toMondayDowInTz(now, tz);
+    const absoluteTodayDow = toMondayDowInTz(new Date(), tz);
 
     // Adapt skipped days — mark past pending training days as skipped and redistribute
     const adapted = await this.adaptSkippedDays(

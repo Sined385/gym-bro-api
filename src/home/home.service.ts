@@ -32,6 +32,14 @@ export class HomeService {
 
   async getDashboard(userId: string) {
     const now = new Date();
+    // Bump the user to the current week if their active plan is stale.
+    // iOS reads plan_days off the dashboard payload, so without this
+    // check a user coming back after a week still sees last week's
+    // plan (and "today is a rest day" — wrong day, wrong plan).
+    // Swallow failures so dashboard load never fails because plan-gen
+    // hit a snag.
+    await this.orchestrator.ensureCurrentWeek(userId).catch(() => {});
+
     // Anchor every per-week / per-day boundary on the user's timezone
     // (Railway runs in UTC, which silently shifts what "this week"
     // means for any user east of UTC). Single sequential fetch so the
