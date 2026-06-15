@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import {
   getWeekStartInTz,
   toMondayDowInTz,
@@ -35,6 +36,7 @@ export class WorkoutOrchestratorService {
     private readonly plansService: PlansService,
     private readonly analytics: AnalyticsService,
     private readonly notificationsService: NotificationsService,
+    private readonly subscriptionService: SubscriptionService,
   ) {}
 
   /**
@@ -167,10 +169,18 @@ export class WorkoutOrchestratorService {
       data: { is_active: false },
     });
 
-    // force=false so the premium check in generatePlan stays out of
-    // the way. The deactivation above means generation proceeds
-    // without the "Plan already exists" early-return.
-    await this.plansService.generatePlan(userId, false);
+    // Premium users get an AI-generated plan; non-premium users get
+    // the deterministic template (same path the AI service falls
+    // back to on failure) — no OpenAI tokens spent on free-tier
+    // weekly rollovers. force=false keeps the user-initiated regen
+    // premium gate out of the way; the deactivation above means the
+    // "Plan already exists" early-return doesn't fire either.
+    const premium = await this.subscriptionService
+      .isPremium(userId)
+      .catch(() => false);
+    await this.plansService.generatePlan(userId, false, undefined, {
+      forceFallback: !premium,
+    });
   }
 
   /**

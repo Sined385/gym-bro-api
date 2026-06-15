@@ -43,7 +43,14 @@ export class PlansAiService {
     startDayOfWeek: number = 0,
     focus?: string,
     weekContext?: PlanWeekContext,
+    opts?: { forceFallback?: boolean },
   ): Promise<SkeletonDay[]> {
+    // Non-premium users on auto-rollover go straight to the
+    // deterministic template — no OpenAI call. Same code path that
+    // runs when the AI errors below, just opted into deliberately.
+    if (opts?.forceFallback) {
+      return this.generateFallbackPlan(onboarding, startDayOfWeek);
+    }
     const dayNames = [
       'Monday',
       'Tuesday',

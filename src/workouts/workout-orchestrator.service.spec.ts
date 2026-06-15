@@ -4,12 +4,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PlansService } from '../plans/plans.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 
 describe('WorkoutOrchestratorService', () => {
   let service: WorkoutOrchestratorService;
   let plans: { onSessionCompleted: jest.Mock; generatePlan: jest.Mock };
   let analytics: { track: jest.Mock };
   let notifications: { recalculatePreferredHour: jest.Mock };
+  let subscription: { isPremium: jest.Mock };
   let prisma: {
     motivationInsight: { deleteMany: jest.Mock };
     weeklyOverview: { deleteMany: jest.Mock };
@@ -30,6 +32,8 @@ describe('WorkoutOrchestratorService', () => {
     notifications = {
       recalculatePreferredHour: jest.fn().mockResolvedValue(undefined),
     };
+    // Default premium: false. Individual tests override per case.
+    subscription = { isPremium: jest.fn().mockResolvedValue(false) };
     prisma = {
       motivationInsight: { deleteMany: jest.fn().mockResolvedValue({}) },
       weeklyOverview: { deleteMany: jest.fn().mockResolvedValue({}) },
@@ -51,6 +55,7 @@ describe('WorkoutOrchestratorService', () => {
         { provide: PlansService, useValue: plans },
         { provide: AnalyticsService, useValue: analytics },
         { provide: NotificationsService, useValue: notifications },
+        { provide: SubscriptionService, useValue: subscription },
       ],
     }).compile();
 
@@ -105,16 +110,15 @@ describe('WorkoutOrchestratorService', () => {
       expect(plans.generatePlan).not.toHaveBeenCalled();
     });
 
-    it('deactivates the stale plan and regenerates without the premium gate', async () => {
-      // 10 days ago — well past the 7-day weekEnd.
+    it('non-premium → deterministic fallback (no OpenAI tokens spent)', async () => {
       const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
       prisma.trainingPlan.findFirst.mockResolvedValueOnce({
         id: 'plan-stale',
         week_start_date: stale,
       });
+      subscription.isPremium.mockResolvedValueOnce(false);
       await service.ensureCurrentWeek('user-1');
 
-      // FK-clearing sweep on plan_days that pointed at sessions.
       expect(prisma.planDay.updateMany).toHaveBeenCalledWith({
         where: {
           plan_id: 'plan-stale',
@@ -122,15 +126,56 @@ describe('WorkoutOrchestratorService', () => {
         },
         data: { workout_session_id: null },
       });
-      // Stale plan deactivated.
       expect(prisma.trainingPlan.update).toHaveBeenCalledWith({
         where: { id: 'plan-stale' },
         data: { is_active: false },
       });
-      // Critical contract: regen is called with force=false, which
-      // means the premium gate in generatePlan is skipped. System-
-      // initiated week rollovers must not paywall non-premium users.
-      expect(plans.generatePlan).toHaveBeenCalledWith('user-1', false);
+      // Critical: force=false (premium gate skipped) AND
+      // forceFallback=true (no AI call). Free user gets a fresh
+      // current-week plan from the deterministic template path.
+      expect(plans.generatePlan).toHaveBeenCalledWith(
+        'user-1',
+        false,
+        undefined,
+        { forceFallback: true },
+      );
+    });
+
+    it('premium → AI regen (forceFallback=false)', async () => {
+      const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+      prisma.trainingPlan.findFirst.mockResolvedValueOnce({
+        id: 'plan-stale',
+        week_start_date: stale,
+      });
+      subscription.isPremium.mockResolvedValueOnce(true);
+      await service.ensureCurrentWeek('user-1');
+
+      expect(plans.generatePlan).toHaveBeenCalledWith(
+        'user-1',
+        false,
+        undefined,
+        { forceFallback: false },
+      );
+    });
+
+    it('falls back to template when subscription lookup throws', async () => {
+      // Subscription service failures should not block plan
+      // generation. Defaulting to "not premium" is the safe path —
+      // we never spend tokens we can't verify the user paid for.
+      const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+      prisma.trainingPlan.findFirst.mockResolvedValueOnce({
+        id: 'plan-stale',
+        week_start_date: stale,
+      });
+      subscription.isPremium.mockRejectedValueOnce(new Error('upstream down'));
+      await service.ensureCurrentWeek('user-1');
+
+      expect(plans.generatePlan).toHaveBeenCalledWith(
+        'user-1',
+        false,
+        undefined,
+        { forceFallback: true },
+      );
     });
   });
 });

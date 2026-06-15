@@ -160,7 +160,12 @@ export class PlansService {
     };
   }
 
-  async generatePlan(userId: string, force: boolean, focus?: string) {
+  async generatePlan(
+    userId: string,
+    force: boolean,
+    focus?: string,
+    opts?: { forceFallback?: boolean },
+  ) {
     // Premium check: first plan after onboarding is free; re-generation requires premium
     if (force) {
       const hasPlan = await this.subscriptionService.hasAnyPlan(userId);
@@ -364,13 +369,17 @@ export class PlansService {
       ),
     };
 
-    // Now generate the skeleton with the week context.
+    // Now generate the skeleton with the week context. When the caller
+    // requested forceFallback (non-premium auto-rollover path), the AI
+    // service skips its OpenAI call and returns the deterministic
+    // template directly — no token cost.
     const skeleton = await this.plansAiService.generateWeeklyPlan(
       userId,
       onboarding,
       startDow,
       focus,
       weekContext,
+      opts?.forceFallback ? { forceFallback: true } : undefined,
     );
 
     // Stage 2: Build curated candidate pools per muscle group
@@ -382,18 +391,22 @@ export class PlansService {
 
     // Stage 3: AI picks specific exercises from candidates, supplying
     // target_sets for any pool entry that appears in the user's
-    // recent-lifts data (progressive overload path).
+    // recent-lifts data (progressive overload path). Skipped entirely
+    // when forceFallback is set; the deterministic matcher below
+    // covers the same role.
     const recentExerciseNames = await this.getRecentExerciseNames(userId);
     const recentLifts = computeRecentLifts(recentSessions);
-    const aiSelection = await this.plansAiService.selectExercises(
-      userId,
-      skeleton,
-      candidatePools,
-      onboarding,
-      recentExerciseNames,
-      recentLifts,
-      focus,
-    );
+    const aiSelection = opts?.forceFallback
+      ? null
+      : await this.plansAiService.selectExercises(
+          userId,
+          skeleton,
+          candidatePools,
+          onboarding,
+          recentExerciseNames,
+          recentLifts,
+          focus,
+        );
 
     // Use AI selection if valid, otherwise fall back to deterministic matcher
     const generatedDays = aiSelection
