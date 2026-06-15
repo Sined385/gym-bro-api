@@ -80,8 +80,21 @@ export function formatSessionResponse(session: FormattableSession) {
  * emits the same field names (set_number / weight / weight_unit /
  * reps / is_bodyweight) regardless of whether the source is a live
  * `exercise_sets` row, a plain JSON `target_sets` blob, or a SSE
- * payload's `sets`. Returns an empty array when nothing's set so
- * iOS can rely on `sets.isEmpty` rather than null-checking.
+ * payload's `sets`.
+ *
+ * Defensive about legacy / drifted shapes:
+ *   - `set_number` falls back to array index + 1 when missing. The
+ *     previous (broken) version of synthesizeTargetSets persisted
+ *     entries without set_number, and iOS's `setNumber: Int` is
+ *     non-optional — a missing field crashes the WHOLE response
+ *     decode and the iOS Home tab falls back to its mock data.
+ *   - `weight` accepts the legacy `weight_kg` field too (AI's
+ *     tool-call shape — should never reach JSON, but historical
+ *     plan_day.exercises_json rows have it).
+ *   - Decimal columns from Prisma serialize as strings; coerce.
+ *
+ * Returns an empty array when nothing's set so iOS can rely on
+ * `sets.isEmpty` rather than null-checking.
  */
 export function serializeExerciseSets(
   sets: FormattableExerciseSet[] | null | undefined,
@@ -93,16 +106,29 @@ export function serializeExerciseSets(
   is_bodyweight: boolean;
 }> {
   if (!sets || sets.length === 0) return [];
-  return sets.map((s) => ({
-    set_number: s.set_number,
-    weight:
-      s.weight === null || s.weight === undefined
+  return sets.map((s, i) => {
+    const raw = s as any;
+    // weight may live under `weight` (canonical) or `weight_kg`
+    // (legacy AI-internal shape that leaked into some JSON rows).
+    const weightCandidate = raw.weight ?? raw.weight_kg;
+    const weight =
+      weightCandidate === null || weightCandidate === undefined
         ? null
-        : typeof s.weight === 'string'
-          ? Number(s.weight)
-          : s.weight,
-    weight_unit: s.weight_unit ?? 'kg',
-    reps: s.reps,
-    is_bodyweight: s.is_bodyweight ?? false,
-  }));
+        : typeof weightCandidate === 'string'
+          ? Number(weightCandidate)
+          : weightCandidate;
+    return {
+      set_number:
+        typeof raw.set_number === 'number' && raw.set_number > 0
+          ? raw.set_number
+          : i + 1,
+      weight,
+      weight_unit:
+        typeof raw.weight_unit === 'string' && raw.weight_unit.length > 0
+          ? raw.weight_unit
+          : 'kg',
+      reps: typeof raw.reps === 'number' ? raw.reps : 0,
+      is_bodyweight: raw.is_bodyweight === true,
+    };
+  });
 }
