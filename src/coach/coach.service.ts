@@ -206,6 +206,42 @@ export class CoachService {
       conversationId = conv.id;
     }
 
+    // Idempotency: bail if this exact message landed on the same
+    // conversation within the last 30 seconds and is still the most
+    // recent message. Catches iOS SSE retries (network blip during a
+    // long stream, app backgrounded mid-stream) which otherwise show
+    // up as two identical workout cards back-to-back in chat history
+    // — each retry runs the AI tool call again and persists a fresh
+    // workoutSession.
+    //
+    // The first in-flight request finishes normally; the duplicate
+    // exits silently with an error event the iOS client can ignore.
+    // 30s window is short enough that intentional re-sends (user
+    // tapped again, waited 30s+) aren't blocked.
+    const previousMessage = await this.prisma.coachMessage.findFirst({
+      where: { conversation_id: conversationId },
+      orderBy: { created_at: 'desc' },
+    });
+    if (
+      previousMessage &&
+      previousMessage.role === 'user' &&
+      previousMessage.content === dto.content &&
+      Date.now() - previousMessage.created_at.getTime() < 30_000
+    ) {
+      console.warn(
+        `[coach.chat] dedup: dropping duplicate user message on conversation ${conversationId}`,
+      );
+      yield {
+        type: 'error',
+        data: {
+          code: 'DUPLICATE_REQUEST',
+          message:
+            'Already processing the previous request — please wait a moment.',
+        },
+      };
+      return;
+    }
+
     // 2. Save user message
     await this.prisma.coachMessage.create({
       data: {
@@ -314,11 +350,24 @@ export class CoachService {
     // "REUSE the exercise" rule in the system prompt anchors on the
     // user's recent-lifts block and regenerate returns the same
     // workout every time.
-    if (dto.action === 'regenerate' && dto.regenerate_from_message_id) {
-      const priorExerciseNames = await this.getRegenerateSkipList(
-        dto.regenerate_from_message_id,
-        userId,
-      );
+    if (dto.action === 'regenerate') {
+      // Prefer session_id when iOS sent it (always real — bound at
+      // session_created SSE). Fall back to message_id lookup, which
+      // races against the `done` event that flips the assistant
+      // message from optimistic UUID to the persisted id. A fast
+      // user tap before `done` lands sends the optimistic UUID and
+      // the message lookup misses, leaving the skip list empty.
+      const priorExerciseNames = dto.regenerate_from_session_id
+        ? await this.getSkipListFromSession(
+            dto.regenerate_from_session_id,
+            userId,
+          )
+        : dto.regenerate_from_message_id
+          ? await this.getRegenerateSkipList(
+              dto.regenerate_from_message_id,
+              userId,
+            )
+          : [];
       if (priorExerciseNames.length > 0) {
         const last = messages[messages.length - 1];
         if (last?.role === 'user' && typeof last.content === 'string') {
@@ -479,6 +528,28 @@ export class CoachService {
     }
 
     return { error: 'Unknown action' };
+  }
+
+  /**
+   * Look up the skip-list directly from a workoutSession id — used
+   * when iOS sends `regenerate_from_session_id`. Ownership check via
+   * session.user_id (the message-based variant goes through the
+   * conversation's user_id, same intent).
+   */
+  private async getSkipListFromSession(
+    sessionId: string,
+    userId: string,
+  ): Promise<string[]> {
+    const session = await this.prisma.workoutSession.findFirst({
+      where: { id: sessionId, user_id: userId },
+      select: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          select: { name: true },
+        },
+      },
+    });
+    return session?.exercises.map((e) => e.name) ?? [];
   }
 
   private async getRegenerateSkipList(
