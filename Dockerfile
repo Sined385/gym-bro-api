@@ -22,10 +22,12 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Copy manifests and install prod deps + prisma CLI (needed for migrate deploy)
+# Copy manifests and install prod deps + prisma CLI (needed for migrate
+# deploy) and ts-node/typescript (needed to run scripts/seed-exercise-
+# library.ts on boot — see start.js step 3).
 COPY package*.json ./
 RUN npm ci --omit=dev && \
-    npm install --save-dev prisma
+    npm install --save-dev prisma ts-node typescript
 
 # Copy compiled app, migration artefacts, and the generated Prisma client
 COPY --from=builder /app/dist                           ./dist
