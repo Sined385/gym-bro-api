@@ -63,17 +63,38 @@ async function main() {
     const dataPath = path.join(__dirname, '..', 'data', 'exercises.json');
     const raw: RawExercise[] = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
 
-    // Filter out stretching, cardio, and foam roll
-    const filtered = raw.filter(
-      (e) =>
-        !['stretching', 'cardio'].includes(e.category) &&
-        e.equipment !== 'foam roll',
-    );
+    // Cardio entries are normally filtered out — the iOS app and Coach
+    // pipeline treat exercises as strength by default. These 9 are the
+    // ones we ship; everything else under category=cardio stays gated.
+    const ALLOWED_CARDIO = new Set([
+      'Bicycling_Stationary',
+      'Elliptical_Trainer',
+      'Jogging_Treadmill',
+      'Recumbent_Bike',
+      'Rope_Jumping',
+      'Rowing_Stationary',
+      'Running_Treadmill',
+      'Stairmaster',
+      'Walking_Treadmill',
+    ]);
 
-    // Map to internal schema
+    const filtered = raw.filter((e) => {
+      if (e.category === 'stretching') return false;
+      if (e.category === 'cardio' && !ALLOWED_CARDIO.has(e.id)) return false;
+      if (e.equipment === 'foam roll') return false;
+      return true;
+    });
+
+    // Map to internal schema. Cardio exercises get their own muscle_group
+    // bucket so users can filter the library to them; without this they'd
+    // bucket as "Legs" (yuhonas tags treadmill/bike primaryMuscles as
+    // quadriceps), losing the cardio identity.
     const mapped = filtered.map((e) => {
+      const isCardio = e.category === 'cardio';
       const primaryMuscle = e.primaryMuscles?.[0] ?? '';
-      const muscleGroup = MUSCLE_GROUP_MAP[primaryMuscle] ?? 'Other';
+      const muscleGroup = isCardio
+        ? 'Cardio'
+        : (MUSCLE_GROUP_MAP[primaryMuscle] ?? 'Other');
       const equipment =
         e.equipment === null
           ? 'Bodyweight'
