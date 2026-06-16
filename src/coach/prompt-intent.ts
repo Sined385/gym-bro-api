@@ -27,6 +27,33 @@ const MUSCLE_KEYWORDS: Record<string, string[]> = {
   arms: ['arms', 'bicep', 'tricep', 'forearm'],
   legs: ['legs', 'leg day', 'quad', 'hamstring', 'glute', 'calves', 'calf'],
   core: ['core', 'abs ', 'abs.', ' abs', 'abs,', 'abdominal', 'oblique'],
+  // Cardio is bucketed alongside muscle groups because the library row
+  // uses muscle_group="Cardio" for treadmill / bike / row / stairmaster
+  // / jump rope entries. Keywords are deliberately specific — bare
+  // "row" still resolves to strength (barbell row), but "rowing
+  // machine" / "stationary rowing" disambiguates to cardio.
+  cardio: [
+    'cardio',
+    'running',
+    'run ',
+    'jog',
+    'treadmill',
+    'elliptical',
+    'stairmaster',
+    'stair master',
+    'stair climber',
+    'jump rope',
+    'jumprope',
+    'skip rope',
+    'hiit',
+    'conditioning',
+    'indoor cycling',
+    'stationary bike',
+    'exercise bike',
+    'recumbent bike',
+    'rowing machine',
+    'stationary rowing',
+  ],
 };
 
 const COMPOSITE_KEYWORDS: Array<{ pattern: RegExp; muscles: string[] }> = [
@@ -184,6 +211,8 @@ function muscleMatches(ex: { muscle_group?: string | null }, keyword: string): b
       return /\bleg|quad|hamstring|glute|calf|adductor|abductor/.test(mg);
     case 'core':
       return /core|abdominal|abs|oblique/.test(mg);
+    case 'cardio':
+      return mg === 'cardio';
     default:
       return mg.includes(keyword);
   }

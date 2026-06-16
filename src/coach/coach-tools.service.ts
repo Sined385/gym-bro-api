@@ -7,6 +7,11 @@ import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.ser
 import { ACCENT_COLORS } from '../home/session-exercise.service';
 import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { exerciseImageUrl } from '../common/exercise-image';
+import { serializeExerciseSets } from '../common/format-session';
+import {
+  isCardioCategory,
+  synthesizeCardioTargetSets,
+} from '../common/exercise-set-synth';
 import {
   isRateLimitError,
   summarizeAiError,
@@ -105,12 +110,12 @@ export class CoachToolsService {
                     sets_display: {
                       type: 'string',
                       description:
-                        'Sets and reps in "N × M" format, e.g. "3 × 10", "4 × 8". Always use the × character.',
+                        'For strength: "N × M" format, e.g. "3 × 10", "4 × 8" (always the × character). For cardio: "30 min", "45 min". The server uses this as a fallback label only — duration is driven by target_duration_minutes.',
                     },
                     target_sets: {
                       type: 'array',
                       description:
-                        'Per-set targets (warmup ladder + working sets). REQUIRED when this exercise appears in "Your recent lifts" — mirror the recorded ladder with the top working set bumped to the suggested value, so the user sees real progression instead of generic prefills. Optional for novel exercises.',
+                        'Per-set targets (warmup ladder + working sets). REQUIRED for strength when this exercise appears in "Your recent lifts" — mirror the recorded ladder with the top working set bumped to the suggested value. Omit entirely for cardio exercises (is_cardio=true) — backend synthesizes a single duration block from target_duration_minutes.',
                       items: {
                         type: 'object',
                         properties: {
@@ -131,6 +136,16 @@ export class CoachToolsService {
                         },
                         required: ['reps'],
                       },
+                    },
+                    is_cardio: {
+                      type: 'boolean',
+                      description:
+                        'True for cardio exercises (treadmill, bike, rowing, jump rope, stairmaster, elliptical). When true, omit target_sets and provide target_duration_minutes instead. Library rows with category=cardio MUST be flagged true.',
+                    },
+                    target_duration_minutes: {
+                      type: 'integer',
+                      description:
+                        'Target duration in minutes for cardio exercises. Typical: 20–45 min for steady-state, 5–10 min for HIIT-style intervals. Required when is_cardio=true; otherwise omit.',
                     },
                   },
                   required: ['name', 'muscle_group', 'sets_display'],
@@ -204,6 +219,16 @@ export class CoachToolsService {
                           name: { type: 'string' },
                           muscle_group: { type: 'string' },
                           sets_display: { type: 'string' },
+                          is_cardio: {
+                            type: 'boolean',
+                            description:
+                              'True for cardio exercises (library category=cardio). Provide target_duration_minutes when true.',
+                          },
+                          target_duration_minutes: {
+                            type: 'integer',
+                            description:
+                              'Target duration in minutes when is_cardio=true. Typical 20–45 min.',
+                          },
                         },
                         required: ['name', 'muscle_group', 'sets_display'],
                       },
@@ -360,13 +385,7 @@ export class CoachToolsService {
                 suggested_weight: e.suggested_weight ?? null,
                 image_url: exerciseImageUrl(e.external_id),
                 external_id: e.external_id ?? null,
-                sets: (e.exercise_sets ?? []).map((s: any) => ({
-                  set_number: s.set_number,
-                  weight: s.weight !== null ? Number(s.weight) : null,
-                  weight_unit: s.weight_unit ?? 'kg',
-                  reps: s.reps,
-                  is_bodyweight: s.is_bodyweight ?? false,
-                })),
+                sets: serializeExerciseSets(e.exercise_sets ?? []),
               }),
             ),
           },
@@ -550,6 +569,34 @@ export class CoachToolsService {
                       `[modify_plan_days] dropping unresolved exercise: id=${ex.library_exercise_id ?? 'none'} name="${ex.name ?? ''}"`,
                     );
                     return null;
+                  }
+                  // Cardio branch: synthesize a single duration block,
+                  // emit `sets_display` as "30 min" so the iOS plan-day
+                  // card pill matches. Library category is authoritative
+                  // over the AI's is_cardio hint.
+                  if (
+                    ex.is_cardio === true ||
+                    isCardioCategory(libEx.category)
+                  ) {
+                    const minutes =
+                      typeof ex.target_duration_minutes === 'number' &&
+                      ex.target_duration_minutes > 0
+                        ? ex.target_duration_minutes
+                        : null;
+                    const cardioSets = synthesizeCardioTargetSets({
+                      targetDurationMinutes: minutes,
+                    });
+                    return {
+                      library_exercise_id: libEx.id,
+                      external_id: libEx.external_id ?? null,
+                      name: libEx.name,
+                      muscle_group: libEx.muscle_group,
+                      equipment: libEx.equipment ?? null,
+                      sets_display: `${Math.round(
+                        cardioSets[0].duration_seconds! / 60,
+                      )} min`,
+                      target_sets: cardioSets,
+                    };
                   }
                   return {
                     library_exercise_id: libEx.id,
@@ -740,6 +787,8 @@ export class CoachToolsService {
           reps: number;
           is_bodyweight?: boolean;
         }>;
+        is_cardio?: boolean;
+        target_duration_minutes?: number;
       }[];
       ai_message: string;
       duration_minutes?: number;
@@ -831,6 +880,48 @@ export class CoachToolsService {
         updated_at: new Date(),
         exercises: {
           create: exercises.map(({ ex, libEx }, i) => {
+            // Cardio short-circuit. Library row's category=='cardio' is
+            // authoritative — the AI's is_cardio flag is a hint, but
+            // we trust the catalog. WeightSuggestion + bodyweight
+            // overrides + recent-lifts injection are all strength-only
+            // and would emit nonsense for "30 min Treadmill". Persist
+            // duration_seconds on the SessionExercise + a single
+            // duration-only set so iOS renders a "30 min" pill.
+            if (ex.is_cardio === true || isCardioCategory(libEx.category)) {
+              const cardioMinutes =
+                typeof ex.target_duration_minutes === 'number' &&
+                ex.target_duration_minutes > 0
+                  ? ex.target_duration_minutes
+                  : null;
+              const cardioSets = synthesizeCardioTargetSets({
+                targetDurationMinutes: cardioMinutes,
+              });
+              const durationSecs = cardioSets[0].duration_seconds!;
+              return {
+                library_exercise_id: libEx.id,
+                external_id: libEx.external_id ?? null,
+                name: libEx.name,
+                muscle_group: libEx.muscle_group,
+                equipment: libEx.equipment ?? null,
+                step_number: i + 1,
+                sets_display: `${Math.round(durationSecs / 60)} min`,
+                accent_color: ACCENT_COLORS[i % ACCENT_COLORS.length],
+                duration_seconds: durationSecs,
+                exercise_sets: {
+                  create: cardioSets.map((s) => ({
+                    set_number: s.set_number,
+                    weight: null,
+                    weight_unit: 'kg',
+                    reps: 0,
+                    is_bodyweight: false,
+                    duration_seconds: s.duration_seconds ?? null,
+                    distance_meters: s.distance_meters ?? null,
+                    is_completed: false,
+                  })),
+                },
+              };
+            }
+
             // Server-side safety net: when the AI ignored the prompt's
             // PROGRESSIVE OVERLOAD rule and shipped no target_sets for an
             // exercise the user logged recently, build the ladder from

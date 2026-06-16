@@ -812,16 +812,21 @@ export class HomeService {
           await tx.exerciseSet.createMany({
             data: exDto.sets.map((s) => {
               const isBodyweight = s.is_bodyweight ?? false;
+              const isCardio = (s.duration_seconds ?? null) !== null;
               return {
                 exercise_id: exercise.id,
                 set_number: s.set_number,
-                // Force-null weight when the set is flagged bodyweight, so the
-                // DB shape never says "Bodyweight × 8 at 0kg" by mistake.
-                weight: isBodyweight ? null : (s.weight ?? null),
+                // Force-null weight when the set is flagged bodyweight or
+                // cardio. The DB shape should never carry "Bodyweight × 8 at
+                // 0kg" or "Run 30 min at 0kg" by mistake.
+                weight:
+                  isBodyweight || isCardio ? null : (s.weight ?? null),
                 weight_unit: s.weight_unit ?? 'kg',
                 reps: s.reps,
                 is_completed: s.is_completed ?? true,
                 is_bodyweight: isBodyweight,
+                duration_seconds: s.duration_seconds ?? null,
+                distance_meters: s.distance_meters ?? null,
               };
             }),
           });

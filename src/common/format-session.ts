@@ -6,6 +6,12 @@ export interface FormattableExerciseSet {
   weight_unit?: string | null;
   reps: number;
   is_bodyweight?: boolean | null;
+  // Cardio fields. Strength sets leave both null and iOS renders the
+  // weight × reps row; cardio sets leave weight/reps at their defaults
+  // (null/0) and use duration_seconds (always) and distance_meters
+  // (optional, for treadmill/bike work) instead.
+  duration_seconds?: number | null;
+  distance_meters?: number | null;
 }
 
 export interface FormattableSession {
@@ -104,6 +110,8 @@ export function serializeExerciseSets(
   weight_unit: string;
   reps: number;
   is_bodyweight: boolean;
+  duration_seconds: number | null;
+  distance_meters: number | null;
 }> {
   if (!sets || sets.length === 0) return [];
   return sets.map((s, i) => {
@@ -124,6 +132,16 @@ export function serializeExerciseSets(
           : Number(weightCandidate);
       weight = Number.isFinite(n) ? n : null;
     }
+    const durationCandidate = raw.duration_seconds;
+    const duration_seconds =
+      typeof durationCandidate === 'number' && durationCandidate >= 0
+        ? durationCandidate
+        : null;
+    const distanceCandidate = raw.distance_meters;
+    const distance_meters =
+      typeof distanceCandidate === 'number' && distanceCandidate >= 0
+        ? distanceCandidate
+        : null;
     return {
       set_number:
         typeof raw.set_number === 'number' && raw.set_number > 0
@@ -136,6 +154,8 @@ export function serializeExerciseSets(
           : 'kg',
       reps: typeof raw.reps === 'number' ? raw.reps : 0,
       is_bodyweight: raw.is_bodyweight === true,
+      duration_seconds,
+      distance_meters,
     };
   });
 }

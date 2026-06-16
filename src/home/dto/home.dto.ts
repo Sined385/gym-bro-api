@@ -87,6 +87,18 @@ export class LogSetDto {
   @IsOptional()
   @IsBoolean()
   is_bodyweight?: boolean;
+
+  // Cardio logging — set when the exercise is duration-based (treadmill,
+  // bike, rower). Strength sets omit both and rely on weight + reps.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  duration_seconds?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  distance_meters?: number;
 }
 
 export class UpdateSetDto {
@@ -110,6 +122,16 @@ export class UpdateSetDto {
   @IsOptional()
   @IsBoolean()
   is_bodyweight?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  duration_seconds?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  distance_meters?: number;
 }
 
 export class FeedbackDto {
@@ -172,6 +194,16 @@ class CompleteSetItemDto {
   @IsOptional()
   @IsBoolean()
   is_bodyweight?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  duration_seconds?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  distance_meters?: number;
 }
 
 class CompleteExerciseItemDto {

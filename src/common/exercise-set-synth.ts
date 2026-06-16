@@ -78,6 +78,49 @@ export interface SynthSet {
   weight_unit: string;
   reps: number;
   is_bodyweight: boolean;
+  // Cardio-only fields. Always null for strength sets; set for cardio
+  // sets (treadmill, bike, rower, …). When duration_seconds is set,
+  // weight/reps are expected to be null/0 — iOS renders a duration pill
+  // instead of the weight × reps row.
+  duration_seconds?: number | null;
+  distance_meters?: number | null;
+}
+
+/**
+ * Cardio exercises bypass the weight × reps ladder entirely. We persist
+ * a single "set" carrying the target duration (and optionally a
+ * distance hint, currently unused from the AI side) so the existing
+ * sets[] pipeline can flow strength + cardio through the same shape.
+ *
+ * Defaults: 30 minutes when no target is supplied. The library row's
+ * `category === 'cardio'` is the canonical signal — see isCardioCategory.
+ */
+export function synthesizeCardioTargetSets(args: {
+  targetDurationMinutes?: number | null;
+}): SynthSet[] {
+  const minutes =
+    args.targetDurationMinutes &&
+    args.targetDurationMinutes > 0 &&
+    args.targetDurationMinutes < 24 * 60
+      ? args.targetDurationMinutes
+      : 30;
+  return [
+    {
+      set_number: 1,
+      weight: null,
+      weight_unit: 'kg',
+      reps: 0,
+      is_bodyweight: false,
+      duration_seconds: Math.round(minutes * 60),
+      distance_meters: null,
+    },
+  ];
+}
+
+export function isCardioCategory(
+  category: string | null | undefined,
+): boolean {
+  return typeof category === 'string' && category.toLowerCase() === 'cardio';
 }
 
 /**

@@ -1,7 +1,9 @@
 import {
   parseSetsDisplay,
   synthesizeTargetSets,
+  synthesizeCardioTargetSets,
   isBodyweightEquipment,
+  isCardioCategory,
   isWeightedEquipment,
 } from './exercise-set-synth';
 
@@ -98,5 +100,49 @@ describe('exercise-set-synth', () => {
       });
       expect(out.map((s) => s.set_number)).toEqual([1, 2, 3, 4, 5]);
     });
+  });
+
+  describe('synthesizeCardioTargetSets', () => {
+    it('emits a single duration-only set', () => {
+      const out = synthesizeCardioTargetSets({ targetDurationMinutes: 30 });
+      expect(out).toEqual([
+        {
+          set_number: 1,
+          weight: null,
+          weight_unit: 'kg',
+          reps: 0,
+          is_bodyweight: false,
+          duration_seconds: 1800,
+          distance_meters: null,
+        },
+      ]);
+    });
+
+    it('falls back to 30 min when target is missing / zero / absurd', () => {
+      expect(
+        synthesizeCardioTargetSets({ targetDurationMinutes: null })[0]
+          .duration_seconds,
+      ).toBe(1800);
+      expect(
+        synthesizeCardioTargetSets({ targetDurationMinutes: 0 })[0]
+          .duration_seconds,
+      ).toBe(1800);
+      expect(
+        synthesizeCardioTargetSets({ targetDurationMinutes: 99999 })[0]
+          .duration_seconds,
+      ).toBe(1800);
+    });
+  });
+
+  describe('isCardioCategory', () => {
+    it.each(['cardio', 'Cardio', 'CARDIO'])('matches %s', (c) => {
+      expect(isCardioCategory(c)).toBe(true);
+    });
+    it.each(['strength', 'stretching', null, undefined, ''])(
+      'rejects %s',
+      (c) => {
+        expect(isCardioCategory(c as any)).toBe(false);
+      },
+    );
   });
 });

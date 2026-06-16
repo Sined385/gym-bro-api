@@ -292,6 +292,8 @@ export class SessionExerciseService {
         weight_unit: dto.weight_unit ?? 'lbs',
         reps: dto.reps,
         is_completed: true,
+        duration_seconds: dto.duration_seconds ?? null,
+        distance_meters: dto.distance_meters ?? null,
       },
     });
 
@@ -303,6 +305,8 @@ export class SessionExerciseService {
       weight_unit: set.weight_unit,
       reps: set.reps,
       is_completed: set.is_completed,
+      duration_seconds: set.duration_seconds ?? null,
+      distance_meters: set.distance_meters ?? null,
       created_at: set.created_at.toISOString(),
     };
   }
@@ -323,6 +327,10 @@ export class SessionExerciseService {
     if (dto.weight_unit !== undefined) data.weight_unit = dto.weight_unit;
     if (dto.reps !== undefined) data.reps = dto.reps;
     if (dto.is_completed !== undefined) data.is_completed = dto.is_completed;
+    if (dto.duration_seconds !== undefined)
+      data.duration_seconds = dto.duration_seconds;
+    if (dto.distance_meters !== undefined)
+      data.distance_meters = dto.distance_meters;
 
     const set = await this.prisma.exerciseSet.update({
       where: { id: setId },
@@ -337,6 +345,8 @@ export class SessionExerciseService {
       weight_unit: set.weight_unit,
       reps: set.reps,
       is_completed: set.is_completed,
+      duration_seconds: set.duration_seconds ?? null,
+      distance_meters: set.distance_meters ?? null,
       created_at: set.created_at.toISOString(),
     };
   }

@@ -16,7 +16,11 @@ import {
   getWeekStartInTz,
   toMondayDowInTz,
 } from '../common/date-utils';
-import { synthesizeTargetSets } from '../common/exercise-set-synth';
+import {
+  isCardioCategory,
+  synthesizeCardioTargetSets,
+  synthesizeTargetSets,
+} from '../common/exercise-set-synth';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import { computeRecentLifts } from '../common/recent-lifts';
@@ -444,13 +448,30 @@ export class PlansService {
     // every plan exercise's preview falls back to the bare "3 × 10"
     // pill — which is exactly the symptom users reported on Plan /
     // Home tabs even after a regen.
+    // Library lookup by id so cardio entries can be routed through
+    // the cardio synth (single duration block, no weight ladder).
+    const libraryById = new Map(exerciseLibrary.map((e: any) => [e.id, e]));
     const synthesizeForExercise = (ex: any) => {
       if (!ex.library_exercise_id) return;
+      const lib: any = libraryById.get(ex.library_exercise_id);
       const suggested = weightMap.get(ex.library_exercise_id) ?? null;
       ex.suggested_weight = suggested;
       // Don't clobber an AI-supplied target_sets array (rare but
       // possible when the AI ladder is more nuanced than a flat synth).
       if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) return;
+      if (isCardioCategory(lib?.category)) {
+        // Cardio plan-day entries get a single duration block. Default
+        // 30 min unless the matcher / AI supplied something explicit
+        // via target_duration_minutes.
+        ex.target_sets = synthesizeCardioTargetSets({
+          targetDurationMinutes: ex.target_duration_minutes ?? null,
+        });
+        ex.suggested_weight = null;
+        ex.sets_display = `${Math.round(
+          (ex.target_sets[0].duration_seconds ?? 1800) / 60,
+        )} min`;
+        return;
+      }
       ex.target_sets = synthesizeTargetSets({
         setsDisplay: ex.sets_display,
         equipment: ex.equipment,

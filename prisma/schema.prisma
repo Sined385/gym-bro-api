@@ -77,16 +77,21 @@ model SessionExercise {
 }
 
 model ExerciseSet {
-  id           String          @id @default(uuid())
-  exercise_id  String
-  set_number   Int
-  weight       Decimal?
-  weight_unit  String          @default("kg")
-  is_bodyweight Boolean        @default(false)
-  reps         Int
-  is_completed Boolean         @default(true)
-  created_at   DateTime        @default(now())
-  exercise     SessionExercise @relation(fields: [exercise_id], references: [id], onDelete: Cascade)
+  id               String          @id @default(uuid())
+  exercise_id      String
+  set_number       Int
+  weight           Decimal?
+  weight_unit      String          @default("kg")
+  is_bodyweight    Boolean         @default(false)
+  reps             Int
+  is_completed     Boolean         @default(true)
+  // Cardio sets store work as duration (and optionally distance) instead
+  // of weight × reps. Both null for strength sets. Distance is metres
+  // (integer resolution is enough for treadmill/bike work).
+  duration_seconds Int?
+  distance_meters  Int?
+  created_at       DateTime        @default(now())
+  exercise         SessionExercise @relation(fields: [exercise_id], references: [id], onDelete: Cascade)
 
   @@map("exercise_sets")
 }
