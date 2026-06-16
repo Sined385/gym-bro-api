@@ -45,11 +45,11 @@ run('Supabase migrations', 'node scripts/apply-supabase-migrations.js', 120000);
 
 // 3. Seed exercise library (with external_id for images). The script is
 //    .ts and tsconfig.build deliberately excludes scripts/ from the dist
-//    output, so we run it through ts-node. ts-node + typescript are
-//    installed in the runtime image alongside prisma — see Dockerfile.
+//    output, so we run it through tsx. tsx is installed in the runtime
+//    image alongside prisma — see Dockerfile.
 run(
   'Seed exercise library',
-  'npx ts-node scripts/seed-exercise-library.ts',
+  'npx tsx scripts/seed-exercise-library.ts',
   120000,
 );
 
