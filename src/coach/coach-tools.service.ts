@@ -90,7 +90,7 @@ export class CoachToolsService {
         function: {
           name: 'create_workout_session',
           description:
-            'Create a new workout session for the user based on their request. Use this when the user asks you to create, build, or generate a workout.',
+            "Create a workout session for the user. Use this when the user asks you to create, build, or generate a workout — AND when they ask you to MODIFY a workout you already created in this conversation (add/swap/remove an exercise, make it shorter, etc.): call it again with the FULL updated exercise list so the workout card refreshes. Do not use modify_plan_days to change a session you created here — that edits the weekly plan and the user won't see the change.",
           parameters: {
             type: 'object',
             properties: {
@@ -175,7 +175,7 @@ export class CoachToolsService {
         function: {
           name: 'modify_plan_days',
           description:
-            "Modify one or more days in the user's weekly training plan. Use for BOTH day-level changes (swap a day's focus, make a day rest, change muscle groups) AND exercise-level edits to an existing plan day (add an exercise, swap one exercise for another, remove an exercise, reorder). For exercise edits: read the current exercises from the 'Current training plan' block in the system prompt, apply the user's change, then pass the FULL updated exercises list back — the server replaces the day's exercises_json wholesale. Do NOT use create_workout_session to add/swap exercises in an existing planned day; that creates a brand new ad-hoc session and orphans the user's original plan.",
+            "Modify one or more days in the user's weekly training PLAN (the calendar). Use for BOTH day-level changes (swap a day's focus, make a day rest, change muscle groups) AND exercise-level edits to an existing plan day (add an exercise, swap one exercise for another, remove an exercise, reorder). For exercise edits: read the current exercises from the 'Current training plan' block in the system prompt, apply the user's change, then pass the FULL updated exercises list back — the server replaces the day's exercises_json wholesale. Do NOT use this to modify a workout you just created with create_workout_session in this conversation — that is a session shown as a card, not a plan day; re-run create_workout_session for those edits so the card updates. And do NOT use create_workout_session to edit an existing plan day; that orphans the user's plan content.",
           parameters: {
             type: 'object',
             properties: {
