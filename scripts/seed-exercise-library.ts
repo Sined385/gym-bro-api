@@ -66,17 +66,11 @@ async function main() {
     // Cardio entries are normally filtered out — the iOS app and Coach
     // pipeline treat exercises as strength by default. These 9 are the
     // ones we ship; everything else under category=cardio stays gated.
-    const ALLOWED_CARDIO = new Set([
-      'Bicycling_Stationary',
-      'Elliptical_Trainer',
-      'Jogging_Treadmill',
-      'Recumbent_Bike',
-      'Rope_Jumping',
-      'Rowing_Stationary',
-      'Running_Treadmill',
-      'Stairmaster',
-      'Walking_Treadmill',
-    ]);
+    // Only walking is exposed to users for now. The other cardio types
+    // are intentionally gated here (and hidden at read-time via
+    // isHiddenCardio for envs that already seeded them). Re-add an
+    // external_id to both places to re-enable a type.
+    const ALLOWED_CARDIO = new Set(['Walking_Treadmill']);
 
     const filtered = raw.filter((e) => {
       if (e.category === 'stretching') return false;

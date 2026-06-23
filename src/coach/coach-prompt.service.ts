@@ -13,6 +13,7 @@ import {
   filterLibraryForContext,
   type UserIntent,
 } from './prompt-intent';
+import { isCardioCategory, isHiddenCardio } from '../common/exercise-set-synth';
 
 @Injectable()
 export class CoachPromptService {
@@ -25,12 +26,14 @@ export class CoachPromptService {
     // and used by the system prompt as a default-selection hint; user intent
     // in the current message overrides that hint per the priority chain in
     // buildSystemPrompt.
-    return this.prisma.exerciseLibrary.findMany({
+    const rows = await this.prisma.exerciseLibrary.findMany({
       where: {
         OR: [{ is_system: true }, { user_id: userId }],
       },
       orderBy: { name: 'asc' },
     });
+    // Hide non-walking cardio for now so the coach can't propose it.
+    return rows.filter((r) => !isHiddenCardio(r));
   }
 
   async getRecentSessions(userId: string, days: number) {
@@ -163,7 +166,9 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
         ? `Available exercises (use these library_exercise_id values when creating workouts — ${exerciseLibrary.length} total in library, ${filteredLibrary.length} surfaced this turn based on your message):\n${filteredLibrary
             .map(
               (e) =>
-                `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})`,
+                `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})${
+                  isCardioCategory(e.category) ? ' · CARDIO (duration-based)' : ''
+                }`,
             )
             .join('\n')}`
         : 'No exercise library available.';
@@ -293,10 +298,12 @@ Rules:
 - Be direct and concise — no cheerleading
 
 Cardio rules:
-- Library exercises with muscle_group="Cardio" (Treadmill, Bike, Rowing, Stairmaster, Elliptical, Jump Rope) are DURATION-based. When you include one in a workout, set is_cardio=true and target_duration_minutes (typical 20–45 min steady-state; 5–10 min intervals for HIIT). Omit target_sets entirely — the server fills a single duration block.
-- For a pure cardio request ("cardio workout", "30 min on the treadmill", "HIIT bike"), propose 1–3 cardio exercises, not a strength session padded with cardio. Match the user's stated duration.
+- Library rows tagged "· CARDIO" (also identifiable by muscle_group="Cardio" — Walking, Treadmill, Bike, Rowing, Stairmaster, Elliptical, Jump Rope) are DURATION-based. When you include one in a workout, set is_cardio=true and target_duration_minutes (typical 20–45 min steady-state; 5–10 min intervals for HIIT). Omit target_sets entirely — the server fills a single duration block.
+- For a pure cardio request ("cardio workout", "30 min on the treadmill", "let's go for a walk", "HIIT bike"), propose 1–3 cardio exercises, not a strength session padded with cardio. Match the user's stated duration. For a walk specifically, use the "Walking, Treadmill" library row.
+- When the user asks to "add walking" / "add cardio", pick an actual library row tagged "· CARDIO" (for walking → "Walking, Treadmill"). NEVER set is_cardio=true on a non-cardio row (e.g. a plyometric like "Catch and Overhead Throw") — the server ignores that hint and the exercise will not become cardio.
 - For mixed strength+cardio ("strength + 15 min cardio"), include the cardio exercise(s) alongside strength exercises in the same tool call.
 - sets_display for cardio MUST be in the form "30 min" / "45 min" (not "3 × 10"). The server overrides this from target_duration_minutes anyway, but the AI's chat preview text should match.
+- Optionally prescribe a pace via target_speed_kmh (~5 brisk walk, ~8 jog, ~10+ run, ~20 cycling) when the user asks for one or it helps ("walk at 6 km/h"). Omit it to let the app suggest a default.
 
 ## Priority — the user's current message is law
 The user's message in THIS turn overrides every other signal above — onboarding equipment, personal context, recent lifts, the plan, the week-dedup list. Everything else is a hint; the user's direct ask is the order.

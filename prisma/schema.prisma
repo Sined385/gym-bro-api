@@ -90,6 +90,10 @@ model ExerciseSet {
   // (integer resolution is enough for treadmill/bike work).
   duration_seconds Int?
   distance_meters  Int?
+  // Target pace for cardio (km/h), prescribed by the coach/plan or set
+  // by the user — guidance only, never overwritten with an actual value
+  // (actual speed is derived from distance ÷ duration). Null for strength.
+  target_speed_kmh Float?
   created_at       DateTime        @default(now())
   exercise         SessionExercise @relation(fields: [exercise_id], references: [id], onDelete: Cascade)
 

@@ -279,7 +279,13 @@ export class CommunityAiService {
         for (const set of exercise.exercise_sets) {
           entry.totalSets++;
           if (set.weight != null) {
-            entry.weights.push(Number(set.weight));
+            // Normalize to kg — the comparison reports lift maxes in kg, so
+            // a set logged in lbs must be converted, not pushed as-is.
+            const w =
+              set.weight_unit === 'lbs'
+                ? Number(set.weight) * 0.453592
+                : Number(set.weight);
+            entry.weights.push(w);
           }
           entry.reps.push(set.reps);
 

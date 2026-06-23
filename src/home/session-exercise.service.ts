@@ -294,6 +294,7 @@ export class SessionExerciseService {
         is_completed: true,
         duration_seconds: dto.duration_seconds ?? null,
         distance_meters: dto.distance_meters ?? null,
+        target_speed_kmh: dto.target_speed_kmh ?? null,
       },
     });
 
@@ -307,6 +308,7 @@ export class SessionExerciseService {
       is_completed: set.is_completed,
       duration_seconds: set.duration_seconds ?? null,
       distance_meters: set.distance_meters ?? null,
+      target_speed_kmh: set.target_speed_kmh ?? null,
       created_at: set.created_at.toISOString(),
     };
   }
@@ -331,6 +333,8 @@ export class SessionExerciseService {
       data.duration_seconds = dto.duration_seconds;
     if (dto.distance_meters !== undefined)
       data.distance_meters = dto.distance_meters;
+    if (dto.target_speed_kmh !== undefined)
+      data.target_speed_kmh = dto.target_speed_kmh;
 
     const set = await this.prisma.exerciseSet.update({
       where: { id: setId },
@@ -347,6 +351,7 @@ export class SessionExerciseService {
       is_completed: set.is_completed,
       duration_seconds: set.duration_seconds ?? null,
       distance_meters: set.distance_meters ?? null,
+      target_speed_kmh: set.target_speed_kmh ?? null,
       created_at: set.created_at.toISOString(),
     };
   }

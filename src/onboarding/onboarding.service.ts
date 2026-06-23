@@ -240,6 +240,7 @@ export class OnboardingService {
     preferred_rest_time: number | null;
     available_equipment: string;
     injuries: unknown;
+    body_weight_kg?: number | null;
     ai_coach_context?: string | null;
     completed_at: Date | null;
     created_at: Date;
@@ -256,6 +257,7 @@ export class OnboardingService {
       preferred_rest_time: record.preferred_rest_time,
       available_equipment: record.available_equipment,
       injuries: record.injuries ?? [],
+      body_weight_kg: record.body_weight_kg ?? null,
       ai_coach_context: record.ai_coach_context ?? null,
       completed_at: record.completed_at?.toISOString() ?? null,
       created_at: record.created_at.toISOString(),

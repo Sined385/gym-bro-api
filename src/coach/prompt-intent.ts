@@ -25,7 +25,7 @@ const MUSCLE_KEYWORDS: Record<string, string[]> = {
   back: ['back', 'lats', 'rhomboid', 'trap'],
   shoulders: ['shoulder', 'delt'],
   arms: ['arms', 'bicep', 'tricep', 'forearm'],
-  legs: ['legs', 'leg day', 'quad', 'hamstring', 'glute', 'calves', 'calf'],
+  legs: ['legs', 'leg day', 'quad', 'hamstring', 'glute', 'calves', 'calf', 'lunge'],
   core: ['core', 'abs ', 'abs.', ' abs', 'abs,', 'abdominal', 'oblique'],
   // Cardio is bucketed alongside muscle groups because the library row
   // uses muscle_group="Cardio" for treadmill / bike / row / stairmaster
@@ -37,6 +37,8 @@ const MUSCLE_KEYWORDS: Record<string, string[]> = {
     'running',
     'run ',
     'jog',
+    'walking',
+    'walk ',
     'treadmill',
     'elliptical',
     'stairmaster',

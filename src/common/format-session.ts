@@ -12,6 +12,7 @@ export interface FormattableExerciseSet {
   // (optional, for treadmill/bike work) instead.
   duration_seconds?: number | null;
   distance_meters?: number | null;
+  target_speed_kmh?: number | null;
 }
 
 export interface FormattableSession {
@@ -112,6 +113,7 @@ export function serializeExerciseSets(
   is_bodyweight: boolean;
   duration_seconds: number | null;
   distance_meters: number | null;
+  target_speed_kmh: number | null;
 }> {
   if (!sets || sets.length === 0) return [];
   return sets.map((s, i) => {
@@ -142,6 +144,11 @@ export function serializeExerciseSets(
       typeof distanceCandidate === 'number' && distanceCandidate >= 0
         ? distanceCandidate
         : null;
+    const speedCandidate = raw.target_speed_kmh;
+    const target_speed_kmh =
+      typeof speedCandidate === 'number' && speedCandidate > 0
+        ? speedCandidate
+        : null;
     return {
       set_number:
         typeof raw.set_number === 'number' && raw.set_number > 0
@@ -156,6 +163,7 @@ export function serializeExerciseSets(
       is_bodyweight: raw.is_bodyweight === true,
       duration_seconds,
       distance_meters,
+      target_speed_kmh,
     };
   });
 }

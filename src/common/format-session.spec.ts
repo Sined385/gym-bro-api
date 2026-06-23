@@ -14,8 +14,8 @@ describe('serializeExerciseSets', () => {
     ];
     const out = serializeExerciseSets(input as any);
     expect(out).toEqual([
-      { ...input[0], duration_seconds: null, distance_meters: null },
-      { ...input[1], duration_seconds: null, distance_meters: null },
+      { ...input[0], duration_seconds: null, distance_meters: null, target_speed_kmh: null },
+      { ...input[1], duration_seconds: null, distance_meters: null, target_speed_kmh: null },
     ]);
   });
 
@@ -39,7 +39,22 @@ describe('serializeExerciseSets', () => {
       is_bodyweight: false,
       duration_seconds: 1800,
       distance_meters: 5000,
+      target_speed_kmh: null,
     });
+  });
+
+  it('round-trips a target speed when present', () => {
+    const input = [
+      {
+        set_number: 1,
+        weight: null,
+        reps: 0,
+        duration_seconds: 1800,
+        target_speed_kmh: 5.5,
+      },
+    ];
+    const out = serializeExerciseSets(input as any);
+    expect(out[0].target_speed_kmh).toBe(5.5);
   });
 
   it('drops negative or non-numeric duration / distance to null', () => {

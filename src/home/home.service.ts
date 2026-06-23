@@ -827,6 +827,7 @@ export class HomeService {
                 is_bodyweight: isBodyweight,
                 duration_seconds: s.duration_seconds ?? null,
                 distance_meters: s.distance_meters ?? null,
+                target_speed_kmh: s.target_speed_kmh ?? null,
               };
             }),
           });
@@ -1092,8 +1093,24 @@ export class HomeService {
         ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
         : null;
 
-    // Flatten all exercises with continuous step numbering and accent colors
-    const allExercises = sessions.flatMap((s) => s.exercises);
+    // Flatten all exercises across the day's sessions, MERGING the same
+    // exercise (e.g. a walk done in two separate workouts) into one entry
+    // with its sets combined — otherwise it shows duplicated.
+    const flat = sessions.flatMap((s) => s.exercises);
+    type DayExercise = (typeof flat)[number];
+    const grouped = new Map<string, { ex: DayExercise; sets: any[] }>();
+    const order: string[] = [];
+    for (const e of flat) {
+      const key = e.library_exercise_id ?? e.name;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.sets.push(...e.exercise_sets);
+      } else {
+        order.push(key);
+        grouped.set(key, { ex: e, sets: [...e.exercise_sets] });
+      }
+    }
+    const allExercises = order.map((k) => grouped.get(k)!);
 
     const first = sessions[0];
     const last = sessions[sessions.length - 1];
@@ -1114,21 +1131,20 @@ export class HomeService {
         performance_score: avgScore,
         started_at: first.started_at?.toISOString() ?? null,
         completed_at: last.completed_at?.toISOString() ?? null,
-        exercises: allExercises.map((e, index) => ({
-          id: e.id,
-          name: e.name,
-          muscle_group: e.muscle_group,
+        exercises: allExercises.map((g, index) => ({
+          id: g.ex.id,
+          name: g.ex.name,
+          muscle_group: g.ex.muscle_group,
           accent_color: ACCENT_COLORS[index % ACCENT_COLORS.length],
           step_number: index + 1,
-          image_url: exerciseImageUrl(e.external_id),
-          external_id: e.external_id ?? null,
-          sets: e.exercise_sets.map((s) => ({
-            set_number: s.set_number,
-            weight: s.weight ? Number(s.weight) : null,
-            weight_unit: s.weight_unit,
-            reps: s.reps,
-            is_bodyweight: s.is_bodyweight,
-          })),
+          image_url: exerciseImageUrl(g.ex.external_id),
+          external_id: g.ex.external_id ?? null,
+          // Renumber the combined sets so merged duplicates don't repeat
+          // "SET 1". Cast: Prisma returns weight as Decimal; the
+          // serializer coerces via Number() at the boundary.
+          sets: serializeExerciseSets(
+            g.sets.map((s, i) => ({ ...s, set_number: i + 1 })) as any,
+          ),
         })),
       },
     };

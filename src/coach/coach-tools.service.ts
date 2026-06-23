@@ -9,7 +9,7 @@ import { WeightSuggestionService } from '../home/weight-suggestion.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import { serializeExerciseSets } from '../common/format-session';
 import {
-  isCardioCategory,
+  resolveIsCardio,
   synthesizeCardioTargetSets,
 } from '../common/exercise-set-synth';
 import {
@@ -147,6 +147,11 @@ export class CoachToolsService {
                       description:
                         'Target duration in minutes for cardio exercises. Typical: 20–45 min for steady-state, 5–10 min for HIIT-style intervals. Required when is_cardio=true; otherwise omit.',
                     },
+                    target_speed_kmh: {
+                      type: 'number',
+                      description:
+                        'Optional target pace in km/h for cardio (the speed the user dials into the machine). Typical: ~5 brisk walk, ~8 jog, ~10+ run, ~20 cycling. Only for is_cardio=true; omit when not prescribing a pace.',
+                    },
                   },
                   required: ['name', 'muscle_group', 'sets_display'],
                 },
@@ -228,6 +233,11 @@ export class CoachToolsService {
                             type: 'integer',
                             description:
                               'Target duration in minutes when is_cardio=true. Typical 20–45 min.',
+                          },
+                          target_speed_kmh: {
+                            type: 'number',
+                            description:
+                              'Optional target pace in km/h when is_cardio=true (~5 walk, ~8 jog, ~10+ run, ~20 cycling). Omit when not prescribing a pace.',
                           },
                         },
                         required: ['name', 'muscle_group', 'sets_display'],
@@ -573,18 +583,22 @@ export class CoachToolsService {
                   // Cardio branch: synthesize a single duration block,
                   // emit `sets_display` as "30 min" so the iOS plan-day
                   // card pill matches. Library category is authoritative
-                  // over the AI's is_cardio hint.
-                  if (
-                    ex.is_cardio === true ||
-                    isCardioCategory(libEx.category)
-                  ) {
+                  // over the AI's is_cardio hint — a non-cardio row can't
+                  // be cardio-ified by the model.
+                  if (resolveIsCardio(libEx.category, ex.is_cardio)) {
                     const minutes =
                       typeof ex.target_duration_minutes === 'number' &&
                       ex.target_duration_minutes > 0
                         ? ex.target_duration_minutes
                         : null;
+                    const speed =
+                      typeof ex.target_speed_kmh === 'number' &&
+                      ex.target_speed_kmh > 0
+                        ? ex.target_speed_kmh
+                        : null;
                     const cardioSets = synthesizeCardioTargetSets({
                       targetDurationMinutes: minutes,
+                      targetSpeedKmh: speed,
                     });
                     return {
                       library_exercise_id: libEx.id,
@@ -789,6 +803,7 @@ export class CoachToolsService {
         }>;
         is_cardio?: boolean;
         target_duration_minutes?: number;
+        target_speed_kmh?: number;
       }[];
       ai_message: string;
       duration_minutes?: number;
@@ -887,14 +902,20 @@ export class CoachToolsService {
             // and would emit nonsense for "30 min Treadmill". Persist
             // duration_seconds on the SessionExercise + a single
             // duration-only set so iOS renders a "30 min" pill.
-            if (ex.is_cardio === true || isCardioCategory(libEx.category)) {
+            if (resolveIsCardio(libEx.category, ex.is_cardio)) {
               const cardioMinutes =
                 typeof ex.target_duration_minutes === 'number' &&
                 ex.target_duration_minutes > 0
                   ? ex.target_duration_minutes
                   : null;
+              const cardioSpeed =
+                typeof ex.target_speed_kmh === 'number' &&
+                ex.target_speed_kmh > 0
+                  ? ex.target_speed_kmh
+                  : null;
               const cardioSets = synthesizeCardioTargetSets({
                 targetDurationMinutes: cardioMinutes,
+                targetSpeedKmh: cardioSpeed,
               });
               const durationSecs = cardioSets[0].duration_seconds!;
               return {
@@ -916,6 +937,7 @@ export class CoachToolsService {
                     is_bodyweight: false,
                     duration_seconds: s.duration_seconds ?? null,
                     distance_meters: s.distance_meters ?? null,
+                    target_speed_kmh: s.target_speed_kmh ?? null,
                     is_completed: false,
                   })),
                 },

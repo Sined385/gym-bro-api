@@ -18,6 +18,7 @@ import {
 } from '../common/date-utils';
 import {
   isCardioCategory,
+  isHiddenCardio,
   synthesizeCardioTargetSets,
   synthesizeTargetSets,
 } from '../common/exercise-set-synth';
@@ -265,7 +266,7 @@ export class PlansService {
     tomorrowStart.setHours(0, 0, 0, 0);
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
     const [
-      exerciseLibrary,
+      exerciseLibraryRaw,
       recentExerciseIds,
       thisWeekSessions,
       recentSessions,
@@ -316,6 +317,8 @@ export class PlansService {
         orderBy: { week_number: 'desc' },
       }),
     ]);
+    // Hide non-walking cardio for now so plan generation can't pick it.
+    const exerciseLibrary = exerciseLibraryRaw.filter((r) => !isHiddenCardio(r));
     const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
 
     // Build the weekContext from this-week sessions. Group by
@@ -465,6 +468,7 @@ export class PlansService {
         // via target_duration_minutes.
         ex.target_sets = synthesizeCardioTargetSets({
           targetDurationMinutes: ex.target_duration_minutes ?? null,
+          targetSpeedKmh: ex.target_speed_kmh ?? null,
         });
         ex.suggested_weight = null;
         ex.sets_display = `${Math.round(

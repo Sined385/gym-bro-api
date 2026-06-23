@@ -84,19 +84,23 @@ export interface SynthSet {
   // instead of the weight × reps row.
   duration_seconds?: number | null;
   distance_meters?: number | null;
+  // Target pace (km/h) for cardio — guidance the user dials into the
+  // machine. Null for strength and for cardio the AI didn't pace.
+  target_speed_kmh?: number | null;
 }
 
 /**
  * Cardio exercises bypass the weight × reps ladder entirely. We persist
- * a single "set" carrying the target duration (and optionally a
- * distance hint, currently unused from the AI side) so the existing
- * sets[] pipeline can flow strength + cardio through the same shape.
+ * a single "set" carrying the target duration (and optionally a target
+ * pace) so the existing sets[] pipeline can flow strength + cardio
+ * through the same shape.
  *
  * Defaults: 30 minutes when no target is supplied. The library row's
  * `category === 'cardio'` is the canonical signal — see isCardioCategory.
  */
 export function synthesizeCardioTargetSets(args: {
   targetDurationMinutes?: number | null;
+  targetSpeedKmh?: number | null;
 }): SynthSet[] {
   const minutes =
     args.targetDurationMinutes &&
@@ -104,6 +108,10 @@ export function synthesizeCardioTargetSets(args: {
     args.targetDurationMinutes < 24 * 60
       ? args.targetDurationMinutes
       : 30;
+  const speed =
+    args.targetSpeedKmh && args.targetSpeedKmh > 0 && args.targetSpeedKmh < 100
+      ? args.targetSpeedKmh
+      : null;
   return [
     {
       set_number: 1,
@@ -113,6 +121,7 @@ export function synthesizeCardioTargetSets(args: {
       is_bodyweight: false,
       duration_seconds: Math.round(minutes * 60),
       distance_meters: null,
+      target_speed_kmh: speed,
     },
   ];
 }
@@ -121,6 +130,52 @@ export function isCardioCategory(
   category: string | null | undefined,
 ): boolean {
   return typeof category === 'string' && category.toLowerCase() === 'cardio';
+}
+
+/**
+ * Cardio types currently exposed to users. Everything else under
+ * category=cardio / muscle_group="Cardio" is hidden FOR NOW — the rows
+ * stay in the DB (so existing sessions/plans keep their links) but are
+ * filtered out of every surface where a user picks an exercise (library
+ * browse, Coach, plan generation). To re-enable a type, add its
+ * external_id here.
+ */
+export const AVAILABLE_CARDIO_EXTERNAL_IDS = new Set<string>(['Walking_Treadmill']);
+
+/**
+ * True for a cardio library row that is NOT in the user-available set, so
+ * it should be hidden from selection surfaces. Works off either signal
+ * (`category` or `muscle_group`) so callers don't all have to select the
+ * same columns.
+ */
+export function isHiddenCardio(row: {
+  category?: string | null;
+  muscle_group?: string | null;
+  external_id?: string | null;
+}): boolean {
+  const isCardio =
+    isCardioCategory(row.category) ||
+    (row.muscle_group ?? '').toLowerCase() === 'cardio';
+  return isCardio && !AVAILABLE_CARDIO_EXTERNAL_IDS.has(row.external_id ?? '');
+}
+
+/**
+ * Decide whether an exercise should be treated as cardio (duration block)
+ * vs strength. The library `category` is AUTHORITATIVE: a row explicitly
+ * tagged a non-cardio category (e.g. plyometrics, strength) is NEVER
+ * cardio, even if the AI hinted `is_cardio: true` — this stops the model
+ * turning "Catch and Overhead Throw" into a fake 20-min cardio block. The
+ * AI hint is honored only when the row has no explicit category to defer
+ * to (null/empty — e.g. some user-created exercises).
+ */
+export function resolveIsCardio(
+  category: string | null | undefined,
+  aiIsCardio: boolean | undefined,
+): boolean {
+  if (isCardioCategory(category)) return true;
+  const hasExplicitCategory =
+    typeof category === 'string' && category.trim().length > 0;
+  return aiIsCardio === true && !hasExplicitCategory;
 }
 
 /**

@@ -5,6 +5,8 @@ import {
   isBodyweightEquipment,
   isCardioCategory,
   isWeightedEquipment,
+  resolveIsCardio,
+  isHiddenCardio,
 } from './exercise-set-synth';
 
 describe('exercise-set-synth', () => {
@@ -114,8 +116,26 @@ describe('exercise-set-synth', () => {
           is_bodyweight: false,
           duration_seconds: 1800,
           distance_meters: null,
+          target_speed_kmh: null,
         },
       ]);
+    });
+
+    it('carries through a target speed when supplied', () => {
+      const out = synthesizeCardioTargetSets({
+        targetDurationMinutes: 30,
+        targetSpeedKmh: 5,
+      });
+      expect(out[0].target_speed_kmh).toBe(5);
+    });
+
+    it('drops an absurd / non-positive target speed to null', () => {
+      expect(
+        synthesizeCardioTargetSets({ targetSpeedKmh: 0 })[0].target_speed_kmh,
+      ).toBeNull();
+      expect(
+        synthesizeCardioTargetSets({ targetSpeedKmh: 250 })[0].target_speed_kmh,
+      ).toBeNull();
     });
 
     it('falls back to 30 min when target is missing / zero / absurd', () => {
@@ -144,5 +164,41 @@ describe('exercise-set-synth', () => {
         expect(isCardioCategory(c as any)).toBe(false);
       },
     );
+  });
+});
+
+describe('resolveIsCardio', () => {
+  it('treats category=cardio as cardio regardless of AI hint', () => {
+    expect(resolveIsCardio('cardio', false)).toBe(true);
+    expect(resolveIsCardio('cardio', undefined)).toBe(true);
+  });
+
+  it('NEVER cardio-ifies an explicit non-cardio category, even if AI says is_cardio', () => {
+    expect(resolveIsCardio('plyometrics', true)).toBe(false);
+    expect(resolveIsCardio('strength', true)).toBe(false);
+  });
+
+  it('honors the AI hint only when the row has no explicit category', () => {
+    expect(resolveIsCardio(null, true)).toBe(true);
+    expect(resolveIsCardio('', true)).toBe(true);
+    expect(resolveIsCardio(undefined, true)).toBe(true);
+    expect(resolveIsCardio(null, false)).toBe(false);
+  });
+});
+
+describe('isHiddenCardio', () => {
+  it('hides non-walking cardio (by category or muscle_group)', () => {
+    expect(isHiddenCardio({ category: 'cardio', external_id: 'Rowing_Stationary' })).toBe(true);
+    expect(isHiddenCardio({ muscle_group: 'Cardio', external_id: 'Stairmaster' })).toBe(true);
+  });
+
+  it('keeps Walking, Treadmill visible', () => {
+    expect(isHiddenCardio({ category: 'cardio', external_id: 'Walking_Treadmill' })).toBe(false);
+    expect(isHiddenCardio({ muscle_group: 'Cardio', external_id: 'Walking_Treadmill' })).toBe(false);
+  });
+
+  it('never hides non-cardio exercises', () => {
+    expect(isHiddenCardio({ category: 'strength', external_id: 'Barbell_Bench_Press' })).toBe(false);
+    expect(isHiddenCardio({ muscle_group: 'Chest', external_id: 'Push_Up' })).toBe(false);
   });
 });

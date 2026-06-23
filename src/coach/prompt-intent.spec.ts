@@ -168,3 +168,49 @@ describe('filterLibraryForContext', () => {
     expect(ids).toEqual(expect.arrayContaining(['bb-row', 'pull-up', 'lat-pull']));
   });
 });
+
+describe('walking / cardio intent (regression: "walking chest and arms")', () => {
+  // Library with a seeded walking row, mirroring the real catalog where
+  // cardio rows carry muscle_group="Cardio".
+  const CARDIO_LIB = [
+    ...LIB,
+    {
+      id: 'walk-tm',
+      name: 'Walking, Treadmill',
+      muscle_group: 'Cardio',
+      equipment: 'Machine',
+      category: 'cardio',
+      is_system: true,
+      mechanic: null,
+    },
+  ];
+
+  it('detects cardio alongside the named muscles for "walking chest and arms"', () => {
+    const intent = inferUserIntent('walking chest and arms', CARDIO_LIB);
+    expect(intent.muscleKeywords).toEqual(
+      expect.arrayContaining(['cardio', 'chest', 'arms']),
+    );
+  });
+
+  it('surfaces the walking row when the user asks for walking + muscles', () => {
+    const intent = inferUserIntent('walking chest and arms', CARDIO_LIB);
+    const filtered = filterLibraryForContext({
+      library: CARDIO_LIB,
+      intent,
+      onboarding: { available_equipment: 'full_gym' },
+      recentLiftIds: [],
+      cap: 120,
+    });
+    expect(filtered.map((e) => e.id)).toContain('walk-tm');
+  });
+
+  it('treats a bare "let\'s go for a walk" as cardio', () => {
+    const intent = inferUserIntent("let's go for a walk", CARDIO_LIB);
+    expect(intent.muscleKeywords).toContain('cardio');
+  });
+
+  it('still routes "walking lunges" to legs (not cardio-only)', () => {
+    const intent = inferUserIntent('add some walking lunges', CARDIO_LIB);
+    expect(intent.muscleKeywords).toContain('legs');
+  });
+});

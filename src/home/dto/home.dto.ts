@@ -99,6 +99,12 @@ export class LogSetDto {
   @IsInt()
   @Min(0)
   distance_meters?: number;
+
+  // Target pace (km/h) for cardio — guidance, not a logged value.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  target_speed_kmh?: number;
 }
 
 export class UpdateSetDto {
@@ -132,6 +138,12 @@ export class UpdateSetDto {
   @IsInt()
   @Min(0)
   distance_meters?: number;
+
+  // Target pace (km/h) for cardio — guidance, not a logged value.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  target_speed_kmh?: number;
 }
 
 export class FeedbackDto {
@@ -204,6 +216,12 @@ class CompleteSetItemDto {
   @IsInt()
   @Min(0)
   distance_meters?: number;
+
+  // Target pace (km/h) for cardio — guidance, not a logged value.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  target_speed_kmh?: number;
 }
 
 class CompleteExerciseItemDto {

@@ -2,6 +2,8 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateExerciseDto } from './dto/exercises.dto';
 import { AppException } from '../common/exceptions/app.exception';
+import { serializeExerciseSets } from '../common/format-session';
+import { isHiddenCardio } from '../common/exercise-set-synth';
 
 const IMAGE_BASE_URL =
   'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises';
@@ -40,7 +42,10 @@ export class ExercisesService {
       this.fetchLastSetMap(userId),
     ]);
 
-    const mapped = rows.map((r) => ({
+    // Hide non-walking cardio for now (rows stay in the DB).
+    const mapped = rows
+      .filter((r) => !isHiddenCardio(r))
+      .map((r) => ({
       id: r.id,
       name: r.name,
       muscle_group: r.muscle_group,
@@ -290,13 +295,11 @@ export class ExercisesService {
       exercise_id: exerciseId,
       sessions: sessionExercises.map((se) => ({
         session_date: se.session.completed_at?.toISOString() ?? null,
-        sets: se.exercise_sets.map((s) => ({
-          set_number: s.set_number,
-          weight: s.weight ? Number(s.weight) : null,
-          weight_unit: s.weight_unit,
-          reps: s.reps,
-          is_bodyweight: s.is_bodyweight,
-        })),
+        // Route through the canonical serializer so cardio's
+        // duration_seconds + distance_meters reach iOS. Strength sets
+        // get the same {set_number, weight, weight_unit, reps,
+        // is_bodyweight} shape as before plus null cardio fields.
+        sets: serializeExerciseSets(se.exercise_sets as any),
       })),
     };
   }
