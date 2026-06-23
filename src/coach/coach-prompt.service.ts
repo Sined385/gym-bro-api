@@ -180,8 +180,9 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
     const thisWeekBlock = formatThisWeekDedupBlock(thisWeekExercises);
 
     const currentSession = quickWorkout
-      ? `Current quick workout: "${quickWorkout.title}" with ${quickWorkout.exercises.length} exercises: ${quickWorkout.exercises.map((e: any) => e.name).join(', ')}`
-      : 'No current quick workout.';
+      ? `ACTIVE WORKOUT — the workout the user is currently looking at (a session you built, shown as a card): "${quickWorkout.title}". Exercises (reuse these library_exercise_id values when rebuilding): ${quickWorkout.exercises.map((e: any) => `${e.name} (id: ${e.library_exercise_id ?? 'unknown'}, ${e.muscle_group ?? '?'})`).join('; ')}.
+IMPORTANT: when the user asks to change THIS workout — "add walking", "add another chest exercise", "swap the deadlift", "drop the squats", "make it shorter" — and they do NOT name a specific other weekday, they mean this ACTIVE WORKOUT. Call create_workout_session again with the FULL updated exercise list (the exercises above WITH the user's change applied), reusing each kept exercise's library_exercise_id. This refreshes the card so the user sees the change. Do NOT call modify_plan_days for this — that edits the weekly plan, not this workout, and the user would see nothing change.`
+      : 'No active workout in this conversation. (If the user asks to modify "the workout" but you have not built one here, ask which workout they mean.)';
 
     const dayFullNames = [
       'Monday',
