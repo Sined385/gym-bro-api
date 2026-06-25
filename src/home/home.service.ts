@@ -990,6 +990,7 @@ export class HomeService {
     return {
       ...formatSessionResponse(fullSession),
       calories: fullSession.calories ?? null,
+      avg_heart_rate: fullSession.avg_heart_rate ?? null,
       performance_score: fullSession.performance_score ?? null,
       feedback: fullSession.feedback
         ? {

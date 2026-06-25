@@ -62,13 +62,7 @@ export class CommunityController {
     return this.communityService.deletePost(req.user!.id, postId);
   }
 
-  // ── Likes / Reactions ────────────────────────────────────────
-
-  @Post('posts/:id/like')
-  @HttpCode(HttpStatus.OK)
-  async toggleLike(@Param('id') postId: string, @Req() req: Request) {
-    return this.communityService.toggleReaction(req.user!.id, postId, 'heart');
-  }
+  // ── Reactions ────────────────────────────────────────────────
 
   @Post('posts/:id/react')
   @HttpCode(HttpStatus.OK)
@@ -222,6 +216,54 @@ export class CommunityController {
     @Query('cursor') cursor?: string,
   ) {
     return this.communityService.getWorkoutHistory(userId, limit ?? 10, cursor);
+  }
+
+  @Get('users/:userId/posts')
+  @HttpCode(HttpStatus.OK)
+  async getUserPosts(
+    @Param('userId') userId: string,
+    @Query('limit') limit: number | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @Req() req: Request,
+  ) {
+    return this.communityService.getUserPosts(
+      req.user!.id,
+      userId,
+      limit ?? 12,
+      cursor,
+    );
+  }
+
+  @Get('users/:userId/followers')
+  @HttpCode(HttpStatus.OK)
+  async getUserFollowers(
+    @Param('userId') userId: string,
+    @Query('limit') limit: number | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @Req() req: Request,
+  ) {
+    return this.communityService.getUserFollowers(
+      req.user!.id,
+      userId,
+      limit ?? 20,
+      cursor,
+    );
+  }
+
+  @Get('users/:userId/following')
+  @HttpCode(HttpStatus.OK)
+  async getUserFollowing(
+    @Param('userId') userId: string,
+    @Query('limit') limit: number | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @Req() req: Request,
+  ) {
+    return this.communityService.getUserFollowing(
+      req.user!.id,
+      userId,
+      limit ?? 20,
+      cursor,
+    );
   }
 
   @Get('users/:userId/compare')

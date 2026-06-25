@@ -3,459 +3,258 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
+import { SubscriptionService } from '../subscription/subscription.service';
 import { summarizeAiError } from '../common/ai-error';
 
-interface HistorySummary {
-  totalSessions: number;
-  avgSessionsPerWeek: number;
-  avgSessionDurationMin: number;
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface UserContext {
+  fullName: string;
+  experienceLevel: string | null;
+  goals: string[];
+  bodyWeightKg: number | null;
+  sessionsPerWeek: number;
   topMuscleGroups: string[];
-  topExercises: {
-    name: string;
-    totalSets: number;
-    avgWeight: number | null;
-    maxWeight: number | null;
-    avgReps: number;
-  }[];
-  weeklyVolume: number[];
-  avgEffortLevel: number | null;
-  volumeTrend: 'increasing' | 'stable' | 'decreasing';
 }
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-interface CacheEntry {
-  data: any;
-  expiresAt: number;
+interface Metric {
+  key: string;
+  label: string;
+  unit: string | null;
+  currentValue: number;
+  otherValue: number;
+  higherIsBetter: boolean;
 }
 
+/// Builds the "You vs <name>" head-to-head. The comparable metrics are picked
+/// dynamically from what the two users actually share (lifts by estimated 1RM
+/// + shared activity stats); an AI analysis is then generated FROM those
+/// metrics + each user's profile. Premium-gated — free users get `locked`.
 @Injectable()
 export class CommunityAiService {
-  private comparisonCache = new Map<string, CacheEntry>();
+  // Per-ordered-pair cache (the AI analysis is written from the viewer's POV).
+  private cache = new Map<string, { data: any; expiresAt: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     @Inject('OPENAI_CLIENT') private readonly openai: OpenAI,
     private readonly aiUsage: AiUsageService,
+    private readonly subscription: SubscriptionService,
   ) {}
 
-  private getCacheKey(userA: string, userB: string): string {
-    return [userA, userB].sort().join(':');
-  }
-
   async compareUsers(currentUserId: string, otherUserId: string) {
-    const cacheKey = this.getCacheKey(currentUserId, otherUserId);
-    const cached = this.comparisonCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      // Swap users if needed so currentUser always reflects the requester
-      if (cached.data.currentUser?.userId === currentUserId) {
-        return cached.data;
-      }
-      return {
-        ...cached.data,
-        currentUser: cached.data.otherUser,
-        otherUser: cached.data.currentUser,
-      };
+    // Premium feature — free users get a teaser, no OpenAI call.
+    if (!(await this.subscription.isPremium(currentUserId))) {
+      return { locked: true };
     }
 
-    const emptyHistory: HistorySummary = {
-      totalSessions: 0,
-      avgSessionsPerWeek: 0,
-      avgSessionDurationMin: 0,
-      topMuscleGroups: [],
-      topExercises: [],
-      weeklyVolume: [],
-      avgEffortLevel: null,
-      volumeTrend: 'stable',
-    };
+    const cacheKey = `${currentUserId}:${otherUserId}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-    const [currentUserStats, otherUserStats] = await Promise.all([
-      this.getUserLiftStats(currentUserId),
-      this.getUserLiftStats(otherUserId),
+    const [me, them] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: currentUserId } }),
+      this.prisma.user.findUnique({ where: { id: otherUserId } }),
     ]);
 
-    let currentUserHistory = emptyHistory;
-    let otherUserHistory = emptyHistory;
+    const metrics = await this.buildMetrics(currentUserId, otherUserId);
 
-    try {
-      [currentUserHistory, otherUserHistory] = await Promise.all([
-        this.getUserHistorySummary(currentUserId),
-        this.getUserHistorySummary(otherUserId),
-      ]);
-    } catch (error) {
-      console.error('Failed to fetch workout history:', error);
-    }
+    const [myCtx, theirCtx] = await Promise.all([
+      this.getUserContext(currentUserId, me?.full_name ?? 'You'),
+      this.getUserContext(otherUserId, them?.full_name ?? 'Them'),
+    ]);
 
-    const enrichedCurrentUser = {
-      ...currentUserStats,
-      totalSessions3mo: currentUserHistory.totalSessions,
-      avgSessionsPerWeek: currentUserHistory.avgSessionsPerWeek,
-      avgSessionDurationMin: currentUserHistory.avgSessionDurationMin,
-      topMuscleGroups: currentUserHistory.topMuscleGroups,
-      avgEffortLevel: currentUserHistory.avgEffortLevel,
-      volumeTrend: currentUserHistory.volumeTrend,
-    };
-
-    const enrichedOtherUser = {
-      ...otherUserStats,
-      totalSessions3mo: otherUserHistory.totalSessions,
-      avgSessionsPerWeek: otherUserHistory.avgSessionsPerWeek,
-      avgSessionDurationMin: otherUserHistory.avgSessionDurationMin,
-      topMuscleGroups: otherUserHistory.topMuscleGroups,
-      avgEffortLevel: otherUserHistory.avgEffortLevel,
-      volumeTrend: otherUserHistory.volumeTrend,
-    };
-
-    // Check if enough data
-    const currentHasData =
-      currentUserStats.benchPress ||
-      currentUserStats.squat ||
-      currentUserStats.deadlift ||
-      currentUserHistory.totalSessions > 0;
-    const otherHasData =
-      otherUserStats.benchPress ||
-      otherUserStats.squat ||
-      otherUserStats.deadlift ||
-      otherUserHistory.totalSessions > 0;
-
-    if (!currentHasData && !otherHasData) {
-      return {
-        currentUser: enrichedCurrentUser,
-        otherUser: enrichedOtherUser,
-        overlapAnalysis:
-          'Not enough workout data to generate a comparison. Both users need to log some workouts first.',
-      };
-    }
-
-    try {
-      const comparison = await this.generateComparison(
-        currentUserId,
-        enrichedCurrentUser,
-        enrichedOtherUser,
-        currentUserHistory,
-        otherUserHistory,
-      );
-      const result = {
-        currentUser: enrichedCurrentUser,
-        otherUser: enrichedOtherUser,
-        comparison,
-        overlapAnalysis: comparison.summary,
-      };
-      this.comparisonCache.set(cacheKey, {
-        data: result,
-        expiresAt: Date.now() + CACHE_TTL_MS,
-      });
-      return result;
-    } catch (error) {
-      console.warn(summarizeAiError('community_comparison', error));
-      return {
-        currentUser: enrichedCurrentUser,
-        otherUser: enrichedOtherUser,
-        overlapAnalysis:
-          'Unable to generate comparison at this time. Check back later!',
-      };
-    }
-  }
-
-  private async getUserLiftStats(userId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    const onboarding = await this.prisma.onboardingData.findUnique({
-      where: { user_id: userId },
-    });
-
-    const keyLifts = ['Bench Press', 'Squat', 'Deadlift'];
-    const liftStats: Record<string, number | null> = {};
-
-    for (const lift of keyLifts) {
-      const maxSet = await this.prisma.exerciseSet.findFirst({
-        where: {
-          exercise: {
-            name: { contains: lift, mode: 'insensitive' },
-            session: { user_id: userId },
-          },
-          weight: { not: null },
-        },
-        orderBy: { weight: 'desc' },
-      });
-
-      const key = lift.toLowerCase().replace(' ', '');
-      liftStats[key] = maxSet?.weight ? Number(maxSet.weight) : null;
-    }
-
-    return {
-      userId,
-      fullName: user?.full_name ?? 'Unknown',
-      benchPress: liftStats['benchpress'] ?? null,
-      squat: liftStats['squat'] ?? null,
-      deadlift: liftStats['deadlift'] ?? null,
-      bodyWeightKg: onboarding?.body_weight_kg ?? null,
-      experienceLevel: onboarding?.experience_level ?? null,
-      primaryGoals: onboarding?.primary_goals ?? [],
-    };
-  }
-
-  private async getUserHistorySummary(userId: string): Promise<HistorySummary> {
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
-    const sessions = await this.prisma.workoutSession.findMany({
-      where: {
-        user_id: userId,
-        status: 'completed',
-        completed_at: { gte: ninetyDaysAgo },
-      },
-      include: {
-        exercises: {
-          include: {
-            exercise_sets: true,
-          },
-        },
-        feedback: true,
-      },
-      orderBy: { completed_at: 'asc' },
-    });
-
-    const totalSessions = sessions.length;
-
-    if (totalSessions === 0) {
-      return {
-        totalSessions: 0,
-        avgSessionsPerWeek: 0,
-        avgSessionDurationMin: 0,
-        topMuscleGroups: [],
-        topExercises: [],
-        weeklyVolume: [],
-        avgEffortLevel: null,
-        volumeTrend: 'stable',
-      };
-    }
-
-    // Avg sessions per week
-    const weeksSpan = Math.max(1, 90 / 7);
-    const avgSessionsPerWeek =
-      Math.round((totalSessions / weeksSpan) * 10) / 10;
-
-    // Avg session duration
-    const durations = sessions
-      .map((s) => s.duration_minutes)
-      .filter((d): d is number => d != null);
-    const avgSessionDurationMin =
-      durations.length > 0
-        ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-        : 0;
-
-    // Muscle group counts
-    const muscleGroupCounts: Record<string, number> = {};
-    // Exercise aggregation
-    const exerciseMap: Record<
-      string,
-      { totalSets: number; weights: number[]; reps: number[] }
-    > = {};
-
-    // Weekly volume map (ISO week key)
-    const weeklyVolumeMap: Record<string, number> = {};
-
-    for (const session of sessions) {
-      // Weekly volume key
-      const completedAt = session.completed_at ?? session.created_at;
-      const weekKey = this.getISOWeekKey(completedAt);
-
-      for (const exercise of session.exercises) {
-        // Muscle groups
-        if (exercise.muscle_group) {
-          const mg = exercise.muscle_group.toLowerCase();
-          muscleGroupCounts[mg] =
-            (muscleGroupCounts[mg] ?? 0) + exercise.exercise_sets.length;
-        }
-
-        // Exercise stats
-        const exName = exercise.name.toLowerCase().trim();
-        if (!exerciseMap[exName]) {
-          exerciseMap[exName] = { totalSets: 0, weights: [], reps: [] };
-        }
-        const entry = exerciseMap[exName];
-
-        for (const set of exercise.exercise_sets) {
-          entry.totalSets++;
-          if (set.weight != null) {
-            // Normalize to kg — the comparison reports lift maxes in kg, so
-            // a set logged in lbs must be converted, not pushed as-is.
-            const w =
-              set.weight_unit === 'lbs'
-                ? Number(set.weight) * 0.453592
-                : Number(set.weight);
-            entry.weights.push(w);
-          }
-          entry.reps.push(set.reps);
-
-          // Weekly volume (weight * reps)
-          if (set.weight != null) {
-            const vol = Number(set.weight) * set.reps;
-            weeklyVolumeMap[weekKey] = (weeklyVolumeMap[weekKey] ?? 0) + vol;
-          }
-        }
+    let analysis: any = null;
+    const hasData = metrics.length > 0 || myCtx.sessionsPerWeek > 0;
+    if (hasData) {
+      try {
+        analysis = await this.generateAnalysis(
+          currentUserId,
+          metrics,
+          myCtx,
+          theirCtx,
+        );
+      } catch (error) {
+        console.warn(summarizeAiError('community_comparison', error));
       }
     }
 
-    // Top 3 muscle groups
-    const topMuscleGroups = Object.entries(muscleGroupCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([mg]) => mg);
+    const result = {
+      currentUser: { userId: currentUserId, fullName: myCtx.fullName },
+      otherUser: { userId: otherUserId, fullName: theirCtx.fullName },
+      metrics,
+      analysis,
+    };
+    this.cache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
+    return result;
+  }
 
-    // Top 10 exercises by frequency (total sets)
-    const topExercises = Object.entries(exerciseMap)
-      .sort((a, b) => b[1].totalSets - a[1].totalSets)
-      .slice(0, 10)
-      .map(([name, data]) => ({
-        name,
-        totalSets: data.totalSets,
-        avgWeight:
-          data.weights.length > 0
-            ? Math.round(
-                (data.weights.reduce((a, b) => a + b, 0) /
-                  data.weights.length) *
-                  10,
-              ) / 10
-            : null,
-        maxWeight: data.weights.length > 0 ? Math.max(...data.weights) : null,
-        avgReps:
-          data.reps.length > 0
-            ? Math.round(
-                (data.reps.reduce((a, b) => a + b, 0) / data.reps.length) * 10,
-              ) / 10
-            : 0,
-      }));
+  // MARK: dynamic metrics
 
-    // Weekly volume as sorted array
-    const sortedWeeks = Object.keys(weeklyVolumeMap).sort();
-    const weeklyVolume = sortedWeeks.map((k) => Math.round(weeklyVolumeMap[k]));
+  private async buildMetrics(
+    currentUserId: string,
+    otherUserId: string,
+  ): Promise<Metric[]> {
+    const [myLifts, theirLifts] = await Promise.all([
+      this.getExerciseOneRepMaxes(currentUserId),
+      this.getExerciseOneRepMaxes(otherUserId),
+    ]);
+    const theirMap = new Map(theirLifts.map((l) => [l.key, l]));
 
-    // Avg effort level
-    const efforts = sessions
-      .map((s) => s.feedback?.effort_level)
-      .filter((e): e is number => e != null);
-    const avgEffortLevel =
-      efforts.length > 0
-        ? Math.round(
-            (efforts.reduce((a, b) => a + b, 0) / efforts.length) * 10,
-          ) / 10
-        : null;
+    const lifts: Metric[] = [];
+    for (const lift of myLifts) {
+      const other = theirMap.get(lift.key);
+      if (!other) continue;
+      lifts.push({
+        key: `lift:${lift.key}`,
+        label: lift.label,
+        unit: 'kg',
+        currentValue: lift.orm,
+        otherValue: other.orm,
+        higherIsBetter: true,
+      });
+    }
+    lifts.sort(
+      (a, b) => b.currentValue + b.otherValue - (a.currentValue + a.otherValue),
+    );
+    const topLifts = lifts.slice(0, 5);
 
-    // Volume trend: compare first 4 weeks avg vs last 4 weeks
-    const volumeTrend = this.calculateVolumeTrend(weeklyVolume);
+    const extra: Metric[] = [];
+    const [mySpw, theirSpw] = await Promise.all([
+      this.getSessionsPerWeek(currentUserId),
+      this.getSessionsPerWeek(otherUserId),
+    ]);
+    if (mySpw > 0 && theirSpw > 0) {
+      extra.push({
+        key: 'sessions_per_week',
+        label: 'Sessions / wk',
+        unit: null,
+        currentValue: mySpw,
+        otherValue: theirSpw,
+        higherIsBetter: true,
+      });
+    }
+    return [...topLifts, ...extra];
+  }
 
+  private async getExerciseOneRepMaxes(
+    userId: string,
+  ): Promise<{ key: string; label: string; orm: number }[]> {
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { key: string; label: string; orm: number | null }[]
+      >`
+        SELECT key, MIN(label) as label, ROUND(MAX(orm)) as orm
+        FROM (
+          SELECT
+            lower(se.name) as key,
+            se.name as label,
+            (CASE WHEN es.weight_unit = 'lb' THEN es.weight * 0.453592 ELSE es.weight END)
+              * (1 + LEAST(es.reps, 12) / 30.0) as orm
+          FROM exercise_sets es
+          JOIN session_exercises se ON se.id = es.exercise_id
+          JOIN workout_sessions ws ON ws.id = se.session_id
+          WHERE ws.user_id = ${userId}
+            AND ws.status = 'completed'
+            AND es.weight IS NOT NULL AND es.weight > 0 AND es.reps > 0
+        ) t
+        GROUP BY key
+      `;
+      return rows
+        .filter((r) => r.orm != null && Number(r.orm) > 0)
+        .map((r) => ({ key: r.key, label: r.label, orm: Number(r.orm) }));
+    } catch {
+      return [];
+    }
+  }
+
+  private async getSessionsPerWeek(userId: string): Promise<number> {
+    try {
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      const count = await this.prisma.workoutSession.count({
+        where: {
+          user_id: userId,
+          status: 'completed',
+          completed_at: { gte: ninetyDaysAgo },
+        },
+      });
+      return Math.round((count / (90 / 7)) * 10) / 10;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async getUserContext(
+    userId: string,
+    fullName: string,
+  ): Promise<UserContext> {
+    const [onboarding, sessionsPerWeek, topMuscleGroups] = await Promise.all([
+      this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
+      this.getSessionsPerWeek(userId),
+      this.getTopMuscleGroups(userId),
+    ]);
     return {
-      totalSessions,
-      avgSessionsPerWeek,
-      avgSessionDurationMin,
+      fullName,
+      experienceLevel: onboarding?.experience_level ?? null,
+      goals: onboarding?.primary_goals ?? [],
+      bodyWeightKg: onboarding?.body_weight_kg ?? null,
+      sessionsPerWeek,
       topMuscleGroups,
-      topExercises,
-      weeklyVolume,
-      avgEffortLevel,
-      volumeTrend,
     };
   }
 
-  private getISOWeekKey(date: Date): string {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-    const week1 = new Date(d.getFullYear(), 0, 4);
-    const weekNum =
-      1 +
-      Math.round(
-        ((d.getTime() - week1.getTime()) / 86400000 -
-          3 +
-          ((week1.getDay() + 6) % 7)) /
-          7,
-      );
-    return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+  private async getTopMuscleGroups(userId: string): Promise<string[]> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ mg: string }[]>`
+        SELECT se.muscle_group as mg, COUNT(*) as c
+        FROM session_exercises se
+        JOIN workout_sessions ws ON ws.id = se.session_id
+        JOIN exercise_sets es ON es.exercise_id = se.id
+        WHERE ws.user_id = ${userId}
+          AND ws.status = 'completed'
+          AND se.muscle_group IS NOT NULL
+        GROUP BY se.muscle_group
+        ORDER BY c DESC
+        LIMIT 3
+      `;
+      return rows.map((r) => r.mg).filter(Boolean);
+    } catch {
+      return [];
+    }
   }
 
-  private calculateVolumeTrend(
-    weeklyVolume: number[],
-  ): 'increasing' | 'stable' | 'decreasing' {
-    if (weeklyVolume.length < 4) return 'stable';
+  // MARK: AI analysis
 
-    const firstFour = weeklyVolume.slice(0, 4);
-    const lastFour = weeklyVolume.slice(-4);
-
-    const firstAvg = firstFour.reduce((a, b) => a + b, 0) / firstFour.length;
-    const lastAvg = lastFour.reduce((a, b) => a + b, 0) / lastFour.length;
-
-    if (firstAvg === 0) return lastAvg > 0 ? 'increasing' : 'stable';
-
-    const changePercent = ((lastAvg - firstAvg) / firstAvg) * 100;
-
-    if (changePercent > 10) return 'increasing';
-    if (changePercent < -10) return 'decreasing';
-    return 'stable';
-  }
-
-  private async generateComparison(
+  private async generateAnalysis(
     userId: string,
-    currentUser: any,
-    otherUser: any,
-    currentHistory: HistorySummary,
-    otherHistory: HistorySummary,
+    metrics: Metric[],
+    me: UserContext,
+    them: UserContext,
   ) {
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
-    const systemPrompt = `You are a fitness comparison analyst for GymJam app. You will receive two users' training profiles including their key lift stats and 3-month workout history summaries.
+    const metricLines = metrics.length
+      ? metrics
+          .map(
+            (m) =>
+              `- ${m.label}: you ${m.currentValue}${m.unit ? ' ' + m.unit : ''} vs them ${m.otherValue}${m.unit ? ' ' + m.unit : ''}`,
+          )
+          .join('\n')
+      : '(no directly shared lifts)';
 
-Analyze and return a JSON object with these fields:
-- "summary": A brief 2-3 sentence overall comparison highlighting the most interesting differences and similarities.
-- "trainingPatterns": 2-3 sentences comparing training frequency, session duration, muscle group focus, and consistency.
-- "volumeTrends": 2-3 sentences comparing volume trends over the past 3 months, noting who is progressing faster or maintaining better consistency.
-- "strengths": An object with "currentUser" and "otherUser" keys, each a 1-2 sentence description of that user's standout strengths.
-- "recommendation": 2-3 sentences of actionable advice for the current user based on the comparison.
+    const profile = (c: UserContext) =>
+      `experience=${c.experienceLevel ?? 'unknown'}, goals=${c.goals.join('/') || 'none'}, bodyweight=${c.bodyWeightKg ?? '?'}kg, sessions/wk=${c.sessionsPerWeek}, trains=${c.topMuscleGroups.join('/') || 'n/a'}`;
 
-Keep the tone encouraging, constructive, and specific. Reference actual numbers when relevant. Never be negative or discouraging.`;
+    const systemPrompt = `You are a fitness comparison analyst for the GymJam app. You compare the viewer ("you") with another lifter, using ONLY the data provided. Be specific, reference the actual numbers, and account for bodyweight differences when judging strength (lighter lifters moving similar weight are pound-for-pound stronger). Return a JSON object:
+- "verdict": 2-3 sentence overall head-to-head read.
+- "yourEdge": 1 sentence on where the viewer is ahead.
+- "theirEdge": 1 sentence on where the other lifter is ahead.
+- "takeaway": 1-2 sentences of actionable advice for the viewer.
+Keep it punchy and encouraging, no markdown.`;
 
-    const formatExerciseList = (exercises: HistorySummary['topExercises']) =>
-      exercises
-        .slice(0, 5)
-        .map(
-          (e) =>
-            `${e.name} (${e.totalSets} sets, avg ${e.avgWeight ?? '?'} kg, max ${e.maxWeight ?? '?'} kg, avg ${e.avgReps} reps)`,
-        )
-        .join('\n  ');
-
-    const userPrompt = `Compare these two training profiles:
-
-USER 1 (${currentUser.fullName}):
-- Experience: ${currentUser.experienceLevel ?? 'Unknown'}
-- Goal: ${currentUser.primaryGoals?.join(', ') || 'Unknown'}
-- Body Weight: ${currentUser.bodyWeightKg ? currentUser.bodyWeightKg + ' kg' : 'Unknown'}
-- Bench Press Max: ${currentUser.benchPress ? currentUser.benchPress + ' kg' : 'No data'}
-- Squat Max: ${currentUser.squat ? currentUser.squat + ' kg' : 'No data'}
-- Deadlift Max: ${currentUser.deadlift ? currentUser.deadlift + ' kg' : 'No data'}
-- Sessions (3mo): ${currentHistory.totalSessions}, avg ${currentHistory.avgSessionsPerWeek}/week
-- Avg Duration: ${currentHistory.avgSessionDurationMin} min
-- Top Muscle Groups: ${currentHistory.topMuscleGroups.join(', ') || 'N/A'}
-- Volume Trend: ${currentHistory.volumeTrend}
-- Avg Effort: ${currentHistory.avgEffortLevel ?? 'N/A'}/10
-- Top Exercises:
-  ${formatExerciseList(currentHistory.topExercises) || 'No data'}
-
-USER 2 (${otherUser.fullName}):
-- Experience: ${otherUser.experienceLevel ?? 'Unknown'}
-- Goal: ${otherUser.primaryGoals?.join(', ') || 'Unknown'}
-- Body Weight: ${otherUser.bodyWeightKg ? otherUser.bodyWeightKg + ' kg' : 'Unknown'}
-- Bench Press Max: ${otherUser.benchPress ? otherUser.benchPress + ' kg' : 'No data'}
-- Squat Max: ${otherUser.squat ? otherUser.squat + ' kg' : 'No data'}
-- Deadlift Max: ${otherUser.deadlift ? otherUser.deadlift + ' kg' : 'No data'}
-- Sessions (3mo): ${otherHistory.totalSessions}, avg ${otherHistory.avgSessionsPerWeek}/week
-- Avg Duration: ${otherHistory.avgSessionDurationMin} min
-- Top Muscle Groups: ${otherHistory.topMuscleGroups.join(', ') || 'N/A'}
-- Volume Trend: ${otherHistory.volumeTrend}
-- Avg Effort: ${otherHistory.avgEffortLevel ?? 'N/A'}/10
-- Top Exercises:
-  ${formatExerciseList(otherHistory.topExercises) || 'No data'}
-
-Return the analysis as a JSON object.`;
+    const userPrompt = `Shared metrics (head-to-head):\n${metricLines}\n\nYou: ${profile(me)}\nThem (${them.fullName}): ${profile(them)}`;
 
     const response = await this.openai.chat.completions.create({
       model,
@@ -464,37 +263,20 @@ Return the analysis as a JSON object.`;
         { role: 'user', content: userPrompt },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 1500,
+      max_tokens: 600,
       temperature: 0.7,
     });
 
-    if (response.usage) {
-      this.aiUsage.trackUsage({
-        userId,
-        feature: 'user_comparison',
-        model,
-        promptTokens: response.usage.prompt_tokens,
-        completionTokens: response.usage.completion_tokens,
-      });
-    }
+    void this.aiUsage.trackUsage({
+      userId,
+      feature: 'community_comparison',
+      model,
+      promptTokens: response.usage?.prompt_tokens ?? 0,
+      completionTokens: response.usage?.completion_tokens ?? 0,
+    });
 
     const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('Empty response from OpenAI');
-    }
-
-    const parsed = JSON.parse(content);
-
-    return {
-      summary: parsed.summary ?? 'Unable to generate summary.',
-      trainingPatterns: parsed.trainingPatterns ?? '',
-      volumeTrends: parsed.volumeTrends ?? '',
-      strengths: {
-        currentUser: parsed.strengths?.currentUser ?? '',
-        otherUser: parsed.strengths?.otherUser ?? '',
-      },
-      overlappingExercises: [],
-      recommendation: parsed.recommendation ?? '',
-    };
+    if (!content) return null;
+    return JSON.parse(content);
   }
 }

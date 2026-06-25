@@ -94,6 +94,6 @@ export class BlockUserDto {
 
 export class ToggleReactionDto {
   @IsString()
-  @IsIn(['fire', 'muscle', 'clap', 'wow', 'trophy'])
+  @IsIn(['fire', 'muscle', 'heart', 'clap', 'wow', 'trophy'])
   emoji!: string;
 }

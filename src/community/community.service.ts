@@ -204,7 +204,7 @@ export class CommunityService {
         const reactorName = reactor?.full_name ?? 'Someone';
         const emojiChar = CommunityService.EMOJI_DISPLAY[emoji] ?? emoji;
         this.notificationsService.sendToUser(post.user_id, {
-          type: 'like',
+          type: 'reaction',
           title: `${reactorName} reacted ${emojiChar} to your post`,
           body: `${reactorName} reacted ${emojiChar} to your post`,
           data: { post_id: postId, user_id: userId },
@@ -596,6 +596,10 @@ export class CommunityService {
       totalWeightLifted,
       personalRecords,
       recentPosts,
+      oneRepMax,
+      weekStreak,
+      topMuscleGroups,
+      sessions90Count,
     ] = await Promise.all([
       this.prisma.follow.count({ where: { following_id: targetUserId } }),
       this.prisma.follow.count({ where: { follower_id: targetUserId } }),
@@ -615,6 +619,15 @@ export class CommunityService {
         where: postWhere,
         orderBy: { created_at: 'desc' },
         take: 10,
+      }),
+      this.getOneRepMaxes(targetUserId),
+      this.getWeekStreak(targetUserId),
+      this.getTopMuscleGroups(targetUserId),
+      this.prisma.workoutSession.count({
+        where: {
+          ...completedWhere,
+          completed_at: { gte: this.daysAgo(90) },
+        },
       }),
     ]);
 
@@ -653,6 +666,13 @@ export class CommunityService {
         totalWeightLifted,
         personalRecords,
       },
+      profileStats: {
+        oneRepMax, // { bench, squat, deadlift } in kg (estimated), or null each
+        bodyWeightKg: onboarding?.body_weight_kg ?? null,
+        weekStreak,
+        avgSessionsPerWeek: Math.round((sessions90Count / (90 / 7)) * 10) / 10,
+        topMuscleGroups,
+      },
       followerCount,
       followingCount,
       isFollowing,
@@ -660,6 +680,64 @@ export class CommunityService {
       recentPosts: enrichedPosts,
       isOwnProfile,
     };
+  }
+
+  /// Paginated posts for a single user — backs the profile "Posts" grid.
+  /// Same visibility gating as the profile's recentPosts (non-followers see
+  /// only `global` posts). Cursor is the ISO created_at of the last item.
+  async getUserPosts(
+    currentUserId: string,
+    targetUserId: string,
+    limit = 12,
+    cursor?: string,
+  ) {
+    if (currentUserId !== targetUserId) {
+      const blockedIds = await this.getBlockedIds(currentUserId);
+      if (blockedIds.includes(targetUserId)) {
+        throw new AppException(
+          'BLOCKED',
+          'This profile is not available',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+    }
+
+    const isOwnProfile = currentUserId === targetUserId;
+    const isFollowing = isOwnProfile
+      ? true
+      : !!(await this.prisma.follow.findUnique({
+          where: {
+            follower_id_following_id: {
+              follower_id: currentUserId,
+              following_id: targetUserId,
+            },
+          },
+        }));
+
+    // Query params arrive as strings — coerce so `take` is a real Int.
+    const lim = Number(limit) || 12;
+
+    const where: any = { user_id: targetUserId };
+    if (!isOwnProfile && !isFollowing) where.visibility = 'global';
+    if (cursor) where.created_at = { lt: new Date(cursor) };
+
+    const rows = await this.prisma.post.findMany({
+      where,
+      orderBy: { created_at: 'desc' },
+      take: lim + 1,
+    });
+    const hasMore = rows.length > lim;
+    const page = hasMore ? rows.slice(0, lim) : rows;
+
+    const followingSet = new Set(isFollowing ? [targetUserId] : []);
+    const posts = await Promise.all(
+      page.map((p) => this.enrichPost(p, currentUserId, followingSet)),
+    );
+    const nextCursor = hasMore
+      ? page[page.length - 1].created_at.toISOString()
+      : null;
+
+    return { posts, nextCursor };
   }
 
   // ── My Profile ───────────────────────────────────────────
@@ -700,6 +778,10 @@ export class CommunityService {
       totalWeightLifted,
       personalRecords,
       followingIds,
+      oneRepMax,
+      weekStreak,
+      topMuscleGroups,
+      sessions90Count,
     ] = await Promise.all([
       this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
       this.prisma.follow.count({ where: { following_id: userId } }),
@@ -738,6 +820,12 @@ export class CommunityService {
       this.getTotalWeightLifted(userId),
       this.getPersonalRecords(userId),
       this.getFollowingIds(userId),
+      this.getOneRepMaxes(userId),
+      this.getWeekStreak(userId),
+      this.getTopMuscleGroups(userId),
+      this.prisma.workoutSession.count({
+        where: { ...completedWhere, completed_at: { gte: this.daysAgo(90) } },
+      }),
     ]);
 
     const enrichedPosts = await this.enrichPostsBatch(recentPosts, userId);
@@ -779,6 +867,13 @@ export class CommunityService {
         avgEffortLevel,
         totalWeightLifted,
         personalRecords,
+      },
+      profileStats: {
+        oneRepMax,
+        bodyWeightKg: onboarding?.body_weight_kg ?? null,
+        weekStreak,
+        avgSessionsPerWeek: Math.round((sessions90Count / (90 / 7)) * 10) / 10,
+        topMuscleGroups,
       },
       followerCount,
       followingCount,
@@ -933,6 +1028,113 @@ export class CommunityService {
           username: user?.username ?? null,
           avatarUrl: user?.avatar_url ?? null,
           isFollowing: true,
+        };
+      }),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  /// Followers of `targetUserId`, with `isFollowing`/block filtering from the
+  /// VIEWER's perspective so the Follow buttons are correct on another profile.
+  async getUserFollowers(
+    viewerId: string,
+    targetUserId: string,
+    limit = 20,
+    cursor?: string,
+  ) {
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+    const lim = Number(limit) || 20;
+    const blockedIds = await this.getBlockedIds(viewerId);
+
+    const follows = await this.prisma.follow.findMany({
+      where: {
+        following_id: targetUserId,
+        ...(blockedIds.length > 0
+          ? { follower_id: { notIn: blockedIds } }
+          : {}),
+        ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
+      },
+      orderBy: { created_at: 'desc' },
+      take: lim + 1,
+    });
+
+    const hasMore = follows.length > lim;
+    const result = hasMore ? follows.slice(0, limit) : follows;
+    const nextCursor = hasMore
+      ? result[result.length - 1].created_at.toISOString()
+      : null;
+
+    const ids = result.map((f) => f.follower_id);
+    const [users, viewerFollowing] = await Promise.all([
+      this.prisma.user.findMany({ where: { id: { in: ids } } }),
+      this.getFollowingIds(viewerId),
+    ]);
+    const followingSet = new Set(viewerFollowing);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      users: result.map((f) => {
+        const u = userMap.get(f.follower_id);
+        return {
+          id: f.follower_id,
+          fullName: u?.full_name ?? 'Unknown',
+          username: u?.username ?? null,
+          avatarUrl: u?.avatar_url ?? null,
+          isFollowing: followingSet.has(f.follower_id),
+        };
+      }),
+      nextCursor,
+      hasMore,
+    };
+  }
+
+  /// Accounts `targetUserId` follows, with the viewer's `isFollowing` perspective.
+  async getUserFollowing(
+    viewerId: string,
+    targetUserId: string,
+    limit = 20,
+    cursor?: string,
+  ) {
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+    const lim = Number(limit) || 20;
+    const blockedIds = await this.getBlockedIds(viewerId);
+
+    const follows = await this.prisma.follow.findMany({
+      where: {
+        follower_id: targetUserId,
+        ...(blockedIds.length > 0
+          ? { following_id: { notIn: blockedIds } }
+          : {}),
+        ...(cursorDate ? { created_at: { lt: cursorDate } } : {}),
+      },
+      orderBy: { created_at: 'desc' },
+      take: lim + 1,
+    });
+
+    const hasMore = follows.length > lim;
+    const result = hasMore ? follows.slice(0, limit) : follows;
+    const nextCursor = hasMore
+      ? result[result.length - 1].created_at.toISOString()
+      : null;
+
+    const ids = result.map((f) => f.following_id);
+    const [users, viewerFollowing] = await Promise.all([
+      this.prisma.user.findMany({ where: { id: { in: ids } } }),
+      this.getFollowingIds(viewerId),
+    ]);
+    const followingSet = new Set(viewerFollowing);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      users: result.map((f) => {
+        const u = userMap.get(f.following_id);
+        return {
+          id: f.following_id,
+          fullName: u?.full_name ?? 'Unknown',
+          username: u?.username ?? null,
+          avatarUrl: u?.avatar_url ?? null,
+          isFollowing: followingSet.has(f.following_id),
         };
       }),
       nextCursor,
@@ -1313,10 +1515,6 @@ export class CommunityService {
       }));
       const reactionCount = reactionCountMap.get(post.id) ?? 0;
 
-      // Legacy compat
-      const likeCount = reactionCount;
-      const isLiked = userEmojis.has('heart');
-
       let workoutAttachment: any = null;
       if (post.workout_session_id) {
         const session = sessionMap.get(post.workout_session_id);
@@ -1384,9 +1582,7 @@ export class CommunityService {
         shareConfig: post.share_config ?? null,
         cardImageUrl: post.card_image_url ?? null,
         workoutAttachment,
-        likeCount,
         commentCount,
-        isLiked,
         reactions,
         reactionCount,
         isFollowingAuthor: false, // Caller sets this with followingSet
@@ -1488,6 +1684,114 @@ export class CommunityService {
         reps: pr.reps,
         date: pr.date,
       }));
+    } catch {
+      return [];
+    }
+  }
+
+  private daysAgo(days: number): Date {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d;
+  }
+
+  /// Estimated 1-rep max (Epley) per key lift, normalized to kg. Reps are
+  /// capped at 12 so high-rep sets don't inflate the estimate. Returns null
+  /// for a lift the user has never logged.
+  private async getOneRepMaxes(userId: string): Promise<{
+    bench: number | null;
+    squat: number | null;
+    deadlift: number | null;
+  }> {
+    const empty: { bench: number | null; squat: number | null; deadlift: number | null } = {
+      bench: null,
+      squat: null,
+      deadlift: null,
+    };
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { lift: string; orm: number | null }[]
+      >`
+        SELECT lift, MAX(orm) as orm FROM (
+          SELECT
+            CASE
+              WHEN se.name ILIKE '%bench press%' THEN 'bench'
+              WHEN se.name ILIKE '%squat%' THEN 'squat'
+              WHEN se.name ILIKE '%deadlift%' THEN 'deadlift'
+            END as lift,
+            (CASE WHEN es.weight_unit = 'lb' THEN es.weight * 0.453592 ELSE es.weight END)
+              * (1 + LEAST(es.reps, 12) / 30.0) as orm
+          FROM exercise_sets es
+          JOIN session_exercises se ON se.id = es.exercise_id
+          JOIN workout_sessions ws ON ws.id = se.session_id
+          WHERE ws.user_id = ${userId}
+            AND ws.status = 'completed'
+            AND es.weight IS NOT NULL AND es.weight > 0 AND es.reps > 0
+            AND (se.name ILIKE '%bench press%' OR se.name ILIKE '%squat%' OR se.name ILIKE '%deadlift%')
+        ) t
+        WHERE lift IS NOT NULL
+        GROUP BY lift
+      `;
+      const out = { ...empty };
+      for (const r of rows) {
+        const v = r.orm != null ? Math.round(Number(r.orm)) : null;
+        if (r.lift === 'bench') out.bench = v;
+        else if (r.lift === 'squat') out.squat = v;
+        else if (r.lift === 'deadlift') out.deadlift = v;
+      }
+      return out;
+    } catch {
+      return empty;
+    }
+  }
+
+  /// Consecutive ISO weeks (Mon-anchored) with at least one completed session.
+  /// Starts at the current week, or the previous week if nothing logged yet
+  /// this week, so an in-progress week doesn't read as a broken streak.
+  private async getWeekStreak(userId: string): Promise<number> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ wk: Date }[]>`
+        SELECT DISTINCT date_trunc('week', completed_at) as wk
+        FROM workout_sessions
+        WHERE user_id = ${userId} AND status = 'completed' AND completed_at IS NOT NULL
+        ORDER BY wk DESC
+      `;
+      if (rows.length === 0) return 0;
+      const weeks = new Set(
+        rows.map((r) => new Date(r.wk).setHours(0, 0, 0, 0)),
+      );
+      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+      const thisWeek = getWeekStart(new Date()).setHours(0, 0, 0, 0);
+      // Anchor at this week if present, otherwise last week.
+      let cursor = weeks.has(thisWeek) ? thisWeek : thisWeek - WEEK_MS;
+      let streak = 0;
+      while (weeks.has(cursor)) {
+        streak += 1;
+        cursor -= WEEK_MS;
+      }
+      return streak;
+    } catch {
+      return 0;
+    }
+  }
+
+  /// Muscle groups the user trains most (by set count, last 90 days), top 4.
+  private async getTopMuscleGroups(userId: string): Promise<string[]> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ mg: string }[]>`
+        SELECT se.muscle_group as mg, COUNT(*) as c
+        FROM session_exercises se
+        JOIN workout_sessions ws ON ws.id = se.session_id
+        JOIN exercise_sets es ON es.exercise_id = se.id
+        WHERE ws.user_id = ${userId}
+          AND ws.status = 'completed'
+          AND se.muscle_group IS NOT NULL
+          AND ws.completed_at >= ${this.daysAgo(90)}
+        GROUP BY se.muscle_group
+        ORDER BY c DESC
+        LIMIT 4
+      `;
+      return rows.map((r) => r.mg).filter(Boolean);
     } catch {
       return [];
     }
