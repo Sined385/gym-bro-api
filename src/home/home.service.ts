@@ -786,14 +786,25 @@ export class HomeService {
       }
 
       for (const exDto of dto.exercises) {
-        const externalId = exDto.library_exercise_id
-          ? (libraryMap.get(exDto.library_exercise_id) ?? null)
+        // Only trust the client's library_exercise_id if it actually resolves
+        // to a real exercise_library row (libraryMap is built from the rows
+        // that exist). A stale/cross-env/custom id that isn't present would
+        // otherwise violate session_exercises_library_exercise_id_fkey and
+        // 500 the whole completion, losing the user's logged workout.
+        const isKnownLibraryExercise =
+          !!exDto.library_exercise_id &&
+          libraryMap.has(exDto.library_exercise_id);
+        const libraryExerciseId = isKnownLibraryExercise
+          ? exDto.library_exercise_id!
+          : null;
+        const externalId = isKnownLibraryExercise
+          ? (libraryMap.get(exDto.library_exercise_id!) ?? null)
           : null;
 
         const exercise = await tx.sessionExercise.create({
           data: {
             session_id: sessionId,
-            library_exercise_id: exDto.library_exercise_id ?? null,
+            library_exercise_id: libraryExerciseId,
             external_id: externalId,
             name: exDto.name,
             muscle_group: exDto.muscle_group,
