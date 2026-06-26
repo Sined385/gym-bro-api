@@ -1514,6 +1514,12 @@ export class CommunityService {
         isReacted: userEmojis.has(r.emoji),
       }));
       const reactionCount = reactionCountMap.get(post.id) ?? 0;
+      // Backward-compat for the shipped App Store build (≤1.6), whose
+      // CommunityPost model decodes `likeCount`/`isLiked` as NON-optional.
+      // The redesign dropped these keys; their absence makes every post fail
+      // to decode on the old client → blank feed + "Could not load profile".
+      // The heart reaction replaced the legacy like, so map it back.
+      const heartReaction = reactions.find((r) => r.emoji === 'heart');
 
       let workoutAttachment: any = null;
       if (post.workout_session_id) {
@@ -1585,6 +1591,9 @@ export class CommunityService {
         commentCount,
         reactions,
         reactionCount,
+        // Legacy fields — kept so the old App Store client keeps decoding.
+        likeCount: heartReaction?.count ?? 0,
+        isLiked: heartReaction?.isReacted ?? false,
         isFollowingAuthor: false, // Caller sets this with followingSet
         isOwnPost: post.user_id === currentUserId,
         createdAt: post.created_at.toISOString(),
