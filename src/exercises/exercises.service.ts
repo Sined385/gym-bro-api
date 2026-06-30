@@ -84,6 +84,8 @@ export class ExercisesService {
         weight_unit: string;
         reps: number;
         is_bodyweight: boolean;
+        duration_seconds: number | null;
+        distance_meters: number | null;
         completed_at: string | null;
       }
     >
@@ -105,6 +107,8 @@ export class ExercisesService {
             weight_unit: true,
             reps: true,
             is_bodyweight: true,
+            duration_seconds: true,
+            distance_meters: true,
           },
         },
       },
@@ -118,6 +122,8 @@ export class ExercisesService {
         weight_unit: string;
         reps: number;
         is_bodyweight: boolean;
+        duration_seconds: number | null;
+        distance_meters: number | null;
         completed_at: string | null;
       }
     >();
@@ -130,6 +136,8 @@ export class ExercisesService {
         weight_unit: set.weight_unit,
         reps: set.reps,
         is_bodyweight: set.is_bodyweight,
+        duration_seconds: set.duration_seconds ?? null,
+        distance_meters: set.distance_meters ?? null,
         completed_at: r.session.completed_at?.toISOString() ?? null,
       });
     }
