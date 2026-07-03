@@ -84,6 +84,63 @@ export function computeRecentLifts(recentSessions: any[]): RecentLift[] {
   return [...seen.values()];
 }
 
+export interface TargetSetLike {
+  weight_kg?: number | null;
+  reps: number;
+  is_bodyweight?: boolean;
+}
+
+/**
+ * Server-side progressive-overload enforcement. The prompts ask the AI
+ * to bump the top working set over last session, but models routinely
+ * echo the recorded ladder back verbatim. When the supplied ladder's
+ * best set is exactly last session's top set — no progression, but
+ * also no intentional deload — bump every set matching that top to
+ * the pre-computed `suggestedTopSet`. Ladders that already progress
+ * past the last top set, or that back off below it (deload), pass
+ * through untouched: the AI made a call, respect it.
+ */
+export function enforceProgression<T extends TargetSetLike>(
+  targetSets: T[],
+  lift: RecentLift,
+): T[] {
+  if (targetSets.length === 0) return targetSets;
+  // Duration blocks (cardio) aren't a weight/rep progression.
+  if (targetSets.some((s: any) => s.duration_seconds != null)) {
+    return targetSets;
+  }
+
+  const load = (weight: number | null | undefined, bw?: boolean) =>
+    bw ? 0 : (weight ?? 0);
+  const liftTopLoad = load(lift.topSet.weight, lift.topSet.isBodyweight);
+
+  const aiTop = targetSets.reduce((best, s) => {
+    if (load(s.weight_kg, s.is_bodyweight) > load(best.weight_kg, best.is_bodyweight)) return s;
+    if (load(s.weight_kg, s.is_bodyweight) === load(best.weight_kg, best.is_bodyweight) && s.reps > best.reps) return s;
+    return best;
+  }, targetSets[0]);
+  const aiTopLoad = load(aiTop.weight_kg, aiTop.is_bodyweight);
+
+  const identicalTop =
+    aiTopLoad === liftTopLoad && aiTop.reps === lift.topSet.reps;
+  if (!identicalTop) return targetSets;
+
+  const suggested = lift.suggestedTopSet;
+  return targetSets.map((s) => {
+    const isTop =
+      load(s.weight_kg, s.is_bodyweight) === aiTopLoad && s.reps === aiTop.reps;
+    if (!isTop) return s;
+    return {
+      ...s,
+      weight_kg: suggested.isBodyweight
+        ? undefined
+        : (suggested.weight ?? s.weight_kg),
+      reps: suggested.reps,
+      is_bodyweight: suggested.isBodyweight,
+    };
+  });
+}
+
 function formatSet(s: RecentLiftSet): string {
   if (s.isBodyweight) return `BW × ${s.reps}`;
   if (s.weight === null) return `— × ${s.reps}`;

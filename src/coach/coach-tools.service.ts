@@ -30,6 +30,7 @@ import {
 import {
   buildRecentLiftsLookup,
   computeRecentLifts,
+  enforceProgression,
   RecentLift,
 } from '../common/recent-lifts';
 
@@ -942,6 +943,21 @@ export class CoachToolsService {
                   })),
                 },
               };
+            }
+
+            // The AI DID ship target_sets — but models routinely echo
+            // last session's ladder verbatim despite the prompt's bump
+            // instruction. Enforce the progression server-side; deloads
+            // and already-progressed ladders pass through untouched.
+            if (
+              Array.isArray(ex.target_sets) &&
+              ex.target_sets.length > 0 &&
+              recentLiftsMap.has(libEx.id)
+            ) {
+              ex.target_sets = enforceProgression(
+                ex.target_sets,
+                recentLiftsMap.get(libEx.id)!,
+              );
             }
 
             // Server-side safety net: when the AI ignored the prompt's

@@ -24,7 +24,11 @@ import {
 } from '../common/exercise-set-synth';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
-import { computeRecentLifts } from '../common/recent-lifts';
+import {
+  buildRecentLiftsLookup,
+  computeRecentLifts,
+  enforceProgression,
+} from '../common/recent-lifts';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from './format-plan';
 
@@ -454,14 +458,25 @@ export class PlansService {
     // Library lookup by id so cardio entries can be routed through
     // the cardio synth (single duration block, no weight ladder).
     const libraryById = new Map(exerciseLibrary.map((e: any) => [e.id, e]));
+    const recentLiftsLookup = buildRecentLiftsLookup(
+      recentLifts,
+      exerciseLibrary,
+    );
     const synthesizeForExercise = (ex: any) => {
       if (!ex.library_exercise_id) return;
       const lib: any = libraryById.get(ex.library_exercise_id);
       const suggested = weightMap.get(ex.library_exercise_id) ?? null;
       ex.suggested_weight = suggested;
       // Don't clobber an AI-supplied target_sets array (rare but
-      // possible when the AI ladder is more nuanced than a flat synth).
-      if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) return;
+      // possible when the AI ladder is more nuanced than a flat synth) —
+      // but do enforce progression on it: the prompt asks for a top-set
+      // bump over last session, and models routinely echo the recorded
+      // ladder verbatim instead.
+      if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) {
+        const lift = recentLiftsLookup.get(ex.library_exercise_id);
+        if (lift) ex.target_sets = enforceProgression(ex.target_sets, lift);
+        return;
+      }
       if (isCardioCategory(lib?.category)) {
         // Cardio plan-day entries get a single duration block. Default
         // 30 min unless the matcher / AI supplied something explicit

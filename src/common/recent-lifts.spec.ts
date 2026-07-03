@@ -1,7 +1,9 @@
 import {
   buildRecentLiftsLookup,
   computeRecentLifts,
+  enforceProgression,
   formatRecentLiftsBlock,
+  RecentLift,
 } from './recent-lifts';
 
 // Simulates the post-re-seed shape on prod: session_exercises retain
@@ -90,5 +92,76 @@ describe('recent-lifts external_id bridge', () => {
     const block = formatRecentLiftsBlock(lifts);
     expect(block).toContain('Barbell Bench Press');
     expect(block).not.toContain('lib_id:'); // null historical, no bridge → no lib ref
+  });
+});
+
+describe('enforceProgression', () => {
+  const lift = (over: Partial<RecentLift> = {}): RecentLift => ({
+    libraryExerciseId: 'lib-1',
+    externalId: null,
+    name: 'Bench Press',
+    muscleGroup: 'Chest',
+    lastDate: '2026-06-28',
+    sets: [
+      { weight: 60, reps: 10, isBodyweight: false },
+      { weight: 80, reps: 8, isBodyweight: false },
+    ],
+    topSet: { weight: 80, reps: 8, isBodyweight: false },
+    suggestedTopSet: { weight: 82.5, reps: 8, isBodyweight: false },
+    ...over,
+  });
+
+  it('bumps a ladder that echoes last session verbatim', () => {
+    const result = enforceProgression(
+      [
+        { weight_kg: 60, reps: 10 },
+        { weight_kg: 80, reps: 8 },
+        { weight_kg: 80, reps: 8 },
+      ],
+      lift(),
+    );
+    expect(result[0]).toEqual({ weight_kg: 60, reps: 10 });
+    // Every set tied at the echoed top gets the suggested value
+    expect(result[1]).toMatchObject({ weight_kg: 82.5, reps: 8 });
+    expect(result[2]).toMatchObject({ weight_kg: 82.5, reps: 8 });
+  });
+
+  it('leaves an already-progressed ladder untouched', () => {
+    const sets = [
+      { weight_kg: 60, reps: 10 },
+      { weight_kg: 85, reps: 6 },
+    ];
+    expect(enforceProgression(sets, lift())).toEqual(sets);
+  });
+
+  it('leaves a same-load-more-reps ladder untouched', () => {
+    const sets = [{ weight_kg: 80, reps: 10 }];
+    expect(enforceProgression(sets, lift())).toEqual(sets);
+  });
+
+  it('leaves a deload untouched', () => {
+    const sets = [
+      { weight_kg: 50, reps: 12 },
+      { weight_kg: 65, reps: 10 },
+    ];
+    expect(enforceProgression(sets, lift())).toEqual(sets);
+  });
+
+  it('bumps reps on an echoed bodyweight ladder', () => {
+    const bwLift = lift({
+      sets: [{ weight: null, reps: 12, isBodyweight: true }],
+      topSet: { weight: null, reps: 12, isBodyweight: true },
+      suggestedTopSet: { weight: null, reps: 13, isBodyweight: true },
+    });
+    const result = enforceProgression(
+      [{ reps: 12, is_bodyweight: true }],
+      bwLift,
+    );
+    expect(result[0]).toMatchObject({ reps: 13, is_bodyweight: true });
+  });
+
+  it('skips cardio duration ladders', () => {
+    const sets = [{ reps: 0, duration_seconds: 1800 } as any];
+    expect(enforceProgression(sets, lift())).toEqual(sets);
   });
 });
