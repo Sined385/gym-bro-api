@@ -12,10 +12,7 @@ import {
   filterCandidates,
   assembleFromAiSelection,
 } from './exercise-matcher';
-import {
-  getWeekStartInTz,
-  toMondayDowInTz,
-} from '../common/date-utils';
+import { getWeekStartInTz, toMondayDowInTz } from '../common/date-utils';
 import {
   isCardioCategory,
   isHiddenCardio,
@@ -34,6 +31,21 @@ import { formatPlanDay } from './format-plan';
 
 @Injectable()
 export class PlansService {
+  /// Single-flight guard: at most one generation runs per user. GET
+  /// /plans fires background generations on every poll and the
+  /// existing-plan check sits before ~10s of AI calls, so without this
+  /// two concurrent requests both pass the check and create duplicate
+  /// active plans (double token spend included).
+  private readonly inflightGenerations = new Map<
+    string,
+    Promise<{ message: string; planId?: string }>
+  >();
+  /// Recent background-generation failures. While a failure is fresh,
+  /// /plans polls return status=failed instead of kicking off a new
+  /// doomed generation every few seconds (e.g. onboarding row missing).
+  private readonly generationFailures = new Map<string, Date>();
+  private static readonly FAILURE_RETRY_MS = 5 * 60 * 1000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly plansAiService: PlansAiService,
@@ -47,66 +59,44 @@ export class PlansService {
   ) {}
 
   async getActivePlan(userId: string) {
-    let plan = await this.prisma.trainingPlan.findFirst({
-      where: { user_id: userId, is_active: true },
-      include: {
-        days: {
-          orderBy: { day_of_week: 'asc' },
-          include: {
-            workout_session: {
-              select: {
-                id: true,
-                duration_minutes: true,
-                completed_at: true,
-              },
-            },
-          },
-        },
-      },
+    const emptyResponse = (status: 'generating' | 'failed') => ({
+      status,
+      plan: null,
+      days: [],
+      todayIndex: 0,
     });
 
-    if (!plan) {
+    const existing = await this.prisma.trainingPlan.findFirst({
+      where: { user_id: userId, is_active: true },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      if (this.inflightGenerations.has(userId)) {
+        return emptyResponse('generating');
+      }
+      const failedAt = this.generationFailures.get(userId);
+      if (
+        failedAt &&
+        Date.now() - failedAt.getTime() < PlansService.FAILURE_RETRY_MS
+      ) {
+        // Last background attempt failed moments ago — tell the client
+        // instead of hot-looping a new doomed generation per poll.
+        return emptyResponse('failed');
+      }
       // Generate in background — client should poll
       this.generatePlan(userId, false).catch(() => {});
-      return {
-        status: 'generating' as const,
-        plan: null,
-        days: [],
-        todayIndex: 0,
-      };
+      return emptyResponse('generating');
     }
 
-    // Auto-advance week if the active plan has aged past its end
-    // date. Shared helper in WorkoutOrchestratorService also runs
-    // from /home/dashboard, so both entry points keep the plan
-    // fresh consistently. Bypasses the premium gate that applies
-    // to user-initiated regens (this is a system rollover).
+    // Run every plan-mutating step BEFORE the single full fetch below:
+    // week rollover (shared with /home/dashboard), ad-hoc session
+    // reconciliation, then skipped-day redistribution.
+    //
+    // ensureCurrentWeek bypasses the premium gate that applies to
+    // user-initiated regens (this is a system rollover).
     await this.orchestrator.ensureCurrentWeek(userId).catch(() => {});
-    plan = await this.prisma.trainingPlan.findFirst({
-      where: { user_id: userId, is_active: true },
-      include: {
-        days: {
-          orderBy: { day_of_week: 'asc' },
-          include: {
-            workout_session: {
-              select: {
-                id: true,
-                duration_minutes: true,
-                completed_at: true,
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!plan) {
-      return {
-        status: 'generating' as const,
-        plan: null,
-        days: [],
-        todayIndex: 0,
-      };
-    }
+    await this.orchestrator.reconcileWithAdHocSessions(userId);
 
     const [onboarding, userRow] = await Promise.all([
       this.prisma.onboardingData.findUnique({
@@ -122,32 +112,20 @@ export class PlansService {
     // Calculate today's index as position within the returned days array
     const absoluteTodayDow = toMondayDowInTz(new Date(), tz);
 
-    // Adapt skipped days — mark past pending training days as skipped and redistribute
-    const adapted = await this.adaptSkippedDays(
+    let plan = await this.fetchActivePlanWithDays(userId);
+    if (!plan) return emptyResponse('generating');
+
+    // Adapt skipped days — mark past pending training days as skipped
+    // and promote pre-planned alt sessions in their place.
+    const redistributed = await this.redistributeDeficit(
       plan,
       absoluteTodayDow,
       userId,
       onboarding,
     );
-    if (adapted) {
-      // Re-fetch to reflect adaptations
-      plan = (await this.prisma.trainingPlan.findFirst({
-        where: { user_id: userId, is_active: true },
-        include: {
-          days: {
-            orderBy: { day_of_week: 'asc' },
-            include: {
-              workout_session: {
-                select: {
-                  id: true,
-                  duration_minutes: true,
-                  completed_at: true,
-                },
-              },
-            },
-          },
-        },
-      }))!;
+    if (redistributed) {
+      plan = await this.fetchActivePlanWithDays(userId);
+      if (!plan) return emptyResponse('generating');
     }
 
     let todayIndex = plan.days.findIndex(
@@ -169,7 +147,59 @@ export class PlansService {
     };
   }
 
+  private fetchActivePlanWithDays(userId: string) {
+    return this.prisma.trainingPlan.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: {
+        days: {
+          orderBy: { day_of_week: 'asc' },
+          include: {
+            workout_session: {
+              select: {
+                id: true,
+                duration_minutes: true,
+                completed_at: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
   async generatePlan(
+    userId: string,
+    force: boolean,
+    focus?: string,
+    opts?: { forceFallback?: boolean },
+  ): Promise<{ message: string; planId?: string }> {
+    const inflight = this.inflightGenerations.get(userId);
+    if (inflight) {
+      if (!force) return inflight;
+      // A force regen supersedes whatever is in flight — let it settle
+      // first so the two runs can't interleave their writes.
+      await inflight.catch(() => {});
+    }
+
+    const run = this.doGeneratePlan(userId, force, focus, opts)
+      .then(
+        (result) => {
+          this.generationFailures.delete(userId);
+          return result;
+        },
+        (error: unknown) => {
+          this.generationFailures.set(userId, new Date());
+          throw error;
+        },
+      )
+      .finally(() => {
+        this.inflightGenerations.delete(userId);
+      });
+    this.inflightGenerations.set(userId, run);
+    return run;
+  }
+
+  private async doGeneratePlan(
     userId: string,
     force: boolean,
     focus?: string,
@@ -269,61 +299,71 @@ export class PlansService {
     const tomorrowStart = new Date(now);
     tomorrowStart.setHours(0, 0, 0, 0);
     tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-    const [
-      exerciseLibraryRaw,
-      recentExerciseIds,
-      thisWeekSessions,
-      recentSessions,
-      previousPlan,
-    ] = await Promise.all([
-      this.prisma.exerciseLibrary.findMany({
-        where: {
-          OR: [{ is_system: true }, { user_id: userId }],
-          ...(allowedEquipment.length > 0
-            ? { equipment: { in: allowedEquipment } }
-            : {}),
-        },
-        orderBy: { name: 'asc' },
-      }),
-      this.getRecentExerciseIds(userId),
-      this.prisma.workoutSession.findMany({
-        where: {
-          user_id: userId,
-          status: 'completed',
-          completed_at: { gte: weekStartDate, lt: tomorrowStart },
-        },
-        orderBy: { completed_at: 'asc' },
-        include: {
-          exercises: {
-            orderBy: { step_number: 'asc' },
-            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+    const [exerciseLibraryRaw, thisWeekSessions, recentSessions, previousPlan] =
+      await Promise.all([
+        this.prisma.exerciseLibrary.findMany({
+          where: {
+            OR: [{ is_system: true }, { user_id: userId }],
+            ...(allowedEquipment.length > 0
+              ? { equipment: { in: allowedEquipment } }
+              : {}),
           },
-        },
-      }),
-      this.prisma.workoutSession.findMany({
-        where: {
-          user_id: userId,
-          status: 'completed',
-          completed_at: {
-            gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
+          orderBy: { name: 'asc' },
+        }),
+        this.prisma.workoutSession.findMany({
+          where: {
+            user_id: userId,
+            status: 'completed',
+            completed_at: { gte: weekStartDate, lt: tomorrowStart },
           },
-        },
-        orderBy: { completed_at: 'desc' },
-        include: {
-          exercises: {
-            orderBy: { step_number: 'asc' },
-            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+          orderBy: { completed_at: 'asc' },
+          include: {
+            exercises: {
+              orderBy: { step_number: 'asc' },
+              include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+            },
           },
-        },
-      }),
-      this.prisma.trainingPlan.findFirst({
-        where: { user_id: userId },
-        orderBy: { week_number: 'desc' },
-      }),
-    ]);
+        }),
+        this.prisma.workoutSession.findMany({
+          where: {
+            user_id: userId,
+            status: 'completed',
+            completed_at: {
+              gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
+            },
+          },
+          orderBy: { completed_at: 'desc' },
+          include: {
+            exercises: {
+              orderBy: { step_number: 'asc' },
+              include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+            },
+          },
+        }),
+        this.prisma.trainingPlan.findFirst({
+          where: { user_id: userId },
+          orderBy: { week_number: 'desc' },
+        }),
+      ]);
     // Hide non-walking cardio for now so plan generation can't pick it.
-    const exerciseLibrary = exerciseLibraryRaw.filter((r) => !isHiddenCardio(r));
+    const exerciseLibrary = exerciseLibraryRaw.filter(
+      (r) => !isHiddenCardio(r),
+    );
     const newWeekNumber = (previousPlan?.week_number ?? 0) + 1;
+
+    // Recent exercise ids/names derive from the 14-day sessions batch
+    // already in hand — previously two extra queries over the same rows.
+    // Sessions are completed_at-desc, so names come out most-recent-first.
+    const recentExerciseIds = new Set<string>(
+      recentSessions.flatMap((s) =>
+        s.exercises
+          .map((e) => e.library_exercise_id)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const recentExerciseNames = [
+      ...new Set(recentSessions.flatMap((s) => s.exercises.map((e) => e.name))),
+    ].slice(0, 20);
 
     // Build the weekContext from this-week sessions. Group by
     // day_of_week (multiple sessions same day collapse into one
@@ -331,7 +371,12 @@ export class PlansService {
     // AI just needs to know that day was hit). One pass.
     const completedDaysMap = new Map<
       number,
-      { dayOfWeek: number; title: string; muscleGroups: string[]; topLifts: string[] }
+      {
+        dayOfWeek: number;
+        title: string;
+        muscleGroups: string[];
+        topLifts: string[];
+      }
     >();
     for (const session of thisWeekSessions) {
       if (!session.completed_at) continue;
@@ -405,7 +450,6 @@ export class PlansService {
     // recent-lifts data (progressive overload path). Skipped entirely
     // when forceFallback is set; the deterministic matcher below
     // covers the same role.
-    const recentExerciseNames = await this.getRecentExerciseNames(userId);
     const recentLifts = computeRecentLifts(recentSessions);
     const aiSelection = opts?.forceFallback
       ? null
@@ -419,9 +463,19 @@ export class PlansService {
           focus,
         );
 
-    // Use AI selection if valid, otherwise fall back to deterministic matcher
+    // Use AI selection if valid, otherwise fall back to deterministic
+    // matcher. The selection may be partial (some days salvaged, some
+    // dropped by validation) — assembleFromAiSelection matcher-fills
+    // any training day the AI failed, so one bad day no longer costs
+    // the whole week its progression ladders.
     const generatedDays = aiSelection
-      ? assembleFromAiSelection(skeleton, aiSelection, candidatePools)
+      ? assembleFromAiSelection(
+          skeleton,
+          aiSelection,
+          candidatePools,
+          recentExerciseIds,
+          onboarding.experience_level ?? null,
+        )
       : matchSkeletonToDays(
           skeleton,
           exerciseLibrary,
@@ -498,9 +552,11 @@ export class PlansService {
       });
     };
     for (const day of generatedDays) {
-      if (day.exercises) for (const ex of day.exercises as any[]) synthesizeForExercise(ex);
+      if (day.exercises)
+        for (const ex of day.exercises as any[]) synthesizeForExercise(ex);
       if (day.alt_session?.exercises) {
-        for (const ex of day.alt_session.exercises as any[]) synthesizeForExercise(ex);
+        for (const ex of day.alt_session.exercises as any[])
+          synthesizeForExercise(ex);
       }
     }
 
@@ -719,114 +775,49 @@ export class PlansService {
 
     if (!planDay) return; // Not a plan session
 
-    const session = await this.prisma.workoutSession.findUnique({
-      where: { id: sessionId },
-      include: {
-        exercises: {
-          orderBy: { step_number: 'asc' },
-          include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
-        },
-      },
-    });
-
-    let aiNotes = 'Session completed successfully.';
-    if (session) {
-      try {
-        aiNotes = await this.plansAiService.generateCompletionNotes(
-          session.user_id,
-          planDay,
-          session,
-        );
-      } catch {
-        // fallback already set
-      }
-    }
-
+    // Mark completed immediately — the AI note is cosmetic and was
+    // adding a full OpenAI round-trip to every workout completion
+    // (recordCompletion awaits this method before responding to the
+    // user's "finish workout" request).
     await this.prisma.planDay.update({
       where: { id: planDay.id },
       data: {
         status: 'completed',
-        ai_notes: aiNotes,
+        ai_notes: 'Session completed successfully.',
       },
     });
+
+    void this.backfillCompletionNotes(planDay, sessionId);
   }
 
-  private async getRecentExerciseIds(userId: string): Promise<Set<string>> {
-    const twoWeeksAgo = new Date();
-    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-
-    const recentExercises = await this.prisma.sessionExercise.findMany({
-      where: {
-        library_exercise_id: { not: null },
-        session: {
-          user_id: userId,
-          status: 'completed',
-          completed_at: { gte: twoWeeksAgo },
+  private async backfillCompletionNotes(
+    planDay: { id: string },
+    sessionId: string,
+  ): Promise<void> {
+    try {
+      const session = await this.prisma.workoutSession.findUnique({
+        where: { id: sessionId },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+          },
         },
-      },
-      select: { library_exercise_id: true },
-    });
+      });
+      if (!session) return;
 
-    return new Set(
-      recentExercises
-        .map((e) => e.library_exercise_id)
-        .filter((id): id is string => id !== null),
-    );
-  }
-
-  private async getRecentExerciseNames(userId: string): Promise<string[]> {
-    const twoWeeksAgo = new Date();
-    twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-
-    const recent = await this.prisma.sessionExercise.findMany({
-      where: {
-        session: {
-          user_id: userId,
-          status: 'completed',
-          completed_at: { gte: twoWeeksAgo },
-        },
-      },
-      select: { name: true },
-      distinct: ['name'],
-      take: 20,
-    });
-
-    return recent.map((e) => e.name);
-  }
-
-  /**
-   * Detects past pending training days, marks them as skipped, and
-   * redistributes missed muscle groups into remaining future days.
-   * Returns true if any changes were made.
-   */
-  private async adaptSkippedDays(
-    plan: any,
-    todayDow: number,
-    userId: string,
-    onboarding: any | null,
-  ): Promise<boolean> {
-    // Lazy fallback: defer recovery to the orchestrator (eager path
-    // runs from recordCompletion; this catches anything missed). The
-    // method is idempotent — uses adapted_at to avoid double work.
-    const { recoveredDayIds } =
-      await this.orchestrator.reconcileWithAdHocSessions(userId);
-
-    // Refetch since the reconcile may have flipped some plan days to
-    // completed.
-    const refreshed = await this.prisma.trainingPlan.findUnique({
-      where: { id: plan.id },
-      include: { days: { orderBy: { day_of_week: 'asc' } } },
-    });
-    if (!refreshed) return recoveredDayIds.length > 0;
-    plan = refreshed;
-
-    const redistributed = await this.redistributeDeficit(
-      plan,
-      todayDow,
-      userId,
-      onboarding,
-    );
-    return redistributed || recoveredDayIds.length > 0;
+      const aiNotes = await this.plansAiService.generateCompletionNotes(
+        session.user_id,
+        planDay,
+        session,
+      );
+      await this.prisma.planDay.update({
+        where: { id: planDay.id },
+        data: { ai_notes: aiNotes },
+      });
+    } catch {
+      // Placeholder note from onSessionCompleted stays.
+    }
   }
 
   /**
@@ -960,31 +951,48 @@ export class PlansService {
     );
     if (candidates.length === 0) return;
 
+    // week_start_date is the user-timezone midnight-Monday instant
+    // (getWeekStartInTz). Day windows are plain 24h offsets from it —
+    // the previous setHours(0,0,0,0) re-anchored the boundary to the
+    // SERVER's timezone, so sessions near midnight could land on the
+    // wrong plan day for any user not in the server TZ.
     const weekStart = new Date(plan.week_start_date);
-    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart.getTime() + 7 * 86_400_000);
     const now = new Date();
 
+    // One query for the whole week instead of one per candidate day.
+    const unlinkedSessions = await this.prisma.workoutSession.findMany({
+      where: {
+        user_id: userId,
+        status: 'completed',
+        completed_at: { gte: weekStart, lt: weekEnd },
+        plan_day: null,
+      },
+      orderBy: { completed_at: 'asc' },
+      include: {
+        exercises: {
+          orderBy: { step_number: 'asc' },
+          include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
+        },
+      },
+    });
+    if (unlinkedSessions.length === 0) return;
+
+    const claimedSessionIds = new Set<string>();
     for (const day of candidates) {
-      const dayStart = new Date(weekStart);
-      dayStart.setDate(dayStart.getDate() + day.day_of_week);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
-      const session = await this.prisma.workoutSession.findFirst({
-        where: {
-          user_id: userId,
-          status: 'completed',
-          completed_at: { gte: dayStart, lt: dayEnd },
-          plan_day: null,
-        },
-        orderBy: { completed_at: 'asc' },
-        include: {
-          exercises: {
-            orderBy: { step_number: 'asc' },
-            include: { exercise_sets: { orderBy: { set_number: 'asc' } } },
-          },
-        },
-      });
+      const dayStart = new Date(
+        weekStart.getTime() + day.day_of_week * 86_400_000,
+      );
+      const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+      const session = unlinkedSessions.find(
+        (s) =>
+          !claimedSessionIds.has(s.id) &&
+          s.completed_at &&
+          s.completed_at >= dayStart &&
+          s.completed_at < dayEnd,
+      );
       if (!session) continue;
+      claimedSessionIds.add(session.id);
 
       const muscleGroups: string[] = [];
       for (const ex of session.exercises) {

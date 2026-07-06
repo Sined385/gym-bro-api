@@ -221,6 +221,12 @@ model TrainingPlan {
   updated_at       DateTime  @updatedAt
   days             PlanDay[]
 
+  // NOTE: a partial unique index (user_id) WHERE is_active — not
+  // representable in Prisma schema — is added by the
+  // plan_generation_hardening migration. It guarantees at most one
+  // active plan per user and doubles as the index for the hot
+  // (user_id, is_active) lookups.
+  @@index([user_id, week_number])
   @@map("training_plans")
 }
 
@@ -243,6 +249,7 @@ model PlanDay {
   plan               TrainingPlan    @relation(fields: [plan_id], references: [id], onDelete: Cascade)
   workout_session    WorkoutSession? @relation(fields: [workout_session_id], references: [id])
 
+  @@index([plan_id])
   @@map("plan_days")
 }
 

@@ -8,6 +8,7 @@ import { summarizeAiError } from '../common/ai-error';
 import {
   SkeletonDay,
   AiExerciseSelection,
+  ExerciseSlot,
   LibraryExercise,
 } from './exercise-matcher';
 import {
@@ -61,8 +62,9 @@ export class PlansAiService {
       'Sunday',
     ];
     const totalDays = 7 - startDayOfWeek;
-    const scaledFrequency = Math.round(
-      (onboarding.training_frequency || 3) * (totalDays / 7),
+    const scaledFrequency = this.scaleFrequency(
+      onboarding.training_frequency || 3,
+      totalDays,
     );
 
     const focusBlock = focus
@@ -70,16 +72,18 @@ export class PlansAiService {
       : '';
 
     const completedDays = weekContext?.completedDays ?? [];
-    const completedBlock = completedDays.length > 0
-      ? `\nUSER ALREADY TRAINED THIS WEEK:\n${completedDays
-          .map((d) => {
-            const lifts = d.topLifts.length > 0
-              ? ` ${d.topLifts.join(', ')}.`
-              : '';
-            return `- ${dayNames[d.dayOfWeek]}: ${d.title} — ${d.muscleGroups.join(', ')}.${lifts}`;
-          })
-          .join('\n')}\n\nFor each of those days return a TRAINING entry with the SAME primary muscle groups the user actually hit. Do not relabel them as rest, do not propose a different focus for a day already trained — those days are FIXED. For the remaining days, structure the week so the user's frequency target (${onboarding.training_frequency}/week) is honored across the ALREADY-COMPLETED + ABOUT-TO-PLAN days combined. If the user already trained ${completedDays.length} day(s) this week, plan ${Math.max(0, (onboarding.training_frequency ?? 3) - completedDays.length)} additional training day(s).\n`
-      : '';
+    const completedBlock =
+      completedDays.length > 0
+        ? `\nUSER ALREADY TRAINED THIS WEEK:\n${completedDays
+            .map((d) => {
+              const lifts =
+                d.topLifts.length > 0 ? ` ${d.topLifts.join(', ')}.` : '';
+              return `- ${dayNames[d.dayOfWeek]}: ${d.title} — ${d.muscleGroups.join(', ')}.${lifts}`;
+            })
+            .join(
+              '\n',
+            )}\n\nFor each of those days return a TRAINING entry with the SAME primary muscle groups the user actually hit. Do not relabel them as rest, do not propose a different focus for a day already trained — those days are FIXED. For the remaining days, structure the week so the frequency target of ${scaledFrequency} training day(s) for this window is honored across the ALREADY-COMPLETED + ABOUT-TO-PLAN days combined. If the user already trained ${completedDays.length} day(s) this week, plan ${Math.max(0, scaledFrequency - completedDays.length)} additional training day(s).\n`
+        : '';
 
     const prompt = `You are a fitness coach AI. Generate a ${totalDays}-day training plan skeleton from ${dayNames[startDayOfWeek]} through Sunday.
 
@@ -123,7 +127,7 @@ Respond with a JSON object:
 
 Rules:
 - day_of_week: 0=Monday, 1=Tuesday, ..., 6=Sunday
-- Exactly ${scaledFrequency} training days, rest are "rest" type
+- Exactly ${scaledFrequency} training days (counting any already-completed days listed above), rest are "rest" type
 - Rest days: day_type="rest", empty exercise_slots
 - Training days: 4-6 exercise_slots each, varied muscle groups across the week
 - muscle_group MUST be one of: Chest, Back, Legs, Shoulders, Arms, Core
@@ -149,7 +153,10 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
 - alt_session shape: { session_title, session_type, exercise_slots[] } — 3-5 exercise_slots per alt, same muscle_group/rep_scheme/focus shape as a training day.
 - If the user has 0 training days (full rest week), alt_sessions are optional (week has nothing to make up).`;
 
-    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
+    // The skeleton is a purely structural task (day types + muscle-group
+    // slots) — the light model handles it at a fraction of the cost and
+    // latency; exercise selection stays on the full model.
+    const model = this.lightModel;
 
     try {
       const response = await this.openai.chat.completions.create({
@@ -163,7 +170,8 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
         ],
         response_format: { type: 'json_object' },
         max_tokens: 2000,
-        temperature: 0.7,
+        // Structure-following JSON task — keep drift low.
+        temperature: 0.4,
       });
 
       if (response.usage) {
@@ -180,11 +188,94 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
       if (!content) throw new Error('Empty OpenAI response');
 
       const parsed = JSON.parse(content) as { days: SkeletonDay[] };
-      return parsed.days;
+      const days = this.validateSkeleton(parsed.days, startDayOfWeek);
+      if (!days) throw new Error('Skeleton failed shape validation');
+      return days;
     } catch (error) {
       console.warn(summarizeAiError('plan_generation', error));
       return this.generateFallbackPlan(onboarding, startDayOfWeek);
     }
+  }
+
+  private get lightModel(): string {
+    return this.configService.get('OPENAI_MODEL_LIGHT') ?? 'gpt-4o-mini';
+  }
+
+  /**
+   * Scale the weekly frequency to a partial week, but never to zero:
+   * a 3×/week user onboarding on a Sunday used to get round(3/7)=0
+   * training days — a brand-new "plan" that was all rest.
+   */
+  private scaleFrequency(weeklyFrequency: number, totalDays: number): number {
+    if (weeklyFrequency <= 0 || totalDays <= 0) return 0;
+    return Math.min(
+      totalDays,
+      Math.max(1, Math.round(weeklyFrequency * (totalDays / 7))),
+    );
+  }
+
+  /**
+   * Structural validation of the AI skeleton. The selection stage
+   * validates its output rigorously; before this, the skeleton went
+   * straight from JSON.parse into candidate pools, so a malformed
+   * shape flowed downstream instead of triggering the fallback.
+   * Returns the days sorted by day_of_week, or null when the shape is
+   * unusable. Malformed alt_sessions are stripped (they degrade
+   * gracefully), not fatal.
+   */
+  private validateSkeleton(
+    days: unknown,
+    startDayOfWeek: number,
+  ): SkeletonDay[] | null {
+    if (!Array.isArray(days)) return null;
+    const expectedCount = 7 - startDayOfWeek;
+    if (days.length !== expectedCount) return null;
+
+    const isValidSlots = (slots: unknown): slots is ExerciseSlot[] =>
+      Array.isArray(slots) &&
+      slots.every(
+        (s: any) =>
+          s && typeof s === 'object' && typeof s.muscle_group === 'string',
+      );
+
+    const seen = new Set<number>();
+    for (const day of days) {
+      if (!day || typeof day !== 'object') return null;
+      if (
+        !Number.isInteger(day.day_of_week) ||
+        day.day_of_week < startDayOfWeek ||
+        day.day_of_week > 6 ||
+        seen.has(day.day_of_week)
+      ) {
+        return null;
+      }
+      seen.add(day.day_of_week);
+      if (day.day_type !== 'training' && day.day_type !== 'rest') return null;
+      if (!isValidSlots(day.exercise_slots)) return null;
+      if (day.day_type === 'training' && day.exercise_slots.length === 0) {
+        return null;
+      }
+      for (const slot of day.exercise_slots) {
+        if (typeof slot.rep_scheme !== 'string') {
+          slot.rep_scheme = '3 × 10';
+        }
+      }
+      if (day.alt_session) {
+        if (isValidSlots(day.alt_session.exercise_slots)) {
+          for (const slot of day.alt_session.exercise_slots) {
+            if (typeof slot.rep_scheme !== 'string') {
+              slot.rep_scheme = '3 × 10';
+            }
+          }
+        } else {
+          delete day.alt_session;
+        }
+      }
+    }
+
+    return (days as SkeletonDay[])
+      .slice()
+      .sort((a, b) => a.day_of_week - b.day_of_week);
   }
 
   generateFallbackPlan(
@@ -192,8 +283,9 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
     startDayOfWeek: number = 0,
   ): SkeletonDay[] {
     const totalDays = 7 - startDayOfWeek;
-    const scaledFrequency = Math.round(
-      ((onboarding.training_frequency || 3) * totalDays) / 7,
+    const scaledFrequency = this.scaleFrequency(
+      onboarding.training_frequency || 3,
+      totalDays,
     );
     const days: SkeletonDay[] = [];
 
@@ -447,6 +539,37 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
   ]
 }`;
 
+    // Build set of all valid candidate IDs
+    const validIds = new Set<string>();
+    for (const exercises of candidatePools.values()) {
+      for (const ex of exercises) validIds.add(ex.id);
+    }
+    const skelDayByDow = new Map(trainingDays.map((d) => [d.day_of_week, d]));
+    const altDayMap = new Map(altDays.map((d) => [d.day_of_week, d]));
+
+    // One malformed day used to discard the ENTIRE selection — the
+    // deterministic fallback then lost the progression ladders for
+    // every valid day too. Now each day validates independently; the
+    // caller matcher-fills whatever was dropped.
+    const validateDayExercises = (
+      exercises: AiExerciseSelection['days'][number]['exercises'],
+      expectedCount: number,
+    ): boolean => {
+      if (!Array.isArray(exercises) || exercises.length !== expectedCount) {
+        return false;
+      }
+      const dayIds = new Set<string>();
+      for (const ex of exercises) {
+        if (!ex || !validIds.has(ex.library_exercise_id)) return false;
+        if (dayIds.has(ex.library_exercise_id)) return false;
+        dayIds.add(ex.library_exercise_id);
+      }
+      return true;
+    };
+
+    let best: AiExerciseSelection | null = null;
+    let bestCount = 0;
+
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const response = await this.openai.chat.completions.create({
@@ -483,86 +606,57 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
         if (!content) continue;
 
         const parsed = JSON.parse(content) as AiExerciseSelection;
+        if (!Array.isArray(parsed.days)) continue;
 
-        // Validate
-        if (!parsed.days || parsed.days.length !== trainingDays.length)
-          continue;
-
-        // Build set of all valid candidate IDs
-        const validIds = new Set<string>();
-        for (const exercises of candidatePools.values()) {
-          for (const ex of exercises) validIds.add(ex.id);
-        }
-
-        let valid = true;
-        for (let i = 0; i < trainingDays.length; i++) {
-          const aiDay = parsed.days[i];
-          const skelDay = trainingDays[i];
-
-          // Check day_of_week matches
-          if (aiDay.day_of_week !== skelDay.day_of_week) {
-            valid = false;
-            break;
+        // Salvage per-day: keep days whose selection validates.
+        const seenDows = new Set<number>();
+        const cleanedDays = parsed.days.filter((aiDay) => {
+          if (!aiDay || seenDows.has(aiDay.day_of_week)) return false;
+          const skelDay = skelDayByDow.get(aiDay.day_of_week);
+          if (!skelDay) return false;
+          if (
+            !validateDayExercises(
+              aiDay.exercises,
+              skelDay.exercise_slots.length,
+            )
+          ) {
+            return false;
           }
-
-          // Check exercise count matches slot count
-          if (aiDay.exercises.length !== skelDay.exercise_slots.length) {
-            valid = false;
-            break;
-          }
-
-          // Check all IDs exist in pool and no within-day duplicates
-          const dayIds = new Set<string>();
-          for (const ex of aiDay.exercises) {
-            if (!validIds.has(ex.library_exercise_id)) {
-              valid = false;
-              break;
-            }
-            if (dayIds.has(ex.library_exercise_id)) {
-              valid = false;
-              break;
-            }
-            dayIds.add(ex.library_exercise_id);
-          }
-          if (!valid) break;
-        }
+          seenDows.add(aiDay.day_of_week);
+          return true;
+        });
 
         // Validate alts when present. Missing alts is acceptable — we
         // degrade gracefully (rest days get null alt_session_json,
         // adaptation logs a banner instead of promoting).
-        if (valid && Array.isArray(parsed.alts) && parsed.alts.length > 0) {
-          const altDayMap = new Map(altDays.map((d) => [d.day_of_week, d]));
-          // Drop alts that don't match a known alt-day so they don't
-          // poison the response; keep only validated entries.
-          const cleanedAlts: AiExerciseSelection['alts'] = [];
-          for (const aiAlt of parsed.alts) {
-            const skelAlt = altDayMap.get(aiAlt.day_of_week);
-            if (!skelAlt || !skelAlt.alt_session) continue;
-            if (
-              aiAlt.exercises.length !==
-              skelAlt.alt_session.exercise_slots.length
-            ) {
-              continue;
-            }
-            const dayIds = new Set<string>();
-            let altValid = true;
-            for (const ex of aiAlt.exercises) {
-              if (!validIds.has(ex.library_exercise_id)) {
-                altValid = false;
-                break;
-              }
-              if (dayIds.has(ex.library_exercise_id)) {
-                altValid = false;
-                break;
-              }
-              dayIds.add(ex.library_exercise_id);
-            }
-            if (altValid) cleanedAlts.push(aiAlt);
+        const cleanedAlts: AiExerciseSelection['alts'] = [];
+        for (const aiAlt of parsed.alts ?? []) {
+          const skelAlt = aiAlt ? altDayMap.get(aiAlt.day_of_week) : undefined;
+          if (!skelAlt || !skelAlt.alt_session) continue;
+          if (
+            validateDayExercises(
+              aiAlt.exercises,
+              skelAlt.alt_session.exercise_slots.length,
+            )
+          ) {
+            cleanedAlts.push(aiAlt);
           }
-          parsed.alts = cleanedAlts;
         }
 
-        if (valid) return parsed;
+        const candidate: AiExerciseSelection = {
+          days: cleanedDays,
+          ...(cleanedAlts.length > 0 ? { alts: cleanedAlts } : {}),
+        };
+
+        if (cleanedDays.length === trainingDays.length) return candidate;
+
+        console.warn(
+          `exercise_selection attempt ${attempt + 1}: salvaged ${cleanedDays.length}/${trainingDays.length} days`,
+        );
+        if (cleanedDays.length > bestCount) {
+          best = candidate;
+          bestCount = cleanedDays.length;
+        }
       } catch (error) {
         console.warn(
           summarizeAiError(`exercise_selection_attempt_${attempt + 1}`, error),
@@ -570,8 +664,9 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
       }
     }
 
-    // Both attempts failed — signal fallback
-    return null;
+    // Partial selection beats none — dropped days get matcher-filled
+    // by assembleFromAiSelection. null only when nothing was usable.
+    return bestCount > 0 ? best : null;
   }
 
   async generateCompletionNotes(
@@ -579,7 +674,8 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
     planDay: any,
     session: any,
   ): Promise<string> {
-    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
+    // 1-2 sentence summary — light model is plenty.
+    const model = this.lightModel;
 
     try {
       const exerciseSummary = session.exercises

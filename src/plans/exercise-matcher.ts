@@ -286,11 +286,18 @@ export function filterCandidates(
 /**
  * Stage 3 output: Convert AI-picked exercise IDs back to full PlanDayGenerated[]
  * by looking up exercises in the candidate pools. Uses sets_display from skeleton slots.
+ *
+ * The AI selection may be partial (invalid days are dropped by
+ * validation) — any training day without a usable selection is filled
+ * by the deterministic matcher over the candidate pools, so a single
+ * malformed day no longer downgrades the whole week.
  */
 export function assembleFromAiSelection(
   skeleton: SkeletonDay[],
   aiSelection: AiExerciseSelection,
   candidatePools: Map<string, LibraryExercise[]>,
+  recentExerciseIds: Set<string> = new Set(),
+  userLevel: string | null = null,
 ): PlanDayGenerated[] {
   // Build a lookup of all candidate exercises by ID
   const exerciseById = new Map<string, LibraryExercise>();
@@ -348,6 +355,26 @@ export function assembleFromAiSelection(
     });
   };
 
+  // Deterministic fill for days the AI selection dropped — same shape
+  // as matchSkeletonToDays, sourced from the flattened candidate pools.
+  const poolLibrary = [...exerciseById.values()];
+  const matcherFillExercises = (day: SkeletonDay): PlanGeneratedExercise[] => {
+    const picks = matchExercisesToSlots(
+      day.exercise_slots,
+      poolLibrary,
+      recentExerciseIds,
+      userLevel,
+    );
+    return picks.map((pick, i) => ({
+      library_exercise_id: pick.id,
+      external_id: pick.external_id,
+      name: pick.name,
+      muscle_group: pick.muscle_group,
+      equipment: pick.equipment,
+      sets_display: day.exercise_slots[i]?.rep_scheme ?? '3 × 10',
+    }));
+  };
+
   return skeleton.map((day) => {
     let alt: PlanGeneratedAltSession | undefined;
     if (day.alt_session) {
@@ -382,8 +409,11 @@ export function assembleFromAiSelection(
       };
     }
 
-    const aiExercises = aiDayMap.get(day.day_of_week) ?? [];
-    const exercises = resolveExercises(day.exercise_slots, aiExercises);
+    const aiExercises = aiDayMap.get(day.day_of_week);
+    const exercises =
+      aiExercises && aiExercises.length > 0
+        ? resolveExercises(day.exercise_slots, aiExercises)
+        : matcherFillExercises(day);
     const muscleGroups = [...new Set(exercises.map((e) => e.muscle_group))];
 
     return {
