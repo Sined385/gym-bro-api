@@ -115,9 +115,7 @@ export class WorkoutOrchestratorService {
 
     // 6. Reminder recalc (fire-and-forget — slow notification math
     // shouldn't fail a completion).
-    this.notificationsService
-      .recalculatePreferredHour(userId)
-      .catch(() => {});
+    this.notificationsService.recalculatePreferredHour(userId).catch(() => {});
   }
 
   /**
@@ -145,7 +143,10 @@ export class WorkoutOrchestratorService {
    * Wrap in catch at the call site if a generation failure shouldn't
    * fail the request that triggered the check.
    */
-  async ensureCurrentWeek(userId: string): Promise<void> {
+  async ensureCurrentWeek(
+    userId: string,
+    opts?: { awaitGeneration?: boolean },
+  ): Promise<void> {
     const plan = await this.prisma.trainingPlan.findFirst({
       where: { user_id: userId, is_active: true },
       select: { id: true, week_start_date: true },
@@ -178,9 +179,25 @@ export class WorkoutOrchestratorService {
     const premium = await this.subscriptionService
       .isPremium(userId)
       .catch(() => false);
-    await this.plansService.generatePlan(userId, false, undefined, {
-      forceFallback: !premium,
-    });
+
+    // Request path (dashboard / plans): kick the regen in the
+    // BACKGROUND — the AI generation was adding 10-20s to the first
+    // launch of the week. Callers see "no active plan" and return the
+    // existing status=generating contract; PlansService's single-flight
+    // guard dedups concurrent kicks. The rollover cron passes
+    // awaitGeneration to run users sequentially instead of stampeding
+    // OpenAI.
+    const generation = this.plansService.generatePlan(
+      userId,
+      false,
+      undefined,
+      { forceFallback: !premium },
+    );
+    if (opts?.awaitGeneration) {
+      await generation;
+    } else {
+      generation.catch(() => {});
+    }
   }
 
   /**
@@ -504,8 +521,7 @@ export class WorkoutOrchestratorService {
         where: { id: day.id },
         data: {
           status: 'completed',
-          workout_session_id:
-            day.workout_session_id ?? completedThatDay.id,
+          workout_session_id: day.workout_session_id ?? completedThatDay.id,
           adapted_at: new Date(),
         },
       });
@@ -533,13 +549,16 @@ export class WorkoutOrchestratorService {
  * empty array that iOS would still try to render.
  */
 function serializeExerciseSetsForJson(
-  sets: Array<{
-    set_number: number;
-    weight: any;
-    weight_unit: string | null;
-    reps: number;
-    is_bodyweight: boolean | null;
-  }> | null | undefined,
+  sets:
+    | Array<{
+        set_number: number;
+        weight: any;
+        weight_unit: string | null;
+        reps: number;
+        is_bodyweight: boolean | null;
+      }>
+    | null
+    | undefined,
 ):
   | Array<{
       set_number: number;

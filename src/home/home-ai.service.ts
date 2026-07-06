@@ -5,7 +5,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ACCENT_COLORS } from './session-exercise.service';
 import { WeightSuggestionService } from './weight-suggestion.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
-import { getWeekStartInTz } from '../common/date-utils';
+import {
+  getWeekStartInTz,
+  toMondayDowInTz,
+  userLocalDayBoundsUtc,
+} from '../common/date-utils';
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
 import { aiContextLine } from '../common/ai-context';
@@ -31,46 +35,88 @@ export class HomeAiService {
 
   // ── AI Motivation ───────────────────────────────────────
 
+  /// Single-flight guard for background motivation regeneration.
+  private readonly inflightMotivation = new Set<string>();
+
   async getOrGenerateMotivation(userId: string) {
     const now = new Date();
 
-    // Check for cached motivation that's still valid today
-    const cached = await this.prisma.motivationInsight.findFirst({
-      where: {
-        user_id: userId,
-        valid_until: { gt: now },
-      },
+    const latest = await this.prisma.motivationInsight.findFirst({
+      where: { user_id: userId },
       orderBy: { created_at: 'desc' },
     });
 
-    if (cached) return cached;
+    if (latest?.valid_until && latest.valid_until > now) return latest;
 
-    try {
-      return await this.generateAIMotivation(userId);
-    } catch (error) {
-      console.warn(summarizeAiError('motivation', error));
-      return this.generateFallbackMotivation(userId);
-    }
+    // Expired (first launch of the day) — regenerate in the BACKGROUND.
+    // The OpenAI call was blocking every first dashboard load of the
+    // day for 2-4s; yesterday's insight (or the instant fallback for
+    // brand-new users) beats a spinner, and the fresh message lands on
+    // the next fetch.
+    this.kickMotivationRegeneration(userId);
+
+    if (latest) return latest;
+    return this.generateFallbackMotivation(userId);
+  }
+
+  private kickMotivationRegeneration(userId: string): void {
+    if (this.inflightMotivation.has(userId)) return;
+    this.inflightMotivation.add(userId);
+    void this.generateAIMotivation(userId)
+      .catch(async (error) => {
+        console.warn(summarizeAiError('motivation', error));
+        // Write today's fallback so polls don't re-kick a doomed AI
+        // call all day.
+        await this.generateFallbackMotivation(userId).catch(() => {});
+      })
+      .finally(() => {
+        this.inflightMotivation.delete(userId);
+      });
   }
 
   private async generateAIMotivation(userId: string) {
-    const [onboarding, recentSessions, weekStats, totalSessionCount] =
-      await Promise.all([
-        this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
-        this.getRecentSessions(userId, 14),
-        this.getWeekStats(userId),
-        this.prisma.workoutSession.count({
-          where: { user_id: userId, status: 'completed' },
-        }),
-      ]);
+    const [
+      onboarding,
+      recentSessions,
+      weekStats,
+      totalSessionCount,
+      userRow,
+      activePlan,
+    ] = await Promise.all([
+      this.prisma.onboardingData.findUnique({ where: { user_id: userId } }),
+      this.getRecentSessions(userId, 14),
+      this.getWeekStats(userId),
+      this.prisma.workoutSession.count({
+        where: { user_id: userId, status: 'completed' },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { timezone: true },
+      }),
+      this.prisma.trainingPlan.findFirst({
+        where: { user_id: userId, is_active: true },
+        include: { days: { orderBy: { day_of_week: 'asc' } } },
+      }),
+    ]);
 
     const isNewUser = totalSessionCount === 0;
+    const tz = userRow?.timezone ?? null;
+    const todayDow = toMondayDowInTz(new Date(), tz);
+    const todayPlanDay =
+      activePlan?.days.find((d) => d.day_of_week === todayDow) ?? null;
 
     const systemPrompt = isNewUser
       ? this.buildWelcomePrompt(onboarding)
-      : this.buildMotivationPrompt(onboarding, recentSessions, weekStats);
+      : this.buildMotivationPrompt(
+          onboarding,
+          recentSessions,
+          weekStats,
+          todayPlanDay,
+        );
 
-    const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
+    // 1-2 sentence card — light model is plenty, and it keeps the
+    // background regeneration fast.
+    const model = this.configService.get('OPENAI_MODEL_LIGHT') ?? 'gpt-4o-mini';
     const response = await this.openai.chat.completions.create({
       model,
       messages: [
@@ -111,7 +157,7 @@ export class HomeAiService {
         message: parsed.message,
         workouts_this_week: weekStats.completedThisWeek,
         personal_records: parsed.personal_records ?? [],
-        valid_until: this.endOfDay(),
+        valid_until: this.endOfDay(tz),
       },
     });
 
@@ -119,16 +165,22 @@ export class HomeAiService {
   }
 
   private async generateFallbackMotivation(userId: string) {
-    const [weekStats, totalSessionCount, onboarding] = await Promise.all([
-      this.getWeekStats(userId),
-      this.prisma.workoutSession.count({
-        where: { user_id: userId, status: 'completed' },
-      }),
-      this.prisma.onboardingData.findUnique({
-        where: { user_id: userId },
-        select: { primary_goals: true, primary_sports: true },
-      }),
-    ]);
+    const [weekStats, totalSessionCount, onboarding, userRow] =
+      await Promise.all([
+        this.getWeekStats(userId),
+        this.prisma.workoutSession.count({
+          where: { user_id: userId, status: 'completed' },
+        }),
+        this.prisma.onboardingData.findUnique({
+          where: { user_id: userId },
+          select: { primary_goals: true, primary_sports: true },
+        }),
+        this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { timezone: true },
+        }),
+      ]);
+    const tz = userRow?.timezone ?? null;
 
     // New user — welcome message based on profile
     if (totalSessionCount === 0) {
@@ -150,7 +202,7 @@ export class HomeAiService {
           message: `Your profile is set up and ready for ${goalLabel}. Start your first workout to get personalized insights.`,
           workouts_this_week: 0,
           personal_records: [],
-          valid_until: this.endOfDay(),
+          valid_until: this.endOfDay(tz),
         },
       });
     }
@@ -168,7 +220,7 @@ export class HomeAiService {
         message,
         workouts_this_week: weekStats.completedThisWeek,
         personal_records: [],
-        valid_until: this.endOfDay(),
+        valid_until: this.endOfDay(tz),
       },
     });
   }
@@ -181,6 +233,12 @@ export class HomeAiService {
       targetPerWeek: number;
       daysLeftInWeek: number;
     },
+    todayPlanDay: {
+      day_type: string;
+      session_title: string | null;
+      muscle_groups: string[];
+      status: string;
+    } | null = null,
   ): string {
     const profile = onboarding
       ? `User profile:
@@ -195,12 +253,27 @@ export class HomeAiService {
 
     const sessionsContext = formatRecentSessions(recentSessions);
 
+    // Today's plan context — without it, the model happily tells the
+    // user to "focus on bench press today" on a planned rest day.
+    let todayContext: string;
+    if (!todayPlanDay) {
+      todayContext = `Today's plan: no plan day scheduled (plan may be regenerating). Do NOT reference "today's workout" — keep the insight general.`;
+    } else if (todayPlanDay.day_type === 'rest') {
+      todayContext = `Today's plan: REST DAY. Do NOT tell the user to train, lift, or focus on any exercise today.`;
+    } else if (todayPlanDay.status === 'completed') {
+      todayContext = `Today's plan: "${todayPlanDay.session_title ?? 'Training'}" (${todayPlanDay.muscle_groups.join(', ') || 'general'}) — ALREADY COMPLETED today.`;
+    } else {
+      todayContext = `Today's plan: "${todayPlanDay.session_title ?? 'Training'}" — ${todayPlanDay.muscle_groups.join(', ') || 'general'} (upcoming today).`;
+    }
+
     return `You are a no-nonsense strength coach for the GymJam app.
 Your job is to give the user a brief, direct recap of their recent training and one actionable insight for today. No cheerleading, no fluff — just facts and what to do next.
 
 ${profile}
 
 Week progress: ${weekStats.completedThisWeek}/${weekStats.targetPerWeek} workouts completed, ${weekStats.daysLeftInWeek} days left in the week.
+
+${todayContext}
 
 ${sessionsContext}
 
@@ -214,7 +287,7 @@ Respond with a JSON object:
 Rules:
 - Lead with data: reference specific exercises, weights, reps, or muscle groups from their session log
 - Point out patterns: volume trends, muscle groups neglected, weight progression stalling or improving
-- Give one actionable suggestion tied to their goal (e.g. "add 5 lbs to your bench next session", "your back volume is low — prioritize rows today")
+- Give one actionable suggestion tied to their goal AND consistent with today's plan: on a training day, tie the tip to today's planned muscle groups (e.g. "add 5 lbs to your bench today"); on a REST day, frame it as recovery, mobility, nutrition, or what to prepare for the next session — never "train X today"
 - Keep the tone direct and matter-of-fact — no exclamation marks, no "great job", no cheerleading
 - This appears on a mobile card — be concise`;
   }
@@ -826,7 +899,12 @@ Rules:
     };
   }
 
-  private endOfDay(): Date {
+  /// End of the user's LOCAL day. valid_until anchored to server
+  /// midnight meant a message could survive well into the user's next
+  /// morning (or expire mid-evening) for anyone east/west of the
+  /// server's UTC.
+  private endOfDay(tz: string | null = null): Date {
+    if (tz) return userLocalDayBoundsUtc(new Date(), tz).end;
     const d = new Date();
     d.setHours(23, 59, 59, 999);
     return d;
