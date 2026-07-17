@@ -22,9 +22,9 @@ import {
 import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatSessionResponse } from '../common/format-session';
 import {
+  applyProgression,
   buildRecentLiftsLookup,
   computeRecentLifts,
-  enforceProgression,
 } from '../common/recent-lifts';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from './format-plan';
@@ -521,14 +521,27 @@ export class PlansService {
       const lib: any = libraryById.get(ex.library_exercise_id);
       const suggested = weightMap.get(ex.library_exercise_id) ?? null;
       ex.suggested_weight = suggested;
-      // Don't clobber an AI-supplied target_sets array (rare but
-      // possible when the AI ladder is more nuanced than a flat synth) —
-      // but do enforce progression on it: the prompt asks for a top-set
-      // bump over last session, and models routinely echo the recorded
-      // ladder verbatim instead.
+      // History → the APP owns progression (cardio excluded — duration
+      // blocks aren't a weight/rep ladder). The deterministic next
+      // ladder replaces the AI's unless it's an intentional deviation
+      // (deload / different set count) — see applyProgression.
+      if (
+        !isCardioCategory(lib?.category) &&
+        recentLiftsLookup.has(ex.library_exercise_id)
+      ) {
+        const lift = recentLiftsLookup.get(ex.library_exercise_id)!;
+        ex.target_sets = applyProgression(ex.target_sets, lift);
+        if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) {
+          const maxReps = ex.target_sets.reduce(
+            (m: number, s: any) => Math.max(m, s.reps ?? 0),
+            0,
+          );
+          ex.sets_display = `${ex.target_sets.length} × ${maxReps}`;
+        }
+        return;
+      }
+      // Novel exercise with an AI-supplied ladder — keep it.
       if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) {
-        const lift = recentLiftsLookup.get(ex.library_exercise_id);
-        if (lift) ex.target_sets = enforceProgression(ex.target_sets, lift);
         return;
       }
       if (isCardioCategory(lib?.category)) {

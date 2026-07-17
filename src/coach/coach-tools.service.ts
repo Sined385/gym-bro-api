@@ -28,9 +28,9 @@ import {
   streamToolFollowUp,
 } from './coach-stream.helper';
 import {
+  applyProgression,
   buildRecentLiftsLookup,
   computeRecentLifts,
-  enforceProgression,
   RecentLift,
 } from '../common/recent-lifts';
 
@@ -116,7 +116,7 @@ export class CoachToolsService {
                     target_sets: {
                       type: 'array',
                       description:
-                        'Per-set targets (warmup ladder + working sets). REQUIRED for strength when this exercise appears in "Your recent lifts" — mirror the recorded ladder with the top working set bumped to the suggested value. Omit entirely for cardio exercises (is_cardio=true) — backend synthesizes a single duration block from target_duration_minutes.',
+                        'Per-set targets (warmup ladder + working sets). OMIT for exercises in "Your recent lifts" — the app computes the next progression from history (supply only for a deliberate deviation like a user-requested deload or rep-scheme change). Optional for novel strength exercises. Omit entirely for cardio exercises (is_cardio=true) — backend synthesizes a single duration block from target_duration_minutes.',
                       items: {
                         type: 'object',
                         properties: {
@@ -362,18 +362,17 @@ export class CoachToolsService {
       // target_sets that were just persisted. Without these, iOS would
       // fall back to its sets_display placeholder ladder and the user
       // would never see the progression we worked out.
-      const sessionWithSets =
-        await this.prisma.workoutSession.findUnique({
-          where: { id: session.id },
-          include: {
-            exercises: {
-              orderBy: { step_number: 'asc' },
-              include: {
-                exercise_sets: { orderBy: { set_number: 'asc' } },
-              },
+      const sessionWithSets = await this.prisma.workoutSession.findUnique({
+        where: { id: session.id },
+        include: {
+          exercises: {
+            orderBy: { step_number: 'asc' },
+            include: {
+              exercise_sets: { orderBy: { set_number: 'asc' } },
             },
           },
-        });
+        },
+      });
 
       yield {
         type: 'session_created',
@@ -571,9 +570,10 @@ export class CoachToolsService {
                   const fromId = ex.library_exercise_id
                     ? exerciseMap.get(ex.library_exercise_id)
                     : null;
-                  const fromName = !fromId && ex.name
-                    ? exerciseByName.get(ex.name.toLowerCase().trim())
-                    : null;
+                  const fromName =
+                    !fromId && ex.name
+                      ? exerciseByName.get(ex.name.toLowerCase().trim())
+                      : null;
                   const libEx: any = fromId ?? fromName ?? null;
                   if (!libEx) {
                     console.warn(
@@ -620,7 +620,8 @@ export class CoachToolsService {
                     muscle_group: libEx.muscle_group,
                     equipment: libEx.equipment ?? null,
                     sets_display: ex.sets_display ?? '3 × 10',
-                    ...(Array.isArray(ex.target_sets) && ex.target_sets.length > 0
+                    ...(Array.isArray(ex.target_sets) &&
+                    ex.target_sets.length > 0
                       ? { target_sets: ex.target_sets }
                       : {}),
                   };
@@ -838,9 +839,10 @@ export class CoachToolsService {
         const fromId = ex.library_exercise_id
           ? exerciseMap.get(ex.library_exercise_id)
           : null;
-        const fromName = !fromId && ex.name
-          ? exerciseByName.get(ex.name.toLowerCase().trim())
-          : null;
+        const fromName =
+          !fromId && ex.name
+            ? exerciseByName.get(ex.name.toLowerCase().trim())
+            : null;
         const libEx = fromId ?? fromName ?? null;
         if (!libEx) {
           console.warn(
@@ -850,7 +852,10 @@ export class CoachToolsService {
         }
         return { ex, libEx };
       })
-      .filter((x): x is { ex: typeof rawExercises[number]; libEx: any } => x !== null);
+      .filter(
+        (x): x is { ex: (typeof rawExercises)[number]; libEx: any } =>
+          x !== null,
+      );
 
     if (exercises.length === 0) {
       throw new Error(
@@ -945,51 +950,17 @@ export class CoachToolsService {
               };
             }
 
-            // The AI DID ship target_sets — but models routinely echo
-            // last session's ladder verbatim despite the prompt's bump
-            // instruction. Enforce the progression server-side; deloads
-            // and already-progressed ladders pass through untouched.
-            if (
-              Array.isArray(ex.target_sets) &&
-              ex.target_sets.length > 0 &&
-              recentLiftsMap.has(libEx.id)
-            ) {
-              ex.target_sets = enforceProgression(
+            // The APP owns progression for exercises with history: the
+            // deterministic next ladder (3×8 → 3×9; at ≥12 reps +2.5 kg
+            // with reps reset) replaces whatever the AI returned, unless
+            // the AI clearly intends a deviation — a deload (< 95% of
+            // last top load) or a different set count (e.g. "make it
+            // 5×5") — which passes through untouched.
+            if (recentLiftsMap.has(libEx.id)) {
+              ex.target_sets = applyProgression(
                 ex.target_sets,
                 recentLiftsMap.get(libEx.id)!,
-              );
-            }
-
-            // Server-side safety net: when the AI ignored the prompt's
-            // PROGRESSIVE OVERLOAD rule and shipped no target_sets for an
-            // exercise the user logged recently, build the ladder from
-            // the recent-lifts entry — mirror prior warm-ups, bump every
-            // set tied at the top weight to the suggested value (matches
-            // the plan-gen prompt example where two 85×5 sets both bump
-            // to 87.5×5). The user expects real progression, not 8 × 12.
-            if (
-              (!Array.isArray(ex.target_sets) || ex.target_sets.length === 0) &&
-              recentLiftsMap.has(libEx.id)
-            ) {
-              const lift = recentLiftsMap.get(libEx.id)!;
-              const topW = lift.topSet.isBodyweight
-                ? 0
-                : (lift.topSet.weight ?? 0);
-              ex.target_sets = lift.sets.map((s) => {
-                const sW = s.isBodyweight ? 0 : (s.weight ?? 0);
-                const matchesTop =
-                  s.isBodyweight === lift.topSet.isBodyweight &&
-                  sW === topW &&
-                  s.reps === lift.topSet.reps;
-                const target = matchesTop ? lift.suggestedTopSet : s;
-                return {
-                  weight_kg: target.isBodyweight
-                    ? undefined
-                    : (target.weight ?? undefined),
-                  reps: target.reps,
-                  is_bodyweight: target.isBodyweight,
-                };
-              });
+              ) as typeof ex.target_sets;
             }
 
             // Novel-exercise fallback. If we still have no target_sets
@@ -999,10 +970,7 @@ export class CoachToolsService {
             // equipment field — that's authoritative, the AI's flag
             // is not (it has wrongly flagged Dumbbell Bench Press
             // bodyweight in prod).
-            if (
-              !Array.isArray(ex.target_sets) ||
-              ex.target_sets.length === 0
-            ) {
+            if (!Array.isArray(ex.target_sets) || ex.target_sets.length === 0) {
               const { setCount, reps } = parseSetsDisplay(ex.sets_display);
               const isBW = isBodyweightEquipment(libEx.equipment);
               const suggested = weightMap.get(libEx.id) ?? null;
@@ -1043,7 +1011,7 @@ export class CoachToolsService {
             // sets_display + prev-set-by-set-number prefill.
             const exerciseSets = hasTargets
               ? {
-                  create: ex.target_sets!.map((s, sIdx) => ({
+                  create: ex.target_sets.map((s, sIdx) => ({
                     set_number: sIdx + 1,
                     weight:
                       s.is_bodyweight || s.weight_kg === undefined
@@ -1061,7 +1029,7 @@ export class CoachToolsService {
             // still ships a stale "4 × 8" alongside a 5-set 87.5 kg
             // ladder — without this, the chat card would lie.
             const setsDisplay = hasTargets
-              ? `${ex.target_sets!.length} × ${ex.target_sets!.reduce((m, s) => Math.max(m, s.reps), 0)}`
+              ? `${ex.target_sets.length} × ${ex.target_sets.reduce((m, s) => Math.max(m, s.reps), 0)}`
               : ex.sets_display || '3 × 10';
             return {
               library_exercise_id: libEx.id,

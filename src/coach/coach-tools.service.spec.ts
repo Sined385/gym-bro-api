@@ -28,6 +28,7 @@ describe('CoachToolsService — target_sets safety net', () => {
   // Mirrors the screenshot's actual ladder (8 sets, top 100×5).
   const deadliftLift: RecentLift = {
     libraryExerciseId: 'deadlift-lib-id',
+    externalId: null,
     name: 'Barbell Deadlift',
     muscleGroup: 'Back',
     lastDate: '2026-06-03',
@@ -131,12 +132,12 @@ describe('CoachToolsService — target_sets safety net', () => {
     expect(persisted.sets[2]).toMatchObject({ weight: 60, reps: 6 });
     expect(persisted.sets[3]).toMatchObject({ weight: 80, reps: 3 });
 
-    // All FOUR 100×5 top-tier sets bumped to 102.5×5 (matches the
-    // plan-gen prompt example where every set tied at the top progresses).
-    expect(persisted.sets[4]).toMatchObject({ weight: 102.5, reps: 5 });
-    expect(persisted.sets[5]).toMatchObject({ weight: 102.5, reps: 5 });
-    expect(persisted.sets[6]).toMatchObject({ weight: 102.5, reps: 5 });
-    expect(persisted.sets[7]).toMatchObject({ weight: 102.5, reps: 5 });
+    // All FOUR 100×5 top-tier sets progress by a rep (deterministic
+    // double progression: below 12 reps the app adds a rep, not weight).
+    expect(persisted.sets[4]).toMatchObject({ weight: 100, reps: 6 });
+    expect(persisted.sets[5]).toMatchObject({ weight: 100, reps: 6 });
+    expect(persisted.sets[6]).toMatchObject({ weight: 100, reps: 6 });
+    expect(persisted.sets[7]).toMatchObject({ weight: 100, reps: 6 });
 
     // sets_display is overridden to reflect the actual ladder length and
     // top working reps, replacing the AI's stale "8 × 12" string.

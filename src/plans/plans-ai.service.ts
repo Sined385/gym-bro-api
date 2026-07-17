@@ -504,13 +504,8 @@ ${poolLines.join('\n')}
 ${recentLiftsBlock}
 
 PROGRESSIVE OVERLOAD (highest-priority rule):
-For ANY slot where the candidate pool contains an exercise listed in "Your recent lifts" above, you MUST:
-  1. Pick that exercise (use its library_exercise_id from the pool).
-  2. Return target_sets that mirror the recorded ladder one-for-one, with the top working set bumped to the "suggest top set" value at the end of that recent-lifts line. Warm-up sets stay where they were.
-Example — if Barbell Bench Press shows "last 2026-06-01: 50kg×10, 60kg×8, 80kg×6, 85kg×5, 85kg×5 — suggest top set 87.5kg × 5", the exercise entry for that slot is:
-  { "library_exercise_id": "<bench id>", "name": "Barbell Bench Press - Medium Grip",
-    "target_sets": [{"weight_kg":50,"reps":10},{"weight_kg":60,"reps":8},{"weight_kg":80,"reps":6},{"weight_kg":87.5,"reps":5},{"weight_kg":87.5,"reps":5}] }
-For novel exercises (not in the recent-lifts block) target_sets is optional — omit it.
+For ANY slot where the candidate pool contains an exercise listed in "Your recent lifts" above, you MUST pick that exercise (use its library_exercise_id from the pool) and OMIT target_sets for it — the app computes the next progression from the user's history automatically. Do not invent a ladder for these.
+For novel exercises (not in the recent-lifts block) target_sets is optional — include it when you have a confident prescription, otherwise omit it.
 
 Rules:
 - Pick EXACTLY one exercise per slot from the matching muscle group pool

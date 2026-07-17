@@ -167,7 +167,9 @@ ${nameLine ? nameLine + '\n' : ''}- Goal: ${onboarding.primary_goals?.[0]}
             .map(
               (e) =>
                 `- ${e.name} (id: ${e.id}, muscle: ${e.muscle_group}, equipment: ${e.equipment})${
-                  isCardioCategory(e.category) ? ' · CARDIO (duration-based)' : ''
+                  isCardioCategory(e.category)
+                    ? ' · CARDIO (duration-based)'
+                    : ''
                 }`,
             )
             .join('\n')}`
@@ -278,13 +280,10 @@ ${recentLiftsBlock}
 PROGRESSIVE OVERLOAD (highest-priority workout-creation rule — read this before composing exercises):
 For ANY exercise listed under "Your recent lifts" above, when you include it in a workout:
   1. REUSE the exercise — pass its library_exercise_id from the recent-lifts line.
-  2. REQUIRED: pass target_sets that mirror the recorded ladder one-for-one, then bump the top working set to the "suggest top set" value at the end of that recent-lifts line. Warm-up sets stay where they were.
-  3. REQUIRED: set sets_display to "<target_sets.length> × <top-set reps>" so the chat card pill reflects the actual ladder you're proposing.
-Example — if a recent-lifts line says: "Barbell Bench Press (lib_id: abc) — last 2026-06-01: 50kg × 10, 60kg × 8, 80kg × 6, 85kg × 5, 85kg × 5 — suggest top set 87.5kg × 5", you MUST return for that exercise:
-  library_exercise_id = "abc"
-  sets_display = "5 × 5"
-  target_sets = [{weight_kg:50,reps:10},{weight_kg:60,reps:8},{weight_kg:80,reps:6},{weight_kg:87.5,reps:5},{weight_kg:87.5,reps:5}]
-NEVER return a generic "4 × 8" or "3 × 10" for an exercise that has load data — that throws away the user's progression. target_sets is optional only for novel exercises that don't appear in the recent-lifts block.
+  2. OMIT target_sets — the app computes the next progression from the user's history automatically. Do not invent a ladder.
+  3. Set sets_display to "<set count> × <top-set reps>" from the recent-lifts line (the server recomputes it from the final ladder anyway).
+EXCEPTION: if the user explicitly asked for a deload / lighter day, or a different set/rep structure (e.g. "make it 5×5"), DO pass target_sets reflecting that request — a deliberately different ladder is respected.
+For novel exercises (not in the recent-lifts block) target_sets is optional — include it when you have a confident prescription, otherwise the server estimates a starting load.
 
 ${exerciseList}
 

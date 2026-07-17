@@ -1,10 +1,10 @@
 // Pure helpers shared by Coach single-workout creation and weekly plan
-// generation. Both flows need to: (1) tell the AI what the user's
-// current "top set" is for each exercise they've recently performed
-// and (2) instruct the AI to ship per-set targets (target_sets)
-// mirroring last session's ladder with a small load bump on the top
-// working set. Keeping the implementation as a free function avoids a
-// Coach ↔ Plans module dependency.
+// generation. The APP owns progression for exercises with history: the
+// next ladder is computed deterministically from the last recorded one
+// (buildProgressedLadder / applyProgression below). The AI only supplies
+// target_sets for novel exercises — or to deliberately deviate (deload,
+// different scheme). Keeping the implementation as free functions avoids
+// a Coach ↔ Plans module dependency.
 
 export interface RecentLiftSet {
   weight: number | null;
@@ -29,15 +29,32 @@ export interface RecentLift {
 }
 
 /**
+ * The deterministic progression rule (double progression):
+ *  - Bodyweight or no weight recorded → +1 rep at same load.
+ *  - Weighted, reps < 12 → +1 rep at same weight (3×8 → 3×9).
+ *  - Weighted, reps ≥ 12 → +2.5 kg, reps drop by 4 (min 5) —
+ *    build reps up to 12, then add load and restart the climb
+ *    (3×12 @ 40 → 3×8 @ 42.5).
+ */
+export function progressSet(set: RecentLiftSet): RecentLiftSet {
+  if (set.isBodyweight || set.weight === null) {
+    return { ...set, reps: set.reps + 1 };
+  }
+  if (set.reps >= 12) {
+    return {
+      ...set,
+      weight: set.weight + 2.5,
+      reps: Math.max(5, set.reps - 4),
+    };
+  }
+  return { ...set, reps: set.reps + 1 };
+}
+
+/**
  * Distills the `recentSessions` payload (sessions ordered DESC by
  * completed_at) into one entry per exercise: the most recent session
- * it was performed in, the full set ladder, the heaviest set, and a
- * server-computed "suggest" load for the top working set.
- *
- * Progression rules:
- *  - Bodyweight or no weight recorded → +1 rep at same load.
- *  - Weighted, reps ≥ 5 → +2.5 kg same reps.
- *  - Weighted, reps < 5 (heavy attempt) → +1 rep at same weight.
+ * it was performed in, the full set ladder, the heaviest set, and the
+ * `progressSet` suggestion for the top working set.
  */
 export function computeRecentLifts(recentSessions: any[]): RecentLift[] {
   const seen = new Map<string, RecentLift>();
@@ -61,14 +78,7 @@ export function computeRecentLifts(recentSessions: any[]): RecentLift[] {
         if (sw === bw && s.reps > best.reps) return s;
         return best;
       }, sets[0]);
-      let suggestedTopSet: RecentLiftSet;
-      if (topSet.isBodyweight || topSet.weight === null) {
-        suggestedTopSet = { ...topSet, reps: topSet.reps + 1 };
-      } else if (topSet.reps >= 5) {
-        suggestedTopSet = { ...topSet, weight: (topSet.weight ?? 0) + 2.5 };
-      } else {
-        suggestedTopSet = { ...topSet, reps: topSet.reps + 1 };
-      }
+      const suggestedTopSet = progressSet(topSet);
       seen.set(key, {
         libraryExerciseId: ex.library_exercise_id ?? null,
         externalId: ex.external_id ?? null,
@@ -90,55 +100,66 @@ export interface TargetSetLike {
   is_bodyweight?: boolean;
 }
 
+const setLoad = (weight: number | null | undefined, bw?: boolean) =>
+  bw ? 0 : (weight ?? 0);
+
 /**
- * Server-side progressive-overload enforcement. The prompts ask the AI
- * to bump the top working set over last session, but models routinely
- * echo the recorded ladder back verbatim. When the supplied ladder's
- * best set is exactly last session's top set — no progression, but
- * also no intentional deload — bump every set matching that top to
- * the pre-computed `suggestedTopSet`. Ladders that already progress
- * past the last top set, or that back off below it (deload), pass
- * through untouched: the AI made a call, respect it.
+ * The app-computed next ladder for an exercise with history: last
+ * session's ladder with `progressSet` applied to every WORKING set
+ * (sets at the top load). Lighter sets (warm-ups) are preserved
+ * verbatim so 50×10, 60×8, 80×5, 80×5 → 50×10, 60×8, 80×6, 80×6.
  */
-export function enforceProgression<T extends TargetSetLike>(
-  targetSets: T[],
-  lift: RecentLift,
-): T[] {
-  if (targetSets.length === 0) return targetSets;
-  // Duration blocks (cardio) aren't a weight/rep progression.
-  if (targetSets.some((s: any) => s.duration_seconds != null)) {
-    return targetSets;
-  }
-
-  const load = (weight: number | null | undefined, bw?: boolean) =>
-    bw ? 0 : (weight ?? 0);
-  const liftTopLoad = load(lift.topSet.weight, lift.topSet.isBodyweight);
-
-  const aiTop = targetSets.reduce((best, s) => {
-    if (load(s.weight_kg, s.is_bodyweight) > load(best.weight_kg, best.is_bodyweight)) return s;
-    if (load(s.weight_kg, s.is_bodyweight) === load(best.weight_kg, best.is_bodyweight) && s.reps > best.reps) return s;
-    return best;
-  }, targetSets[0]);
-  const aiTopLoad = load(aiTop.weight_kg, aiTop.is_bodyweight);
-
-  const identicalTop =
-    aiTopLoad === liftTopLoad && aiTop.reps === lift.topSet.reps;
-  if (!identicalTop) return targetSets;
-
-  const suggested = lift.suggestedTopSet;
-  return targetSets.map((s) => {
-    const isTop =
-      load(s.weight_kg, s.is_bodyweight) === aiTopLoad && s.reps === aiTop.reps;
-    if (!isTop) return s;
+export function buildProgressedLadder(lift: RecentLift): TargetSetLike[] {
+  const topLoad = setLoad(lift.topSet.weight, lift.topSet.isBodyweight);
+  return lift.sets.map((s) => {
+    const isWorkingSet = setLoad(s.weight, s.isBodyweight) === topLoad;
+    const target = isWorkingSet ? progressSet(s) : s;
     return {
-      ...s,
-      weight_kg: suggested.isBodyweight
-        ? undefined
-        : (suggested.weight ?? s.weight_kg),
-      reps: suggested.reps,
-      is_bodyweight: suggested.isBodyweight,
+      weight_kg: target.isBodyweight ? undefined : (target.weight ?? undefined),
+      reps: target.reps,
+      is_bodyweight: target.isBodyweight,
     };
   });
+}
+
+/**
+ * Decide the final ladder for an exercise the user has history for.
+ * The APP owns progression — whatever the AI returned is replaced by
+ * the deterministic `buildProgressedLadder` EXCEPT when the AI ladder
+ * is a clearly intentional deviation:
+ *  - a different set count than the recorded ladder (restructure,
+ *    e.g. the user asked for 5×5), or
+ *  - a meaningfully lighter top load (< 95% of last session's —
+ *    a deload / "give me an easy day" request).
+ * Cardio duration blocks pass through untouched.
+ */
+export function applyProgression<T extends TargetSetLike>(
+  aiTargetSets: T[] | undefined,
+  lift: RecentLift,
+): TargetSetLike[] {
+  const supplied = Array.isArray(aiTargetSets) ? aiTargetSets : [];
+
+  // Duration blocks (cardio) aren't a weight/rep progression.
+  if (supplied.some((s: any) => s.duration_seconds != null)) {
+    return supplied;
+  }
+
+  if (supplied.length > 0) {
+    // Intentional restructure: different set count than history.
+    if (supplied.length !== lift.sets.length) return supplied;
+
+    // Intentional deload: meaningfully lighter top load than history.
+    const liftTopLoad = setLoad(lift.topSet.weight, lift.topSet.isBodyweight);
+    const aiTopLoad = supplied.reduce(
+      (best, s) => Math.max(best, setLoad(s.weight_kg, s.is_bodyweight)),
+      0,
+    );
+    if (liftTopLoad > 0 && aiTopLoad < liftTopLoad * 0.95) return supplied;
+  }
+
+  // Echo, near-echo, over-eager bump, or nothing supplied — the app's
+  // deterministic progression wins.
+  return buildProgressedLadder(lift);
 }
 
 function formatSet(s: RecentLiftSet): string {
@@ -201,11 +222,11 @@ export function formatRecentLiftsBlock(
       if (lib.external_id) byExternalId.set(lib.external_id, lib.id);
     }
   }
-  return `Your recent lifts (for any of these in a new workout, REUSE the exercise and supply target_sets that mirror the last ladder with the top set bumped to the "suggest" value):\n${lifts
+  return `Your recent lifts. REUSE these exercises where they fit the workout — the user wants to progress on them. Do NOT supply target_sets for them: the app computes the next progression from history automatically. Only supply target_sets for one of these when you deliberately intend a DIFFERENT scheme (the user asked for a deload / lighter day, or a different set/rep structure like 5×5):\n${lifts
     .map((l) => {
       const liveLibId =
         l.libraryExerciseId ??
-        (l.externalId ? byExternalId.get(l.externalId) ?? null : null);
+        (l.externalId ? (byExternalId.get(l.externalId) ?? null) : null);
       const libRef = liveLibId ? ` (lib_id: ${liveLibId})` : '';
       const ladder = l.sets.map(formatSet).join(', ');
       const suggest = formatSet(l.suggestedTopSet);

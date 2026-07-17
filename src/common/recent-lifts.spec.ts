@@ -1,8 +1,10 @@
 import {
+  applyProgression,
+  buildProgressedLadder,
   buildRecentLiftsLookup,
   computeRecentLifts,
-  enforceProgression,
   formatRecentLiftsBlock,
+  progressSet,
   RecentLift,
 } from './recent-lifts';
 
@@ -95,7 +97,76 @@ describe('recent-lifts external_id bridge', () => {
   });
 });
 
-describe('enforceProgression', () => {
+describe('progressSet', () => {
+  it('adds a rep below 12 reps (3\u00d78 \u2192 3\u00d79)', () => {
+    expect(progressSet({ weight: 40, reps: 8, isBodyweight: false })).toEqual({
+      weight: 40,
+      reps: 9,
+      isBodyweight: false,
+    });
+  });
+
+  it('adds 2.5 kg and resets reps by 4 at 12+ reps (3\u00d712 @ 40 \u2192 3\u00d78 @ 42.5)', () => {
+    expect(progressSet({ weight: 40, reps: 12, isBodyweight: false })).toEqual({
+      weight: 42.5,
+      reps: 8,
+      isBodyweight: false,
+    });
+  });
+
+  it('generalizes the reset to high-rep schemes (18 \u2192 14)', () => {
+    expect(progressSet({ weight: 20, reps: 18, isBodyweight: false })).toEqual({
+      weight: 22.5,
+      reps: 14,
+      isBodyweight: false,
+    });
+  });
+
+  it('always adds a rep for bodyweight sets', () => {
+    expect(progressSet({ weight: null, reps: 15, isBodyweight: true })).toEqual(
+      { weight: null, reps: 16, isBodyweight: true },
+    );
+  });
+});
+
+describe('computeRecentLifts suggestedTopSet', () => {
+  const session = (sets: any[]) => ({
+    completed_at: '2026-07-01T10:00:00.000Z',
+    exercises: [
+      {
+        library_exercise_id: 'lib-1',
+        external_id: null,
+        name: 'Bench Press',
+        muscle_group: 'Chest',
+        exercise_sets: sets,
+      },
+    ],
+  });
+
+  it('suggests +1 rep below 12 reps', () => {
+    const [lift] = computeRecentLifts([
+      session([{ weight: 80, reps: 8, is_bodyweight: false }]),
+    ]);
+    expect(lift.suggestedTopSet).toEqual({
+      weight: 80,
+      reps: 9,
+      isBodyweight: false,
+    });
+  });
+
+  it('suggests +2.5 kg with rep reset at 12+ reps', () => {
+    const [lift] = computeRecentLifts([
+      session([{ weight: 40, reps: 12, is_bodyweight: false }]),
+    ]);
+    expect(lift.suggestedTopSet).toEqual({
+      weight: 42.5,
+      reps: 8,
+      isBodyweight: false,
+    });
+  });
+});
+
+describe('applyProgression', () => {
   const lift = (over: Partial<RecentLift> = {}): RecentLift => ({
     libraryExerciseId: 'lib-1',
     externalId: null,
@@ -105,14 +176,15 @@ describe('enforceProgression', () => {
     sets: [
       { weight: 60, reps: 10, isBodyweight: false },
       { weight: 80, reps: 8, isBodyweight: false },
+      { weight: 80, reps: 8, isBodyweight: false },
     ],
     topSet: { weight: 80, reps: 8, isBodyweight: false },
-    suggestedTopSet: { weight: 82.5, reps: 8, isBodyweight: false },
+    suggestedTopSet: { weight: 80, reps: 9, isBodyweight: false },
     ...over,
   });
 
-  it('bumps a ladder that echoes last session verbatim', () => {
-    const result = enforceProgression(
+  it('replaces an echoed ladder with the deterministic progression (rep bump)', () => {
+    const result = applyProgression(
       [
         { weight_kg: 60, reps: 10 },
         { weight_kg: 80, reps: 8 },
@@ -120,48 +192,109 @@ describe('enforceProgression', () => {
       ],
       lift(),
     );
-    expect(result[0]).toEqual({ weight_kg: 60, reps: 10 });
-    // Every set tied at the echoed top gets the suggested value
-    expect(result[1]).toMatchObject({ weight_kg: 82.5, reps: 8 });
-    expect(result[2]).toMatchObject({ weight_kg: 82.5, reps: 8 });
+    // Warm-up preserved, both working sets +1 rep
+    expect(result[0]).toMatchObject({ weight_kg: 60, reps: 10 });
+    expect(result[1]).toMatchObject({ weight_kg: 80, reps: 9 });
+    expect(result[2]).toMatchObject({ weight_kg: 80, reps: 9 });
   });
 
-  it('leaves an already-progressed ladder untouched', () => {
-    const sets = [
-      { weight_kg: 60, reps: 10 },
-      { weight_kg: 85, reps: 6 },
-    ];
-    expect(enforceProgression(sets, lift())).toEqual(sets);
+  it('replaces even a differently-numbered same-structure ladder (app owns progression)', () => {
+    const result = applyProgression(
+      [
+        { weight_kg: 60, reps: 10 },
+        { weight_kg: 90, reps: 8 }, // AI over-eager bump
+        { weight_kg: 90, reps: 8 },
+      ],
+      lift(),
+    );
+    expect(result[1]).toMatchObject({ weight_kg: 80, reps: 9 });
   });
 
-  it('leaves a same-load-more-reps ladder untouched', () => {
-    const sets = [{ weight_kg: 80, reps: 10 }];
-    expect(enforceProgression(sets, lift())).toEqual(sets);
+  it('builds the ladder when the AI supplied nothing', () => {
+    const result = applyProgression(undefined, lift());
+    expect(result).toHaveLength(3);
+    expect(result[2]).toMatchObject({ weight_kg: 80, reps: 9 });
   });
 
-  it('leaves a deload untouched', () => {
-    const sets = [
-      { weight_kg: 50, reps: 12 },
-      { weight_kg: 65, reps: 10 },
-    ];
-    expect(enforceProgression(sets, lift())).toEqual(sets);
+  it('applies the weight bump + rep reset for high-rep working sets', () => {
+    const highRep = lift({
+      sets: [
+        { weight: 40, reps: 12, isBodyweight: false },
+        { weight: 40, reps: 12, isBodyweight: false },
+        { weight: 40, reps: 12, isBodyweight: false },
+      ],
+      topSet: { weight: 40, reps: 12, isBodyweight: false },
+      suggestedTopSet: { weight: 42.5, reps: 8, isBodyweight: false },
+    });
+    const result = applyProgression([], highRep);
+    expect(result).toEqual([
+      { weight_kg: 42.5, reps: 8, is_bodyweight: false },
+      { weight_kg: 42.5, reps: 8, is_bodyweight: false },
+      { weight_kg: 42.5, reps: 8, is_bodyweight: false },
+    ]);
   });
 
-  it('bumps reps on an echoed bodyweight ladder', () => {
+  it('progresses bodyweight ladders by a rep', () => {
     const bwLift = lift({
       sets: [{ weight: null, reps: 12, isBodyweight: true }],
       topSet: { weight: null, reps: 12, isBodyweight: true },
       suggestedTopSet: { weight: null, reps: 13, isBodyweight: true },
     });
-    const result = enforceProgression(
+    const result = applyProgression(
       [{ reps: 12, is_bodyweight: true }],
       bwLift,
     );
     expect(result[0]).toMatchObject({ reps: 13, is_bodyweight: true });
   });
 
-  it('skips cardio duration ladders', () => {
+  it('keeps an intentional deload (top load < 95% of history)', () => {
+    const sets = [
+      { weight_kg: 40, reps: 10 },
+      { weight_kg: 60, reps: 10 },
+      { weight_kg: 60, reps: 10 },
+    ];
+    expect(applyProgression(sets, lift())).toEqual(sets);
+  });
+
+  it('keeps an intentional restructure (different set count)', () => {
+    const fiveByFive = [
+      { weight_kg: 80, reps: 5 },
+      { weight_kg: 80, reps: 5 },
+      { weight_kg: 80, reps: 5 },
+      { weight_kg: 80, reps: 5 },
+      { weight_kg: 80, reps: 5 },
+    ];
+    expect(applyProgression(fiveByFive, lift())).toEqual(fiveByFive);
+  });
+
+  it('passes cardio duration ladders through', () => {
     const sets = [{ reps: 0, duration_seconds: 1800 } as any];
-    expect(enforceProgression(sets, lift())).toEqual(sets);
+    expect(applyProgression(sets, lift())).toEqual(sets);
+  });
+});
+
+describe('buildProgressedLadder', () => {
+  it('preserves warm-ups and progresses only working sets', () => {
+    const result = buildProgressedLadder({
+      libraryExerciseId: 'lib-1',
+      externalId: null,
+      name: 'Bench',
+      muscleGroup: 'Chest',
+      lastDate: '2026-07-01',
+      sets: [
+        { weight: 50, reps: 10, isBodyweight: false },
+        { weight: 60, reps: 8, isBodyweight: false },
+        { weight: 80, reps: 5, isBodyweight: false },
+        { weight: 80, reps: 5, isBodyweight: false },
+      ],
+      topSet: { weight: 80, reps: 5, isBodyweight: false },
+      suggestedTopSet: { weight: 80, reps: 6, isBodyweight: false },
+    });
+    expect(result).toEqual([
+      { weight_kg: 50, reps: 10, is_bodyweight: false },
+      { weight_kg: 60, reps: 8, is_bodyweight: false },
+      { weight_kg: 80, reps: 6, is_bodyweight: false },
+      { weight_kg: 80, reps: 6, is_bodyweight: false },
+    ]);
   });
 });
