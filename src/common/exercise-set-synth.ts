@@ -49,9 +49,10 @@ export function isBodyweightEquipment(
  * missing or unparseable so we never end up writing a zero-set
  * ladder.
  */
-export function parseSetsDisplay(
-  setsDisplay: string | null | undefined,
-): { setCount: number; reps: number } {
+export function parseSetsDisplay(setsDisplay: string | null | undefined): {
+  setCount: number;
+  reps: number;
+} {
   if (!setsDisplay) return { setCount: 3, reps: 10 };
   const match = setsDisplay.match(/(\d+)\s*[×x]\s*(\d+)/i);
   if (!match) return { setCount: 3, reps: 10 };
@@ -126,21 +127,28 @@ export function synthesizeCardioTargetSets(args: {
   ];
 }
 
-export function isCardioCategory(
-  category: string | null | undefined,
-): boolean {
+export function isCardioCategory(category: string | null | undefined): boolean {
   return typeof category === 'string' && category.toLowerCase() === 'cardio';
 }
 
 /**
- * Cardio types currently exposed to users. Everything else under
- * category=cardio / muscle_group="Cardio" is hidden FOR NOW — the rows
- * stay in the DB (so existing sessions/plans keep their links) but are
- * filtered out of every surface where a user picks an exercise (library
- * browse, Coach, plan generation). To re-enable a type, add its
- * external_id here.
+ * Cardio types exposed to users. Anything else under category=cardio /
+ * muscle_group="Cardio" stays hidden (rows stay in the DB so existing
+ * sessions/plans keep their links but are filtered out of selection
+ * surfaces — library browse, Coach, plan generation). Keep in sync with
+ * ALLOWED_CARDIO in scripts/seed-exercise-library.ts.
  */
-export const AVAILABLE_CARDIO_EXTERNAL_IDS = new Set<string>(['Walking_Treadmill']);
+export const AVAILABLE_CARDIO_EXTERNAL_IDS = new Set<string>([
+  'Bicycling_Stationary',
+  'Elliptical_Trainer',
+  'Jogging_Treadmill',
+  'Recumbent_Bike',
+  'Rope_Jumping',
+  'Rowing_Stationary',
+  'Running_Treadmill',
+  'Stairmaster',
+  'Walking_Treadmill',
+]);
 
 /**
  * True for a cardio library row that is NOT in the user-available set, so

@@ -65,9 +65,27 @@ describe('exercise-set-synth', () => {
         suggestedWeight: 60,
       });
       expect(out).toEqual([
-        { set_number: 1, weight: 60, weight_unit: 'kg', reps: 10, is_bodyweight: false },
-        { set_number: 2, weight: 60, weight_unit: 'kg', reps: 10, is_bodyweight: false },
-        { set_number: 3, weight: 60, weight_unit: 'kg', reps: 10, is_bodyweight: false },
+        {
+          set_number: 1,
+          weight: 60,
+          weight_unit: 'kg',
+          reps: 10,
+          is_bodyweight: false,
+        },
+        {
+          set_number: 2,
+          weight: 60,
+          weight_unit: 'kg',
+          reps: 10,
+          is_bodyweight: false,
+        },
+        {
+          set_number: 3,
+          weight: 60,
+          weight_unit: 'kg',
+          reps: 10,
+          is_bodyweight: false,
+        },
       ]);
     });
 
@@ -91,7 +109,9 @@ describe('exercise-set-synth', () => {
         equipment: 'Cable',
         suggestedWeight: null,
       });
-      expect(out.every((s) => s.weight === null && s.is_bodyweight === false)).toBe(true);
+      expect(
+        out.every((s) => s.weight === null && s.is_bodyweight === false),
+      ).toBe(true);
     });
 
     it('every entry carries a strictly-increasing set_number', () => {
@@ -187,18 +207,39 @@ describe('resolveIsCardio', () => {
 });
 
 describe('isHiddenCardio', () => {
-  it('hides non-walking cardio (by category or muscle_group)', () => {
-    expect(isHiddenCardio({ category: 'cardio', external_id: 'Rowing_Stationary' })).toBe(true);
-    expect(isHiddenCardio({ muscle_group: 'Cardio', external_id: 'Stairmaster' })).toBe(true);
+  it('hides cardio types outside the shipped set (by category or muscle_group)', () => {
+    expect(
+      isHiddenCardio({ category: 'cardio', external_id: 'Prowler_Sprint' }),
+    ).toBe(true);
+    expect(
+      isHiddenCardio({ muscle_group: 'Cardio', external_id: 'Skating' }),
+    ).toBe(true);
   });
 
-  it('keeps Walking, Treadmill visible', () => {
-    expect(isHiddenCardio({ category: 'cardio', external_id: 'Walking_Treadmill' })).toBe(false);
-    expect(isHiddenCardio({ muscle_group: 'Cardio', external_id: 'Walking_Treadmill' })).toBe(false);
+  it('keeps the shipped cardio set visible', () => {
+    expect(
+      isHiddenCardio({ category: 'cardio', external_id: 'Walking_Treadmill' }),
+    ).toBe(false);
+    expect(
+      isHiddenCardio({ category: 'cardio', external_id: 'Rowing_Stationary' }),
+    ).toBe(false);
+    expect(
+      isHiddenCardio({
+        muscle_group: 'Cardio',
+        external_id: 'Stairmaster',
+      }),
+    ).toBe(false);
   });
 
   it('never hides non-cardio exercises', () => {
-    expect(isHiddenCardio({ category: 'strength', external_id: 'Barbell_Bench_Press' })).toBe(false);
-    expect(isHiddenCardio({ muscle_group: 'Chest', external_id: 'Push_Up' })).toBe(false);
+    expect(
+      isHiddenCardio({
+        category: 'strength',
+        external_id: 'Barbell_Bench_Press',
+      }),
+    ).toBe(false);
+    expect(
+      isHiddenCardio({ muscle_group: 'Chest', external_id: 'Push_Up' }),
+    ).toBe(false);
   });
 });

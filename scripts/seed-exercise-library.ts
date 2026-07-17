@@ -66,11 +66,19 @@ async function main() {
     // Cardio entries are normally filtered out — the iOS app and Coach
     // pipeline treat exercises as strength by default. These 9 are the
     // ones we ship; everything else under category=cardio stays gated.
-    // Only walking is exposed to users for now. The other cardio types
-    // are intentionally gated here (and hidden at read-time via
-    // isHiddenCardio for envs that already seeded them). Re-add an
-    // external_id to both places to re-enable a type.
-    const ALLOWED_CARDIO = new Set(['Walking_Treadmill']);
+    // Keep in sync with AVAILABLE_CARDIO_EXTERNAL_IDS in
+    // src/common/exercise-set-synth.ts (read-time filter).
+    const ALLOWED_CARDIO = new Set([
+      'Bicycling_Stationary',
+      'Elliptical_Trainer',
+      'Jogging_Treadmill',
+      'Recumbent_Bike',
+      'Rope_Jumping',
+      'Rowing_Stationary',
+      'Running_Treadmill',
+      'Stairmaster',
+      'Walking_Treadmill',
+    ]);
 
     const filtered = raw.filter((e) => {
       if (e.category === 'stretching') return false;
@@ -107,7 +115,9 @@ async function main() {
       };
     });
 
-    console.log(`Filtered: ${filtered.length} exercises (from ${raw.length} total)`);
+    console.log(
+      `Filtered: ${filtered.length} exercises (from ${raw.length} total)`,
+    );
 
     // Idempotent UPSERT keyed by external_id. Existing rows keep their
     // UUID (so session_exercise.library_exercise_id FKs stay valid),
@@ -141,7 +151,9 @@ async function main() {
       if (Date.now() - result.created_at.getTime() < 5_000) created++;
       else updated++;
     }
-    console.log(`Upserted ${mapped.length} system exercises (${created} created, ${updated} updated)`);
+    console.log(
+      `Upserted ${mapped.length} system exercises (${created} created, ${updated} updated)`,
+    );
 
     // Print summary
     const byMuscle: Record<string, number> = {};
@@ -157,7 +169,9 @@ async function main() {
     }
 
     console.log('\nBy equipment:');
-    for (const [k, v] of Object.entries(byEquipment).sort((a, b) => b[1] - a[1])) {
+    for (const [k, v] of Object.entries(byEquipment).sort(
+      (a, b) => b[1] - a[1],
+    )) {
       console.log(`  ${k}: ${v}`);
     }
   } finally {
