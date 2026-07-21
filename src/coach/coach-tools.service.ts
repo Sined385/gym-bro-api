@@ -32,6 +32,7 @@ import {
   buildRecentLiftsLookup,
   computeRecentLifts,
   RecentLift,
+  targetSetsDisplay,
 } from '../common/recent-lifts';
 
 export interface ToolCallParams {
@@ -1029,7 +1030,7 @@ export class CoachToolsService {
             // still ships a stale "4 × 8" alongside a 5-set 87.5 kg
             // ladder — without this, the chat card would lie.
             const setsDisplay = hasTargets
-              ? `${ex.target_sets.length} × ${ex.target_sets.reduce((m, s) => Math.max(m, s.reps), 0)}`
+              ? targetSetsDisplay(ex.target_sets)
               : ex.sets_display || '3 × 10';
             return {
               library_exercise_id: libEx.id,

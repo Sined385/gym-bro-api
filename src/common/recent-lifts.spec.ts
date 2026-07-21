@@ -1,6 +1,7 @@
 import {
   applyProgression,
   buildProgressedLadder,
+  targetSetsDisplay,
   buildRecentLiftsLookup,
   computeRecentLifts,
   formatRecentLiftsBlock,
@@ -296,5 +297,49 @@ describe('buildProgressedLadder', () => {
       { weight_kg: 80, reps: 6, is_bodyweight: false },
       { weight_kg: 80, reps: 6, is_bodyweight: false },
     ]);
+  });
+});
+
+describe('targetSetsDisplay', () => {
+  it('labels with the top-load reps, not the warm-up max', () => {
+    expect(
+      targetSetsDisplay([
+        { weight_kg: 40, reps: 12 }, // warm-up
+        { weight_kg: 72.5, reps: 8 },
+        { weight_kg: 72.5, reps: 8 },
+        { weight_kg: 72.5, reps: 8 },
+      ]),
+    ).toBe('4 \u00d7 8');
+  });
+
+  it('handles bodyweight ladders', () => {
+    expect(
+      targetSetsDisplay([
+        { reps: 12, is_bodyweight: true },
+        { reps: 10, is_bodyweight: true },
+      ]),
+    ).toBe('2 \u00d7 12');
+  });
+});
+
+describe('targetSetsDisplay', () => {
+  it('labels with the top-load reps, not the warm-up max', () => {
+    expect(
+      targetSetsDisplay([
+        { weight_kg: 40, reps: 12 }, // warm-up must not name the pill
+        { weight_kg: 72.5, reps: 8 },
+        { weight_kg: 72.5, reps: 8 },
+        { weight_kg: 72.5, reps: 8 },
+      ]),
+    ).toBe('4 \u00d7 8');
+  });
+
+  it('handles bodyweight ladders (top set = most reps)', () => {
+    expect(
+      targetSetsDisplay([
+        { reps: 12, is_bodyweight: true },
+        { reps: 10, is_bodyweight: true },
+      ]),
+    ).toBe('2 \u00d7 12');
   });
 });

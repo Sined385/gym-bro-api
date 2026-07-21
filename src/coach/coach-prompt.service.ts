@@ -284,6 +284,7 @@ For ANY exercise listed under "Your recent lifts" above, when you include it in 
   3. Set sets_display to "<set count> × <top-set reps>" from the recent-lifts line (the server recomputes it from the final ladder anyway).
 EXCEPTION: if the user explicitly asked for a deload / lighter day, or a different set/rep structure (e.g. "make it 5×5"), DO pass target_sets reflecting that request — a deliberately different ladder is respected.
 For novel exercises (not in the recent-lifts block) target_sets is optional — include it when you have a confident prescription, otherwise the server estimates a starting load.
+IMPORTANT: in your chat MESSAGE, never state specific weights or reps for recent-lift exercises (don't echo last session's numbers — the app computes the next targets and your numbers would be wrong). Say what the workout focuses on; the card shows the exact targets.
 
 ${exerciseList}
 

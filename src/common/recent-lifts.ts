@@ -104,6 +104,24 @@ const setLoad = (weight: number | null | undefined, bw?: boolean) =>
   bw ? 0 : (weight ?? 0);
 
 /**
+ * "N × M" pill for a per-set ladder, where M is the WORKING-set reps —
+ * the reps of the heaviest set, not the max across the whole ladder.
+ * Using the overall max let a 40kg×12 warm-up label a 72.5kg×8 session
+ * as "4 × 12", which reads as "no progression" on the workout card.
+ */
+export function targetSetsDisplay(sets: TargetSetLike[]): string {
+  if (sets.length === 0) return '3 × 10';
+  const top = sets.reduce((best, s) => {
+    const bl = setLoad(best.weight_kg, best.is_bodyweight);
+    const sl = setLoad(s.weight_kg, s.is_bodyweight);
+    if (sl > bl) return s;
+    if (sl === bl && s.reps > best.reps) return s;
+    return best;
+  }, sets[0]);
+  return `${sets.length} × ${top.reps}`;
+}
+
+/**
  * The app-computed next ladder for an exercise with history: last
  * session's ladder with `progressSet` applied to every WORKING set
  * (sets at the top load). Lighter sets (warm-ups) are preserved

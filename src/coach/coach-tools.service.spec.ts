@@ -139,11 +139,10 @@ describe('CoachToolsService — target_sets safety net', () => {
     expect(persisted.sets[6]).toMatchObject({ weight: 100, reps: 6 });
     expect(persisted.sets[7]).toMatchObject({ weight: 100, reps: 6 });
 
-    // sets_display is overridden to reflect the actual ladder length and
-    // top working reps, replacing the AI's stale "8 × 12" string.
-    expect(persisted.sets_display).toBe('8 × 12');
-    // Reps cap = max reps in the ladder = 12 (the warm-ups). That's the
-    // documented behavior at coach-tools.service.ts:784-786.
+    // sets_display reflects the ladder length and the TOP-LOAD set's
+    // reps (100kg×6 after progression) — warm-up reps must not name the
+    // pill, or a progressed session reads as "no change" on the card.
+    expect(persisted.sets_display).toBe('8 × 6');
   });
 
   it('respects AI target_sets when present (no injection)', async () => {

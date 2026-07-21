@@ -25,6 +25,7 @@ import {
   applyProgression,
   buildRecentLiftsLookup,
   computeRecentLifts,
+  targetSetsDisplay,
 } from '../common/recent-lifts';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from './format-plan';
@@ -532,11 +533,7 @@ export class PlansService {
         const lift = recentLiftsLookup.get(ex.library_exercise_id)!;
         ex.target_sets = applyProgression(ex.target_sets, lift);
         if (Array.isArray(ex.target_sets) && ex.target_sets.length > 0) {
-          const maxReps = ex.target_sets.reduce(
-            (m: number, s: any) => Math.max(m, s.reps ?? 0),
-            0,
-          );
-          ex.sets_display = `${ex.target_sets.length} × ${maxReps}`;
+          ex.sets_display = targetSetsDisplay(ex.target_sets);
         }
         return;
       }

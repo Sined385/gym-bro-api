@@ -1,5 +1,7 @@
 // Pure functions — no DI, importable by PlansService and CoachService.
 
+import { targetSetsDisplay } from '../common/recent-lifts';
+
 export interface CandidatePool {
   muscle_group: string;
   exercises: LibraryExercise[];
@@ -336,12 +338,11 @@ export function assembleFromAiSelection(
         : undefined;
       // When target_sets is supplied, override sets_display so the
       // plan-day card pill reflects the actual ladder — same trick
-      // used for Coach single-workout creation. e.g. a 5-set ladder
-      // with a top set of 5 reps becomes "5 × 5", not whatever
-      // generic rep_scheme the skeleton was carrying.
+      // used for Coach single-workout creation. Top-load reps, not
+      // ladder max: warm-ups must not label the pill.
       const setsDisplay =
         targets && targets.length > 0
-          ? `${targets.length} × ${targets.reduce((m, s) => Math.max(m, s.reps), 0)}`
+          ? targetSetsDisplay(targets)
           : (slots[i]?.rep_scheme ?? '3 × 10');
       return {
         library_exercise_id: aiEx.library_exercise_id,
