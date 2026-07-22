@@ -362,9 +362,7 @@ export class CommunityService {
         where: { id: post.user_id },
         select: { full_name: true },
       });
-      const possessive = author?.full_name
-        ? `${author.full_name}'s`
-        : 'a';
+      const possessive = author?.full_name ? `${author.full_name}'s` : 'a';
 
       for (const w of priorCommenters) {
         this.notificationsService.sendToUser(w.user_id, {
@@ -1712,7 +1710,11 @@ export class CommunityService {
     squat: number | null;
     deadlift: number | null;
   }> {
-    const empty: { bench: number | null; squat: number | null; deadlift: number | null } = {
+    const empty: {
+      bench: number | null;
+      squat: number | null;
+      deadlift: number | null;
+    } = {
       bench: null,
       squat: null,
       deadlift: null,
@@ -1735,6 +1737,7 @@ export class CommunityService {
           JOIN workout_sessions ws ON ws.id = se.session_id
           WHERE ws.user_id = ${userId}
             AND ws.status = 'completed'
+            AND es.is_completed = true
             AND es.weight IS NOT NULL AND es.weight > 0 AND es.reps > 0
             AND (se.name ILIKE '%bench press%' OR se.name ILIKE '%squat%' OR se.name ILIKE '%deadlift%')
         ) t

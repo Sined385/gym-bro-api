@@ -24,12 +24,19 @@ interface Metric {
   currentValue: number;
   otherValue: number;
   higherIsBetter: boolean;
+  /// Reps at the heaviest set — present on lift metrics only, so the
+  /// UI/AI can show "40 kg × 11" instead of a bare weight. Additive:
+  /// older iOS builds ignore unknown keys.
+  currentReps?: number;
+  otherReps?: number;
 }
 
 /// Builds the "You vs <name>" head-to-head. The comparable metrics are picked
-/// dynamically from what the two users actually share (lifts by estimated 1RM
-/// + shared activity stats); an AI analysis is then generated FROM those
-/// metrics + each user's profile. Premium-gated — free users get `locked`.
+/// dynamically from what the two users actually share (lifts by heaviest
+/// ACTUALLY-LIFTED set — no estimated 1RMs; users read those as real lifts
+/// — plus shared activity stats); an AI analysis is then generated FROM
+/// those metrics + each user's profile. Premium-gated — free users get
+/// `locked`.
 @Injectable()
 export class CommunityAiService {
   // Per-ordered-pair cache (the AI analysis is written from the viewer's POV).
@@ -86,7 +93,10 @@ export class CommunityAiService {
       metrics,
       analysis,
     };
-    this.cache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
+    this.cache.set(cacheKey, {
+      data: result,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
     return result;
   }
 
@@ -97,8 +107,8 @@ export class CommunityAiService {
     otherUserId: string,
   ): Promise<Metric[]> {
     const [myLifts, theirLifts] = await Promise.all([
-      this.getExerciseOneRepMaxes(currentUserId),
-      this.getExerciseOneRepMaxes(otherUserId),
+      this.getExerciseBestLifts(currentUserId),
+      this.getExerciseBestLifts(otherUserId),
     ]);
     const theirMap = new Map(theirLifts.map((l) => [l.key, l]));
 
@@ -110,9 +120,11 @@ export class CommunityAiService {
         key: `lift:${lift.key}`,
         label: lift.label,
         unit: 'kg',
-        currentValue: lift.orm,
-        otherValue: other.orm,
+        currentValue: lift.weight,
+        otherValue: other.weight,
         higherIsBetter: true,
+        currentReps: lift.reps,
+        otherReps: other.reps,
       });
     }
     lifts.sort(
@@ -138,32 +150,49 @@ export class CommunityAiService {
     return [...topLifts, ...extra];
   }
 
-  private async getExerciseOneRepMaxes(
+  /// Heaviest set the user ACTUALLY lifted per exercise (kg-normalized),
+  /// with the reps at that weight. No Epley/e1RM projections — those
+  /// rendered as "dumbbell bench 55 kg" for a lifter whose real best was
+  /// 40×11, which reads as a lift that never happened. `es.is_completed`
+  /// filters out pre-filled target sets inside completed/auto-completed
+  /// sessions (weights that were only ever proposed).
+  private async getExerciseBestLifts(
     userId: string,
-  ): Promise<{ key: string; label: string; orm: number }[]> {
+  ): Promise<{ key: string; label: string; weight: number; reps: number }[]> {
     try {
       const rows = await this.prisma.$queryRaw<
-        { key: string; label: string; orm: number | null }[]
+        {
+          key: string;
+          label: string;
+          weight: number | null;
+          reps: number | null;
+        }[]
       >`
-        SELECT key, MIN(label) as label, ROUND(MAX(orm)) as orm
+        SELECT DISTINCT ON (key) key, label, weight, reps
         FROM (
           SELECT
             lower(se.name) as key,
             se.name as label,
-            (CASE WHEN es.weight_unit = 'lb' THEN es.weight * 0.453592 ELSE es.weight END)
-              * (1 + LEAST(es.reps, 12) / 30.0) as orm
+            ROUND((CASE WHEN es.weight_unit = 'lb' THEN es.weight * 0.453592 ELSE es.weight END)::numeric, 1) as weight,
+            es.reps as reps
           FROM exercise_sets es
           JOIN session_exercises se ON se.id = es.exercise_id
           JOIN workout_sessions ws ON ws.id = se.session_id
           WHERE ws.user_id = ${userId}
             AND ws.status = 'completed'
+            AND es.is_completed = true
             AND es.weight IS NOT NULL AND es.weight > 0 AND es.reps > 0
         ) t
-        GROUP BY key
+        ORDER BY key, weight DESC, reps DESC
       `;
       return rows
-        .filter((r) => r.orm != null && Number(r.orm) > 0)
-        .map((r) => ({ key: r.key, label: r.label, orm: Number(r.orm) }));
+        .filter((r) => r.weight != null && Number(r.weight) > 0)
+        .map((r) => ({
+          key: r.key,
+          label: r.label,
+          weight: Number(r.weight),
+          reps: Number(r.reps ?? 0),
+        }));
     } catch {
       return [];
     }
@@ -237,17 +266,19 @@ export class CommunityAiService {
 
     const metricLines = metrics.length
       ? metrics
-          .map(
-            (m) =>
-              `- ${m.label}: you ${m.currentValue}${m.unit ? ' ' + m.unit : ''} vs them ${m.otherValue}${m.unit ? ' ' + m.unit : ''}`,
-          )
+          .map((m) => {
+            const mine = `${m.currentValue}${m.unit ? ' ' + m.unit : ''}${m.currentReps ? ` × ${m.currentReps}` : ''}`;
+            const theirs = `${m.otherValue}${m.unit ? ' ' + m.unit : ''}${m.otherReps ? ` × ${m.otherReps}` : ''}`;
+            const kind = m.key.startsWith('lift:') ? ' (heaviest set)' : '';
+            return `- ${m.label}${kind}: you ${mine} vs them ${theirs}`;
+          })
           .join('\n')
       : '(no directly shared lifts)';
 
     const profile = (c: UserContext) =>
       `experience=${c.experienceLevel ?? 'unknown'}, goals=${c.goals.join('/') || 'none'}, bodyweight=${c.bodyWeightKg ?? '?'}kg, sessions/wk=${c.sessionsPerWeek}, trains=${c.topMuscleGroups.join('/') || 'n/a'}`;
 
-    const systemPrompt = `You are a fitness comparison analyst for the GymJam app. You compare the viewer ("you") with another lifter, using ONLY the data provided. Be specific, reference the actual numbers, and account for bodyweight differences when judging strength (lighter lifters moving similar weight are pound-for-pound stronger). Return a JSON object:
+    const systemPrompt = `You are a fitness comparison analyst for the GymJam app. You compare the viewer ("you") with another lifter, using ONLY the data provided. Lift numbers are each lifter's heaviest ACTUALLY-PERFORMED set (weight × reps) — never estimate, project, or extrapolate a 1RM or any weight not shown; quote only the given numbers. Be specific, and account for bodyweight and rep differences when judging strength (lighter lifters or higher reps at similar weight are pound-for-pound stronger). Return a JSON object:
 - "verdict": 2-3 sentence overall head-to-head read.
 - "yourEdge": 1 sentence on where the viewer is ahead.
 - "theirEdge": 1 sentence on where the other lifter is ahead.
