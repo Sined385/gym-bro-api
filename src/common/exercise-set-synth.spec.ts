@@ -231,6 +231,23 @@ describe('isHiddenCardio', () => {
     ).toBe(false);
   });
 
+  it('never hides user-created cardio (custom exercises)', () => {
+    expect(
+      isHiddenCardio({
+        muscle_group: 'Cardio',
+        external_id: null,
+        is_system: false,
+      }),
+    ).toBe(false);
+    expect(
+      isHiddenCardio({
+        category: 'cardio',
+        external_id: null,
+        user_id: 'user-1',
+      }),
+    ).toBe(false);
+  });
+
   it('never hides non-cardio exercises', () => {
     expect(
       isHiddenCardio({

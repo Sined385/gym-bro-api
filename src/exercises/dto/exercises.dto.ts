@@ -1,5 +1,7 @@
 import { IsIn, IsString, MinLength } from 'class-validator';
 
+// Mirrors the iOS MuscleGroup filter enum — custom exercises must land
+// in a bucket the library filter can actually show.
 const MUSCLE_GROUPS = [
   'Chest',
   'Back',
@@ -7,6 +9,7 @@ const MUSCLE_GROUPS = [
   'Shoulders',
   'Arms',
   'Core',
+  'Cardio',
   'Other',
 ];
 

@@ -155,12 +155,20 @@ export const AVAILABLE_CARDIO_EXTERNAL_IDS = new Set<string>([
  * it should be hidden from selection surfaces. Works off either signal
  * (`category` or `muscle_group`) so callers don't all have to select the
  * same columns.
+ *
+ * USER-CREATED rows are never hidden: the allowlist gates which SYSTEM
+ * cardio types we ship, but a custom cardio exercise (is_system=false /
+ * user_id set, external_id null) was explicitly created by its owner —
+ * hiding it would make it vanish right after creation.
  */
 export function isHiddenCardio(row: {
   category?: string | null;
   muscle_group?: string | null;
   external_id?: string | null;
+  is_system?: boolean;
+  user_id?: string | null;
 }): boolean {
+  if (row.is_system === false || row.user_id != null) return false;
   const isCardio =
     isCardioCategory(row.category) ||
     (row.muscle_group ?? '').toLowerCase() === 'cardio';

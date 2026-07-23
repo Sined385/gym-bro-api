@@ -46,21 +46,21 @@ export class ExercisesService {
     const mapped = rows
       .filter((r) => !isHiddenCardio(r))
       .map((r) => ({
-      id: r.id,
-      name: r.name,
-      muscle_group: r.muscle_group,
-      equipment: r.equipment,
-      is_system: r.is_system,
-      external_id: r.external_id ?? null,
-      is_favorite: favIds.has(r.id),
-      images: r.external_id
-        ? [
-            `${IMAGE_BASE_URL}/${r.external_id}/0.jpg`,
-            `${IMAGE_BASE_URL}/${r.external_id}/1.jpg`,
-          ]
-        : [],
-      last_set: lastSetMap.get(r.id) ?? null,
-    }));
+        id: r.id,
+        name: r.name,
+        muscle_group: r.muscle_group,
+        equipment: r.equipment,
+        is_system: r.is_system,
+        external_id: r.external_id ?? null,
+        is_favorite: favIds.has(r.id),
+        images: r.external_id
+          ? [
+              `${IMAGE_BASE_URL}/${r.external_id}/0.jpg`,
+              `${IMAGE_BASE_URL}/${r.external_id}/1.jpg`,
+            ]
+          : [],
+        last_set: lastSetMap.get(r.id) ?? null,
+      }));
 
     // Stable partition: favorites first, others preserve DB order. Prisma can't
     // orderBy a computed column, so we do this final pass in JS.
@@ -152,6 +152,10 @@ export class ExercisesService {
         muscle_group: dto.muscle_group,
         equipment: dto.equipment,
         is_system: false,
+        // category drives all cardio behavior downstream (duration-based
+        // sets in coach/plans, no weight suggestions). Without it a
+        // user-created "Cardio" exercise renders as a sets/reps lift.
+        category: dto.muscle_group === 'Cardio' ? 'cardio' : null,
       },
       select: {
         id: true,
@@ -159,6 +163,7 @@ export class ExercisesService {
         muscle_group: true,
         equipment: true,
         is_system: true,
+        category: true,
       },
     });
 
@@ -195,7 +200,9 @@ export class ExercisesService {
   async favoriteExercise(userId: string, exerciseId: string) {
     await this.assertAccessible(userId, exerciseId);
     await this.prisma.exerciseFavorite.upsert({
-      where: { user_id_exercise_id: { user_id: userId, exercise_id: exerciseId } },
+      where: {
+        user_id_exercise_id: { user_id: userId, exercise_id: exerciseId },
+      },
       update: {},
       create: { user_id: userId, exercise_id: exerciseId },
     });
@@ -226,7 +233,9 @@ export class ExercisesService {
     exerciseId: string,
   ): Promise<boolean> {
     const row = await this.prisma.exerciseFavorite.findUnique({
-      where: { user_id_exercise_id: { user_id: userId, exercise_id: exerciseId } },
+      where: {
+        user_id_exercise_id: { user_id: userId, exercise_id: exerciseId },
+      },
       select: { id: true },
     });
     return row !== null;
