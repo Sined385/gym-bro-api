@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
+import { resolveLang, t, type Lang } from '../common/i18n';
 
 @Injectable()
 export class NotificationsCronService {
@@ -42,6 +43,7 @@ export class NotificationsCronService {
           id: true,
           timezone: true,
           preferred_workout_hour: true,
+          language: true,
         },
       });
 
@@ -80,7 +82,10 @@ export class NotificationsCronService {
 
         if (alreadySentToday) continue;
 
-        const message = this.getWorkoutSkipMessage(daysSinceLastWorkout);
+        const message = this.getWorkoutSkipMessage(
+          daysSinceLastWorkout,
+          resolveLang(undefined, user.language),
+        );
         await this.notificationsService.sendToUser(user.id, {
           type: 'workout_skip',
           title: message.title,
@@ -94,30 +99,33 @@ export class NotificationsCronService {
     }
   }
 
-  private getWorkoutSkipMessage(days: number): {
+  private getWorkoutSkipMessage(
+    days: number,
+    lang: Lang = 'en',
+  ): {
     title: string;
     body: string;
   } {
     const messages = [
       {
-        title: "Don't lose your gains! 💪",
-        body: `${days} days without a workout — your muscles are waiting. Let's go!`,
+        title: t(lang, 'push.skip1_title'),
+        body: t(lang, 'push.skip1_body', { days }),
       },
       {
-        title: 'Your gains miss you 🏋️',
-        body: `It's been ${days} days. One session is all it takes to get back on track!`,
+        title: t(lang, 'push.skip2_title'),
+        body: t(lang, 'push.skip2_body', { days }),
       },
       {
-        title: 'Rest day streak? 😅',
-        body: `${days} days off — time to break the streak and break a sweat!`,
+        title: t(lang, 'push.skip3_title'),
+        body: t(lang, 'push.skip3_body', { days }),
       },
       {
-        title: 'Time to get back at it 🔥',
-        body: `${days} days since your last session. Your future self will thank you!`,
+        title: t(lang, 'push.skip4_title'),
+        body: t(lang, 'push.skip4_body', { days }),
       },
       {
-        title: 'Consistency beats perfection 🎯',
-        body: `${days} days is long enough — even a quick session keeps the momentum going!`,
+        title: t(lang, 'push.skip5_title'),
+        body: t(lang, 'push.skip5_body', { days }),
       },
     ];
 
@@ -181,7 +189,7 @@ export class NotificationsCronService {
             lte: twentyFourHoursAgo,
           },
         },
-        select: { id: true },
+        select: { id: true, language: true },
       });
 
       for (const user of recentUsers) {
@@ -197,10 +205,11 @@ export class NotificationsCronService {
           });
 
           if (hasToken) {
+            const lang = resolveLang(undefined, user.language);
             await this.notificationsService.sendToUser(user.id, {
               type: 'd2_engagement',
-              title: 'Your first workout awaits!',
-              body: 'Check out your personalized plan and crush your first session',
+              title: t(lang, 'push.d2_title'),
+              body: t(lang, 'push.d2_body'),
             });
           }
         }

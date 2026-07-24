@@ -15,6 +15,7 @@ import {
   formatRecentLiftsBlock,
   type RecentLift,
 } from '../common/recent-lifts';
+import { languageInstruction, resolveLang, t, type Lang } from '../common/i18n';
 
 // Already-done days from the current calendar week that the new plan
 // must absorb instead of treating as separate ad-hoc workouts. iOS
@@ -38,6 +39,20 @@ export class PlansAiService {
     private readonly aiUsage: AiUsageService,
   ) {}
 
+  /**
+   * User's persisted language. Callers with request context pass the
+   * resolved lang down instead — this lookup is the fallback for
+   * background paths (completion notes) so each call chain costs at
+   * most one extra query.
+   */
+  private async userLang(userId: string): Promise<Lang> {
+    const row = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { language: true },
+    });
+    return resolveLang(undefined, row?.language ?? null);
+  }
+
   async generateWeeklyPlan(
     userId: string,
     onboarding: any,
@@ -45,12 +60,18 @@ export class PlansAiService {
     focus?: string,
     weekContext?: PlanWeekContext,
     opts?: { forceFallback?: boolean },
+    lang?: Lang,
   ): Promise<SkeletonDay[]> {
+    const resolvedLang = lang ?? (await this.userLang(userId));
     // Non-premium users on auto-rollover go straight to the
     // deterministic template — no OpenAI call. Same code path that
     // runs when the AI errors below, just opted into deliberately.
     if (opts?.forceFallback) {
-      return this.generateFallbackPlan(onboarding, startDayOfWeek);
+      return this.generateFallbackPlan(
+        onboarding,
+        startDayOfWeek,
+        resolvedLang,
+      );
     }
     const dayNames = [
       'Monday',
@@ -151,7 +172,7 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
 - Alts should anchor balance: heavier compound work earlier in the week, lighter or hypertrophy work later.
 - Alts MUST NOT duplicate the same primary lift used elsewhere in the week — even when they fire, the user's week should not become "5x bench press week".
 - alt_session shape: { session_title, session_type, exercise_slots[] } — 3-5 exercise_slots per alt, same muscle_group/rep_scheme/focus shape as a training day.
-- If the user has 0 training days (full rest week), alt_sessions are optional (week has nothing to make up).`;
+- If the user has 0 training days (full rest week), alt_sessions are optional (week has nothing to make up).${languageInstruction(resolvedLang)}`;
 
     // The skeleton is a purely structural task (day types + muscle-group
     // slots) — the light model handles it at a fraction of the cost and
@@ -193,7 +214,11 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
       return days;
     } catch (error) {
       console.warn(summarizeAiError('plan_generation', error));
-      return this.generateFallbackPlan(onboarding, startDayOfWeek);
+      return this.generateFallbackPlan(
+        onboarding,
+        startDayOfWeek,
+        resolvedLang,
+      );
     }
   }
 
@@ -281,6 +306,7 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
   generateFallbackPlan(
     onboarding: any,
     startDayOfWeek: number = 0,
+    lang: Lang = 'en',
   ): SkeletonDay[] {
     const totalDays = 7 - startDayOfWeek;
     const scaledFrequency = this.scaleFrequency(
@@ -305,37 +331,37 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
 
     const sessionTemplates = [
       {
-        title: 'Upper Body Power',
+        title: t(lang, 'plans.template.upper_body_power'),
         type: 'strength',
         groups: ['Chest', 'Back', 'Shoulders'],
       },
       {
-        title: 'Lower Body Strength',
+        title: t(lang, 'plans.template.lower_body_strength'),
         type: 'strength',
         groups: ['Legs', 'Legs', 'Core'],
       },
       {
-        title: 'Push Day',
+        title: t(lang, 'plans.template.push_day'),
         type: 'strength',
         groups: ['Chest', 'Shoulders', 'Arms'],
       },
       {
-        title: 'Pull Day',
+        title: t(lang, 'plans.template.pull_day'),
         type: 'strength',
         groups: ['Back', 'Arms', 'Core'],
       },
       {
-        title: 'Full Body',
+        title: t(lang, 'plans.template.full_body'),
         type: 'strength',
         groups: ['Chest', 'Back', 'Legs'],
       },
       {
-        title: 'Upper Hypertrophy',
+        title: t(lang, 'plans.template.upper_hypertrophy'),
         type: 'strength',
         groups: ['Chest', 'Back', 'Shoulders'],
       },
       {
-        title: 'Lower Hypertrophy',
+        title: t(lang, 'plans.template.lower_hypertrophy'),
         type: 'strength',
         groups: ['Legs', 'Legs', 'Core'],
       },
@@ -424,7 +450,9 @@ ANTICIPATORY ALT SESSIONS (for adaptation without re-calling AI):
     recentExerciseNames: string[],
     recentLifts: RecentLift[] = [],
     focus?: string,
+    lang?: Lang,
   ): Promise<AiExerciseSelection | null> {
+    const resolvedLang = lang ?? (await this.userLang(userId));
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
     // Build pool descriptions: "id | name | mechanic | equipment"
@@ -532,7 +560,7 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
       "exercises": [ ... same shape as days[].exercises ... ]
     }
   ]
-}`;
+}${languageInstruction(resolvedLang)}`;
 
     // Build set of all valid candidate IDs
     const validIds = new Set<string>();
@@ -668,7 +696,9 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
     userId: string,
     planDay: any,
     session: any,
+    lang?: Lang,
   ): Promise<string> {
+    const resolvedLang = lang ?? (await this.userLang(userId));
     // 1-2 sentence summary — light model is plenty.
     const model = this.lightModel;
 
@@ -698,7 +728,7 @@ Respond with JSON. Include "alts" only if alt sessions were listed above:
         messages: [
           {
             role: 'system',
-            content: `You are a strength coach. Summarize this workout session in 1-2 brief sentences for the "Gains & Notes" section of a training plan. Be direct, reference specific lifts or improvements. No cheerleading.`,
+            content: `You are a strength coach. Summarize this workout session in 1-2 brief sentences for the "Gains & Notes" section of a training plan. Be direct, reference specific lifts or improvements. No cheerleading.${languageInstruction(resolvedLang)}`,
           },
           {
             role: 'user',

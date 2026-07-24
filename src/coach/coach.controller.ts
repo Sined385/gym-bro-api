@@ -17,10 +17,8 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CoachService } from './coach.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MessageActionDto, SendMessageDto } from './dto/coach.dto';
-import {
-  summarizeAiError,
-  userFacingAiErrorMessage,
-} from '../common/ai-error';
+import { summarizeAiError, userFacingAiErrorMessage } from '../common/ai-error';
+import { resolveLang } from '../common/i18n';
 
 /// Flatten whitespace so streamed markdown/newlines don't blow up the
 /// 140-char push body preview.
@@ -87,6 +85,9 @@ export class CoachController {
     // skip writes once disconnected and fall through to the push notification
     // path below.
     const userId = req.user!.id;
+    // AuthGuard already resolved the header to 'en' | 'uk'; resolveLang
+    // here just narrows the string type without another lookup.
+    const lang = resolveLang(req.user!.language);
     let clientDisconnected = false;
     let assistantContent = '';
     let assistantMessageId: string | null = null;
@@ -98,7 +99,7 @@ export class CoachController {
     });
 
     try {
-      const stream = this.coachService.chat(userId, dto);
+      const stream = this.coachService.chat(userId, dto, lang);
       for await (const event of stream) {
         if (
           event.type === 'text_delta' &&
@@ -130,7 +131,7 @@ export class CoachController {
         // happened (rate limit / timeout / etc.) rather than the
         // generic "Stream failed" that gave no actionable signal.
         res.write(
-          `event: error\ndata: ${JSON.stringify({ message: userFacingAiErrorMessage(error) })}\n\n`,
+          `event: error\ndata: ${JSON.stringify({ message: userFacingAiErrorMessage(error, lang) })}\n\n`,
         );
       }
     }

@@ -29,6 +29,7 @@ import {
 } from '../common/recent-lifts';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from './format-plan';
+import { resolveLang, t, type Lang } from '../common/i18n';
 
 @Injectable()
 export class PlansService {
@@ -105,10 +106,13 @@ export class PlansService {
       }),
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { timezone: true },
+        // language rides along so redistributeDeficit can localize the
+        // promoted alt-session fallback title without a second query.
+        select: { timezone: true, language: true },
       }),
     ]);
     const tz = userRow?.timezone ?? null;
+    const lang = resolveLang(undefined, userRow?.language ?? null);
 
     // Calculate today's index as position within the returned days array
     const absoluteTodayDow = toMondayDowInTz(new Date(), tz);
@@ -123,6 +127,7 @@ export class PlansService {
       absoluteTodayDow,
       userId,
       onboarding,
+      lang,
     );
     if (redistributed) {
       plan = await this.fetchActivePlanWithDays(userId);
@@ -285,9 +290,12 @@ export class PlansService {
     const now = new Date();
     const planUser = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { timezone: true },
+      // language feeds the AI language instruction for the whole
+      // generation chain — one fetch, threaded down to every stage.
+      select: { timezone: true, language: true },
     });
     const planTz = planUser?.timezone ?? null;
+    const planLang = resolveLang(undefined, planUser?.language ?? null);
     const todayDow = toMondayDowInTz(now, planTz);
     const startDow = force ? 0 : todayDow;
 
@@ -437,6 +445,7 @@ export class PlansService {
       focus,
       weekContext,
       opts?.forceFallback ? { forceFallback: true } : undefined,
+      planLang,
     );
 
     // Stage 2: Build curated candidate pools per muscle group
@@ -462,6 +471,7 @@ export class PlansService {
           recentExerciseNames,
           recentLifts,
           focus,
+          planLang,
         );
 
     // Use AI selection if valid, otherwise fall back to deterministic
@@ -624,7 +634,13 @@ export class PlansService {
         include: { days: { orderBy: { day_of_week: 'asc' } } },
       });
       if (refreshed) {
-        await this.redistributeDeficit(refreshed, todayDow, userId, onboarding);
+        await this.redistributeDeficit(
+          refreshed,
+          todayDow,
+          userId,
+          onboarding,
+          planLang,
+        );
       }
     }
 
@@ -639,10 +655,19 @@ export class PlansService {
     // posts /complete-full with the same UUID, at which point the
     // server creates the row, attaches the user's logged sets, and
     // links workout_session_id back to this plan day.
-    const planDay = await this.prisma.planDay.findUnique({
-      where: { id: dayId },
-      include: { plan: true },
-    });
+    // Language lookup rides alongside the plan-day fetch — this path
+    // has no request context carrying the resolved lang.
+    const [planDay, sessionUser] = await Promise.all([
+      this.prisma.planDay.findUnique({
+        where: { id: dayId },
+        include: { plan: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { language: true },
+      }),
+    ]);
+    const sessionLang = resolveLang(undefined, sessionUser?.language ?? null);
 
     if (!planDay || planDay.plan.user_id !== userId) {
       throw new AppException(
@@ -770,7 +795,9 @@ export class PlansService {
       completed_at: null,
       duration_minutes: null,
       ai_generated: true,
-      ai_message: `Part of your Week ${planDay.plan.week_number} training plan`,
+      ai_message: t(sessionLang, 'plans.part_of_week', {
+        week: planDay.plan.week_number,
+      }),
       created_at: now,
       updated_at: now,
       exercises: formattedExercises as any,
@@ -846,6 +873,7 @@ export class PlansService {
     todayDow: number,
     userId: string,
     _onboarding: any | null,
+    lang: Lang = 'en',
   ): Promise<boolean> {
     void _onboarding; // legacy signature; alts make onboarding unnecessary at adapt time
 
@@ -898,7 +926,8 @@ export class PlansService {
             where: { id: restDay.id },
             data: {
               day_type: 'training',
-              session_title: alt.session_title ?? 'Make-up Session',
+              session_title:
+                alt.session_title ?? t(lang, 'plans.makeup_session'),
               session_type: alt.session_type ?? 'strength',
               muscle_groups: alt.muscle_groups ?? [],
               exercises_json: (alt.exercises ?? []) as any,

@@ -17,6 +17,7 @@ import {
   summarizeAiError,
   userFacingAiErrorMessage,
 } from '../common/ai-error';
+import type { Lang } from '../common/i18n';
 import {
   matchExercisesToSlots,
   normalizeMuscleGroup,
@@ -53,6 +54,9 @@ export interface ToolCallParams {
   // the recent-lifts map for server-side target_sets injection when the
   // AI ignores the PROGRESSIVE OVERLOAD rule in the prompt.
   recentSessions: any[];
+  // User's app language — localizes the deterministic error messages
+  // surfaced to chat when a tool call fails.
+  lang?: Lang;
 }
 
 export interface ToolCallResult {
@@ -432,7 +436,7 @@ export class CoachToolsService {
       console.warn(summarizeAiError('create_workout_session', error));
       console.warn('[create_workout_session] args:', params.toolCallArgs);
       const errMsg = isRateLimitError(error)
-        ? userFacingAiErrorMessage(error)
+        ? userFacingAiErrorMessage(error, params.lang)
         : "Sorry, I couldn't create that workout right now. Try again.";
       yield {
         type: 'text_delta',
@@ -722,7 +726,7 @@ export class CoachToolsService {
     } catch (error) {
       console.warn(summarizeAiError('modify_plan_days', error));
       const errMsg = isRateLimitError(error)
-        ? userFacingAiErrorMessage(error)
+        ? userFacingAiErrorMessage(error, params.lang)
         : "Sorry, I couldn't modify the plan right now. Try again.";
       yield {
         type: 'text_delta',
@@ -777,7 +781,7 @@ export class CoachToolsService {
     } catch (error) {
       console.warn(summarizeAiError('generate_training_plan', error));
       const errMsg = isRateLimitError(error)
-        ? userFacingAiErrorMessage(error)
+        ? userFacingAiErrorMessage(error, params.lang)
         : "Sorry, I couldn't generate your plan right now. Try again.";
       yield {
         type: 'text_delta',

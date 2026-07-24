@@ -217,10 +217,7 @@ export class HomeController {
 
   @Patch('sessions/:id/cancel')
   @HttpCode(HttpStatus.OK)
-  async cancelSession(
-    @Req() req: Request,
-    @Param('id') sessionId: string,
-  ) {
+  async cancelSession(@Req() req: Request, @Param('id') sessionId: string) {
     return this.homeService.cancelSession(req.user!.id, sessionId);
   }
 

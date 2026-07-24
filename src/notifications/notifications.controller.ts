@@ -32,6 +32,7 @@ export class NotificationsController {
       dto.token,
       dto.platform ?? 'ios',
       dto.timezone,
+      dto.language,
     );
     return { success: true };
   }

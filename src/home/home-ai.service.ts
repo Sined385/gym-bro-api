@@ -14,6 +14,7 @@ import { EQUIPMENT_MAP } from '../common/equipment';
 import { formatRecentSessions } from '../common/format-sessions';
 import { aiContextLine } from '../common/ai-context';
 import { summarizeAiError } from '../common/ai-error';
+import { languageInstruction, resolveLang, t, type Lang } from '../common/i18n';
 
 const SETS_DISPLAY_BY_GOAL: Record<string, string> = {
   build_muscle: '3 × 10',
@@ -91,7 +92,7 @@ export class HomeAiService {
       }),
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { timezone: true },
+        select: { timezone: true, language: true },
       }),
       this.prisma.trainingPlan.findFirst({
         where: { user_id: userId, is_active: true },
@@ -101,18 +102,20 @@ export class HomeAiService {
 
     const isNewUser = totalSessionCount === 0;
     const tz = userRow?.timezone ?? null;
+    const lang = resolveLang(undefined, userRow?.language ?? null);
     const todayDow = toMondayDowInTz(new Date(), tz);
     const todayPlanDay =
       activePlan?.days.find((d) => d.day_of_week === todayDow) ?? null;
 
-    const systemPrompt = isNewUser
-      ? this.buildWelcomePrompt(onboarding)
-      : this.buildMotivationPrompt(
-          onboarding,
-          recentSessions,
-          weekStats,
-          todayPlanDay,
-        );
+    const systemPrompt =
+      (isNewUser
+        ? this.buildWelcomePrompt(onboarding)
+        : this.buildMotivationPrompt(
+            onboarding,
+            recentSessions,
+            weekStats,
+            todayPlanDay,
+          )) + languageInstruction(lang);
 
     // 1-2 sentence card — light model is plenty, and it keeps the
     // background regeneration fast.
@@ -177,29 +180,29 @@ export class HomeAiService {
         }),
         this.prisma.user.findUnique({
           where: { id: userId },
-          select: { timezone: true },
+          select: { timezone: true, language: true },
         }),
       ]);
     const tz = userRow?.timezone ?? null;
+    const lang = resolveLang(undefined, userRow?.language ?? null);
 
     // New user — welcome message based on profile
     if (totalSessionCount === 0) {
-      const goalLabels: Record<string, string> = {
-        build_muscle: 'building muscle',
-        lose_fat: 'burning fat',
-        get_stronger: 'getting stronger',
-        improve_endurance: 'boosting endurance',
-        stay_healthy: 'staying healthy',
+      const goalKeys: Record<string, Parameters<typeof t>[1]> = {
+        build_muscle: 'home.goal.build_muscle',
+        lose_fat: 'home.goal.lose_fat',
+        get_stronger: 'home.goal.get_stronger',
+        improve_endurance: 'home.goal.improve_endurance',
+        stay_healthy: 'home.goal.stay_healthy',
       };
-      const goalLabel =
-        goalLabels[onboarding?.primary_goals?.[0] ?? ''] ||
-        'your fitness goals';
+      const goalKey = goalKeys[onboarding?.primary_goals?.[0] ?? ''];
+      const goalLabel = t(lang, goalKey ?? 'home.goal.generic');
 
       return this.prisma.motivationInsight.create({
         data: {
           user_id: userId,
-          title: 'Welcome to GymJam',
-          message: `Your profile is set up and ready for ${goalLabel}. Start your first workout to get personalized insights.`,
+          title: t(lang, 'home.welcome_title'),
+          message: t(lang, 'home.welcome_message', { goal: goalLabel }),
           workouts_this_week: 0,
           personal_records: [],
           valid_until: this.endOfDay(tz),
@@ -210,13 +213,19 @@ export class HomeAiService {
     const remaining = weekStats.targetPerWeek - weekStats.completedThisWeek;
     const message =
       remaining > 0
-        ? `${weekStats.completedThisWeek}/${weekStats.targetPerWeek} sessions done this week. ${remaining} remaining to stay on track.`
-        : `${weekStats.targetPerWeek}/${weekStats.targetPerWeek} sessions done. Weekly target met — consider adding volume or intensity.`;
+        ? t(lang, 'home.sessions_remaining', {
+            completed: weekStats.completedThisWeek,
+            target: weekStats.targetPerWeek,
+            remaining,
+          })
+        : t(lang, 'home.sessions_target_met', {
+            target: weekStats.targetPerWeek,
+          });
 
     return this.prisma.motivationInsight.create({
       data: {
         user_id: userId,
-        title: 'Weekly status',
+        title: t(lang, 'home.weekly_status_title'),
         message,
         workouts_this_week: weekStats.completedThisWeek,
         personal_records: [],
@@ -343,9 +352,10 @@ Rules:
   ): Promise<string | null> {
     const tzRow = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { timezone: true },
+      select: { timezone: true, language: true },
     });
     const weekStart = getWeekStartInTz(new Date(), tzRow?.timezone ?? null);
+    const lang = resolveLang(undefined, tzRow?.language ?? null);
 
     // Check cache
     const cached = await this.prisma.weeklyOverview.findUnique({
@@ -362,10 +372,15 @@ Rules:
         weekStart,
         currentWeekStats,
         prev3WeekAvgs,
+        lang,
       );
     } catch (error) {
       console.warn(summarizeAiError('weekly_overview', error));
-      return this.generateFallbackOverview(currentWeekStats, prev3WeekAvgs);
+      return this.generateFallbackOverview(
+        currentWeekStats,
+        prev3WeekAvgs,
+        lang,
+      );
     }
   }
 
@@ -384,6 +399,7 @@ Rules:
       avgDurationMinutes: number;
       totalCalories: number;
     } | null,
+    lang: Lang = 'en',
   ): Promise<string> {
     let prompt: string;
     if (prev) {
@@ -393,13 +409,13 @@ Celebrate improvements, note any declines matter-of-factly, and end with one bri
 Keep it to 2-3 sentences, conversational tone, no emojis. This is about results, not instructions.
 
 This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volume, ${current.avgDurationMinutes ?? 0} min avg duration, ${current.totalCalories} kcal burned
-Previous 3-week average: ${prev.workouts.toFixed(1)} workouts/week, ${Math.round(prev.volumeKg)} kg, ${Math.round(prev.avgDurationMinutes)} min, ${Math.round(prev.totalCalories)} kcal`;
+Previous 3-week average: ${prev.workouts.toFixed(1)} workouts/week, ${Math.round(prev.volumeKg)} kg, ${Math.round(prev.avgDurationMinutes)} min, ${Math.round(prev.totalCalories)} kcal${languageInstruction(lang)}`;
     } else {
       prompt = `You are a concise fitness coach reviewing the user's week so far in the GymJam app.
 The user doesn't have enough history for comparison yet. Briefly summarize their current week stats.
 Keep it to 1-2 sentences, conversational tone, no emojis.
 
-This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volume, ${current.avgDurationMinutes ?? 0} min avg duration, ${current.totalCalories} kcal burned`;
+This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volume, ${current.avgDurationMinutes ?? 0} min avg duration, ${current.totalCalories} kcal burned${languageInstruction(lang)}`;
     }
 
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
@@ -448,35 +464,64 @@ This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volu
       avgDurationMinutes: number;
       totalCalories: number;
     } | null,
+    lang: Lang = 'en',
   ): string {
-    const parts = [
-      `${current.workouts} workout${current.workouts === 1 ? '' : 's'} this week`,
-      `${Math.round(current.volumeKg).toLocaleString()} kg total volume`,
-    ];
+    // Ukrainian numeral agreement: 1-4 (except 11-14) take the base
+    // form «тренування», 5+ the genitive plural «тренувань». English
+    // keeps the simple ===1 singular check.
+    const n = current.workouts;
+    const ukSingularForm =
+      n % 10 >= 1 && n % 10 <= 4 && !(n % 100 >= 11 && n % 100 <= 14);
+    const workoutWord = t(
+      lang,
+      (lang === 'uk' ? ukSingularForm : n === 1)
+        ? 'home.overview.workout_singular'
+        : 'home.overview.workout_plural',
+    );
+    const shared = {
+      count: n,
+      workoutWord,
+      volume: Math.round(current.volumeKg).toLocaleString(),
+    };
     if (!prev) {
-      return `${parts.join(', ')}. Not enough history for comparison yet.`;
+      return t(lang, 'home.overview.no_history', shared);
     }
-    return `${parts.join(', ')}. Previous 3-week average: ${prev.workouts.toFixed(1)} workouts, ${Math.round(prev.volumeKg).toLocaleString()} kg volume.`;
+    return t(lang, 'home.overview.with_history', {
+      ...shared,
+      prevWorkouts: prev.workouts.toFixed(1),
+      prevVolume: Math.round(prev.volumeKg).toLocaleString(),
+    });
   }
 
   // ── Quick Workout ──────────────────────────────────────
 
   async generateQuickWorkout(userId: string) {
-    const onboarding = await this.prisma.onboardingData.findUnique({
-      where: { user_id: userId },
-    });
+    const [onboarding, userRow] = await Promise.all([
+      this.prisma.onboardingData.findUnique({
+        where: { user_id: userId },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { language: true },
+      }),
+    ]);
 
     if (!onboarding) return null;
+    const lang = resolveLang(undefined, userRow?.language ?? null);
 
     try {
-      return await this.generateAISession(userId, onboarding);
+      return await this.generateAISession(userId, onboarding, lang);
     } catch (error) {
       console.warn(summarizeAiError('quick_workout', error));
-      return this.generateFallbackSession(userId, onboarding);
+      return this.generateFallbackSession(userId, onboarding, lang);
     }
   }
 
-  private async generateAISession(userId: string, onboarding: any) {
+  private async generateAISession(
+    userId: string,
+    onboarding: any,
+    lang: Lang = 'en',
+  ) {
     const allowedEquipment = EQUIPMENT_MAP[onboarding.available_equipment];
     const equipmentFilter =
       allowedEquipment && allowedEquipment.length > 0
@@ -510,12 +555,13 @@ This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volu
       10,
     );
 
-    const systemPrompt = this.buildSessionPrompt(
-      onboarding,
-      exercises,
-      recentSessions,
-      weekStats,
-    );
+    const systemPrompt =
+      this.buildSessionPrompt(
+        onboarding,
+        exercises,
+        recentSessions,
+        weekStats,
+      ) + languageInstruction(lang);
 
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
     const response = await this.openai.chat.completions.create({
@@ -584,12 +630,13 @@ This week: ${current.workouts} workouts, ${Math.round(current.volumeKg)} kg volu
     const session = await this.prisma.workoutSession.create({
       data: {
         user_id: userId,
-        title: parsed.title || "Today's Session",
+        title: parsed.title || t(lang, 'home.todays_session'),
         type: parsed.type || 'strength',
         status: 'proposed',
         duration_minutes: onboarding.workout_duration,
         ai_generated: true,
-        ai_message: parsed.ai_message || 'A workout tailored just for you!',
+        ai_message:
+          parsed.ai_message || t(lang, 'home.quick_workout_ai_message'),
         updated_at: new Date(),
         exercises: {
           create: validExercises.map((ex, i) => {
@@ -686,7 +733,11 @@ Rules:
 - The ai_message should feel personal and explain the workout choice`;
   }
 
-  private async generateFallbackSession(userId: string, onboarding: any) {
+  private async generateFallbackSession(
+    userId: string,
+    onboarding: any,
+    lang: Lang = 'en',
+  ) {
     const allowedEquipment = EQUIPMENT_MAP[onboarding.available_equipment];
     const equipmentFilter =
       allowedEquipment && allowedEquipment.length > 0
@@ -749,25 +800,27 @@ Rules:
       onboarding,
     );
 
-    const goalLabels: Record<string, string> = {
-      build_muscle: 'muscle building',
-      lose_fat: 'fat loss',
-      get_stronger: 'strength',
-      improve_endurance: 'endurance',
-      stay_healthy: 'general fitness',
+    const goalKeys: Record<string, Parameters<typeof t>[1]> = {
+      build_muscle: 'home.goal_label.build_muscle',
+      lose_fat: 'home.goal_label.lose_fat',
+      get_stronger: 'home.goal_label.get_stronger',
+      improve_endurance: 'home.goal_label.improve_endurance',
+      stay_healthy: 'home.goal_label.stay_healthy',
     };
-    const goalLabel =
-      goalLabels[onboarding.primary_goals?.[0] ?? ''] || 'fitness';
+    const goalKey = goalKeys[onboarding.primary_goals?.[0] ?? ''];
+    const goalLabel = t(lang, goalKey ?? 'home.goal_label.generic');
 
     const session = await this.prisma.workoutSession.create({
       data: {
         user_id: userId,
-        title: "Today's Session",
+        title: t(lang, 'home.todays_session'),
         type: 'strength',
         status: 'proposed',
         duration_minutes: onboarding.workout_duration,
         ai_generated: true,
-        ai_message: `I built a balanced ${goalLabel} session based on your profile and available equipment. Let's go!`,
+        ai_message: t(lang, 'home.quick_workout_fallback_message', {
+          goal: goalLabel,
+        }),
         updated_at: new Date(),
         exercises: {
           create: picked.map((ex, i) => ({

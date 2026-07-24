@@ -12,10 +12,14 @@ import { HomeAiService } from './home-ai.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { exerciseImageUrl } from '../common/exercise-image';
 import { getWeekStartInTz, toMondayDowInTz } from '../common/date-utils';
-import { formatSessionResponse, serializeExerciseSets } from '../common/format-session';
+import {
+  formatSessionResponse,
+  serializeExerciseSets,
+} from '../common/format-session';
 import { ChallengesService } from './challenges.service';
 import { WorkoutOrchestratorService } from '../workouts/workout-orchestrator.service';
 import { formatPlanDay } from '../plans/format-plan';
+import { resolveLang } from '../common/i18n';
 import { computeRecentLifts } from '../common/recent-lifts';
 
 @Injectable()
@@ -46,9 +50,12 @@ export class HomeService {
     // bounds are right before the parallel block fans out.
     const tzRow = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { timezone: true },
+      // language rides along for the daily-challenge localization —
+      // same single sequential fetch, no extra query.
+      select: { timezone: true, language: true },
     });
     const tz = tzRow?.timezone ?? null;
+    const lang = resolveLang(undefined, tzRow?.language ?? null);
     const weekStart = getWeekStartInTz(now, tz);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
@@ -318,8 +325,8 @@ export class HomeService {
     }
 
     const [dailyChallenge, tomorrowChallenge] = await Promise.all([
-      this.challengesService.getDailyChallenge(userId, now),
-      this.challengesService.getTomorrowChallenge(userId, now),
+      this.challengesService.getDailyChallenge(userId, now, lang),
+      this.challengesService.getTomorrowChallenge(userId, now, lang),
     ]);
 
     // Phase 3 additions — feed the unified iOS AppContext snapshot so
@@ -725,19 +732,15 @@ export class HomeService {
     const startedAt = existing?.started_at ?? startedAtFallback;
 
     const completedAt = wasAlreadyCompleted
-      ? (existing!.completed_at ?? new Date())
+      ? (existing.completed_at ?? new Date())
       : new Date();
 
     const durationMinutes = wasAlreadyCompleted
-      ? existing!.duration_minutes
-      : this.calculateDuration(
-          dto,
-          { started_at: startedAt },
-          completedAt,
-        );
+      ? existing.duration_minutes
+      : this.calculateDuration(dto, { started_at: startedAt }, completedAt);
 
     const calories = wasAlreadyCompleted
-      ? existing!.calories
+      ? existing.calories
       : this.estimateCalories(durationMinutes, dto.feedback?.effort_level);
 
     // Look up external_ids for library exercises
@@ -830,8 +833,7 @@ export class HomeService {
                 // Force-null weight when the set is flagged bodyweight or
                 // cardio. The DB shape should never carry "Bodyweight × 8 at
                 // 0kg" or "Run 30 min at 0kg" by mistake.
-                weight:
-                  isBodyweight || isCardio ? null : (s.weight ?? null),
+                weight: isBodyweight || isCardio ? null : (s.weight ?? null),
                 weight_unit: s.weight_unit ?? 'kg',
                 reps: s.reps,
                 is_completed: s.is_completed ?? true,
@@ -849,13 +851,13 @@ export class HomeService {
         await tx.workoutSession.update({
           where: { id: sessionId },
           data: {
-            title: dto.title ?? existing!.title,
+            title: dto.title ?? existing.title,
             status: 'completed',
             completed_at: completedAt,
             duration_minutes: durationMinutes,
             calories,
             avg_heart_rate: wasAlreadyCompleted
-              ? (existing!.avg_heart_rate ?? dto.avg_heart_rate ?? null)
+              ? (existing.avg_heart_rate ?? dto.avg_heart_rate ?? null)
               : (dto.avg_heart_rate ?? null),
             updated_at: new Date(),
           },

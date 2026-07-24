@@ -27,6 +27,7 @@ export class NotificationsService {
     token: string,
     platform: string = 'ios',
     timezone?: string,
+    language?: string,
   ) {
     await this.prisma.deviceToken.upsert({
       where: { token },
@@ -34,10 +35,15 @@ export class NotificationsService {
       create: { user_id: userId, token, platform },
     });
 
-    if (timezone) {
+    // Persist locale context alongside the token — crons use these to
+    // localize push timing (timezone) and text (language).
+    const userPatch: { timezone?: string; language?: string } = {};
+    if (timezone) userPatch.timezone = timezone;
+    if (language) userPatch.language = language;
+    if (Object.keys(userPatch).length > 0) {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { timezone },
+        data: userPatch,
       });
     }
   }

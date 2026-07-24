@@ -42,8 +42,7 @@ export function formatPlanDay(day: any) {
       ? {
           id: day.workout_session.id,
           durationMinutes: day.workout_session.duration_minutes,
-          completedAt:
-            day.workout_session.completed_at?.toISOString() ?? null,
+          completedAt: day.workout_session.completed_at?.toISOString() ?? null,
         }
       : null,
     aiNotes: day.ai_notes,

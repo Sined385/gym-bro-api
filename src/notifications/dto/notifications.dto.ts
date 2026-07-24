@@ -11,6 +11,12 @@ export class RegisterTokenDto {
   @IsOptional()
   @IsString()
   timezone?: string;
+
+  // App language ('en' | 'uk') — persisted onto the User row (same
+  // pattern as timezone) so push crons can localize notification text.
+  @IsOptional()
+  @IsString()
+  language?: string;
 }
 
 export class RemoveTokenDto {

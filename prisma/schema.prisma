@@ -17,6 +17,10 @@ model User {
   username                String?   @unique
   avatar_url              String?
   timezone                String?
+  // Preferred app language ('en' | 'uk'). Persisted from the iOS
+  // X-App-Language header so background jobs (crons, plan generation)
+  // can localize without a request context.
+  language                String?
   preferred_workout_hour  Int?
   is_premium              Boolean   @default(false)
   premium_source          String?
@@ -104,6 +108,9 @@ model ExerciseLibrary {
   id                String            @id @default(uuid())
   user_id           String?
   name              String
+  // Ukrainian display name (system exercises only) — seeded from
+  // data/exercise-names.uk.json. NULL falls back to the English name.
+  name_uk           String?
   muscle_group      String
   equipment         String
   is_system         Boolean           @default(false)
@@ -360,6 +367,32 @@ model Notification {
 
   @@index([user_id, is_read, created_at(sort: Desc)])
   @@map("notifications")
+}
+
+model PromoCode {
+  id            String            @id @default(uuid())
+  code          String            @unique
+  duration_days Int
+  expires_at    DateTime
+  is_active     Boolean           @default(true)
+  created_at    DateTime          @default(now())
+  redemptions   PromoRedemption[]
+
+  @@map("promo_codes")
+}
+
+model PromoRedemption {
+  id            String    @id @default(uuid())
+  promo_code_id String
+  user_id       String
+  granted_until DateTime
+  created_at    DateTime  @default(now())
+  promo_code    PromoCode @relation(fields: [promo_code_id], references: [id], onDelete: Cascade)
+
+  @@unique([promo_code_id, user_id])
+  @@index([user_id])
+  @@index([created_at])
+  @@map("promo_redemptions")
 }
 
 model AnalyticsEvent {

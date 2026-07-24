@@ -14,6 +14,7 @@ import {
   type UserIntent,
 } from './prompt-intent';
 import { isCardioCategory, isHiddenCardio } from '../common/exercise-set-synth';
+import { coachLanguageInstruction, type Lang } from '../common/i18n';
 
 @Injectable()
 export class CoachPromptService {
@@ -104,6 +105,7 @@ export class CoachPromptService {
     tz: string | null = null,
     latestUserMessage: string | null = null,
     thisWeekExercises: Array<{ name: string; muscleGroup: string | null }> = [],
+    lang: Lang = 'en',
   ): string {
     const nameLine = userName ? `User name: ${userName}` : '';
 
@@ -319,7 +321,7 @@ Concrete cases:
 Fallback chain (only when the user's message gives no signal):
 1. Personal context from the user (onboarding free-text field)
 2. Onboarding profile (equipment, injuries, goal)
-3. Recent lifts (for progression continuity)`;
+3. Recent lifts (for progression continuity)${coachLanguageInstruction(lang)}`;
   }
 }
 

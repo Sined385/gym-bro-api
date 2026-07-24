@@ -7,6 +7,12 @@ import {
 import { Request } from 'express';
 import { SupabaseService } from '../supabase/supabase.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveLang } from '../common/i18n';
+
+// Last language persisted per user (module-level so it survives guard
+// instances). Lets us skip the User.language write on every request —
+// we only touch the DB when the device's language actually changes.
+const knownLanguages = new Map<string, string>();
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -31,7 +37,20 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
-    request.user = { id: data.user.id, email: data.user.email ?? '' };
+    // iOS sends X-App-Language; Accept-Language covers other clients.
+    const language = resolveLang(
+      request.headers['x-app-language'] ?? request.headers['accept-language'],
+    );
+    request.user = { id: data.user.id, email: data.user.email ?? '', language };
+
+    // Persist the language so crons / background jobs can localize
+    // without a request context. Fire-and-forget — never blocks auth.
+    if (knownLanguages.get(data.user.id) !== language) {
+      knownLanguages.set(data.user.id, language);
+      this.prisma.user
+        .update({ where: { id: data.user.id }, data: { language } })
+        .catch(() => {});
+    }
 
     // Ensure User row exists (non-blocking, never fails auth)
     const user = data.user;

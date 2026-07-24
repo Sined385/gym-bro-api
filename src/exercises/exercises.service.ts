@@ -18,7 +18,17 @@ export class ExercisesService {
     };
 
     if (search) {
-      where.name = { contains: search, mode: 'insensitive' };
+      // Search matches either the English or the Ukrainian name, so uk
+      // users can type «жим» and still find "Bench Press". AND keeps
+      // the visibility OR (system + own exercises) intact.
+      where.AND = [
+        {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { name_uk: { contains: search, mode: 'insensitive' } },
+          ],
+        },
+      ];
     }
 
     if (muscleGroup) {
@@ -67,6 +77,32 @@ export class ExercisesService {
     const favorites = mapped.filter((e) => e.is_favorite);
     const rest = mapped.filter((e) => !e.is_favorite);
     return { exercises: [...favorites, ...rest] };
+  }
+
+  /**
+   * Exercise-name translation map for the given language, keyed by
+   * external_id so iOS can overlay localized names on any payload that
+   * carries external_id (library, sessions, plans) without the server
+   * localizing every response. Only 'uk' has data today; other langs
+   * return an empty map so the contract stays stable.
+   */
+  async getTranslations(lang: string) {
+    if (lang !== 'uk') return { translations: {} };
+
+    const rows = await this.prisma.exerciseLibrary.findMany({
+      where: {
+        is_system: true,
+        name_uk: { not: null },
+        external_id: { not: null },
+      },
+      select: { external_id: true, name_uk: true },
+    });
+
+    const translations: Record<string, string> = {};
+    for (const r of rows) {
+      translations[r.external_id!] = r.name_uk!;
+    }
+    return { translations };
   }
 
   /**

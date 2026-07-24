@@ -14,6 +14,7 @@ import { CoachPromptService } from './coach-prompt.service';
 import { CoachToolsService } from './coach-tools.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { getWeekStartInTz } from '../common/date-utils';
+import { t, type Lang } from '../common/i18n';
 
 @Injectable()
 export class CoachService {
@@ -154,7 +155,11 @@ export class CoachService {
     };
   }
 
-  async *chat(userId: string, dto: SendMessageDto): AsyncGenerator<SSEEvent> {
+  async *chat(
+    userId: string,
+    dto: SendMessageDto,
+    lang: Lang = 'en',
+  ): AsyncGenerator<SSEEvent> {
     // 0. Check coach access (20-message limit for free users)
     const access = await this.subscriptionService.checkCoachAccess(userId);
     if (!access.allowed) {
@@ -176,8 +181,7 @@ export class CoachService {
           data: {
             conversation_id: conversationId,
             role: 'assistant',
-            content:
-              "You've used all 20 free messages. Upgrade to Premium for unlimited AI coaching.",
+            content: t(lang, 'coach.limit_reached'),
           },
         });
         await this.prisma.coachConversation.update({
@@ -330,6 +334,7 @@ export class CoachService {
       user?.timezone ?? null,
       dto.content,
       thisWeekExercises,
+      lang,
     );
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -442,6 +447,7 @@ export class CoachService {
           activePlanData,
           tools,
           recentSessions,
+          lang,
         })) {
           // Capture session ID and follow-up content from internal events
           if ('_sessionId' in event && event._sessionId) {

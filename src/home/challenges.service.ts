@@ -2,6 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppException } from '../common/exceptions/app.exception';
 import { AnalyticsService } from '../analytics/analytics.service';
+import type { Lang } from '../common/i18n';
 
 export type ChallengeCategory = 'physical' | 'mental';
 
@@ -18,19 +19,154 @@ export interface ChallengeDefinition {
  * this list but keep historical `daily_challenge_completions` rows intact.
  */
 const CATALOG: ChallengeDefinition[] = [
-  { id: 'water_glass', title: 'Drink a glass of water', description: 'Hydration matters — even one extra glass helps.', icon: 'drop.fill', category: 'physical' },
-  { id: 'walk_5min', title: 'Take a 5-minute walk', description: 'Get your blood flowing for a few minutes.', icon: 'figure.walk', category: 'physical' },
-  { id: 'stretch_2min', title: 'Stretch for 2 minutes', description: 'Loosen up — neck, shoulders, hips.', icon: 'figure.flexibility', category: 'physical' },
-  { id: 'stairs', title: 'Take the stairs', description: 'Skip the elevator once today.', icon: 'figure.stairs', category: 'physical' },
-  { id: 'pushups_10', title: 'Do 10 push-ups', description: 'A quick strength snack — anywhere works.', icon: 'figure.strengthtraining.traditional', category: 'physical' },
-  { id: 'stand_break', title: 'Stand and move for 1 minute', description: 'Break up sitting — get the legs going.', icon: 'figure.stand', category: 'physical' },
-  { id: 'breaths_5', title: 'Take 5 deep breaths', description: 'Reset your nervous system in a minute.', icon: 'wind', category: 'mental' },
-  { id: 'gratitude_3', title: 'List 3 things you’re grateful for', description: 'Quick gratitude shifts the day.', icon: 'heart.text.square', category: 'mental' },
-  { id: 'screen_break_5', title: 'Take a 5-minute screen break', description: 'Rest your eyes and look at something far away.', icon: 'eye.slash', category: 'mental' },
-  { id: 'mindfulness_2min', title: '2 minutes of mindfulness', description: 'Sit still, notice your breath, come back.', icon: 'brain.head.profile', category: 'mental' },
-  { id: 'fresh_air', title: 'Step outside for fresh air', description: 'A short outdoor moment resets focus.', icon: 'leaf', category: 'mental' },
-  { id: 'kind_message', title: 'Send someone a kind message', description: 'A small note to a friend goes a long way.', icon: 'bubble.left.and.bubble.right', category: 'mental' },
+  {
+    id: 'water_glass',
+    title: 'Drink a glass of water',
+    description: 'Hydration matters — even one extra glass helps.',
+    icon: 'drop.fill',
+    category: 'physical',
+  },
+  {
+    id: 'walk_5min',
+    title: 'Take a 5-minute walk',
+    description: 'Get your blood flowing for a few minutes.',
+    icon: 'figure.walk',
+    category: 'physical',
+  },
+  {
+    id: 'stretch_2min',
+    title: 'Stretch for 2 minutes',
+    description: 'Loosen up — neck, shoulders, hips.',
+    icon: 'figure.flexibility',
+    category: 'physical',
+  },
+  {
+    id: 'stairs',
+    title: 'Take the stairs',
+    description: 'Skip the elevator once today.',
+    icon: 'figure.stairs',
+    category: 'physical',
+  },
+  {
+    id: 'pushups_10',
+    title: 'Do 10 push-ups',
+    description: 'A quick strength snack — anywhere works.',
+    icon: 'figure.strengthtraining.traditional',
+    category: 'physical',
+  },
+  {
+    id: 'stand_break',
+    title: 'Stand and move for 1 minute',
+    description: 'Break up sitting — get the legs going.',
+    icon: 'figure.stand',
+    category: 'physical',
+  },
+  {
+    id: 'breaths_5',
+    title: 'Take 5 deep breaths',
+    description: 'Reset your nervous system in a minute.',
+    icon: 'wind',
+    category: 'mental',
+  },
+  {
+    id: 'gratitude_3',
+    title: 'List 3 things you’re grateful for',
+    description: 'Quick gratitude shifts the day.',
+    icon: 'heart.text.square',
+    category: 'mental',
+  },
+  {
+    id: 'screen_break_5',
+    title: 'Take a 5-minute screen break',
+    description: 'Rest your eyes and look at something far away.',
+    icon: 'eye.slash',
+    category: 'mental',
+  },
+  {
+    id: 'mindfulness_2min',
+    title: '2 minutes of mindfulness',
+    description: 'Sit still, notice your breath, come back.',
+    icon: 'brain.head.profile',
+    category: 'mental',
+  },
+  {
+    id: 'fresh_air',
+    title: 'Step outside for fresh air',
+    description: 'A short outdoor moment resets focus.',
+    icon: 'leaf',
+    category: 'mental',
+  },
+  {
+    id: 'kind_message',
+    title: 'Send someone a kind message',
+    description: 'A small note to a friend goes a long way.',
+    icon: 'bubble.left.and.bubble.right',
+    category: 'mental',
+  },
 ];
+
+
+// Ukrainian copies keyed by stable challenge id. Kept beside the catalog
+// (not in the i18n STRINGS table) so adding a challenge means adding its
+// translation in the same file.
+const CATALOG_UK: Record<string, { title: string; description: string }> = {
+  water_glass: {
+    title: 'Випийте склянку води',
+    description: 'Гідратація важлива — навіть одна зайва склянка допомагає.',
+  },
+  walk_5min: {
+    title: 'Прогуляйтеся 5 хвилин',
+    description: 'Розженіть кров хоча б на кілька хвилин.',
+  },
+  stretch_2min: {
+    title: 'Порозтягуйтеся 2 хвилини',
+    description: 'Розімніться — шия, плечі, стегна.',
+  },
+  stairs: {
+    title: 'Підніміться сходами',
+    description: 'Пропустіть ліфт хоча б раз сьогодні.',
+  },
+  pushups_10: {
+    title: 'Зробіть 10 віджимань',
+    description: 'Швидкий силовий перекус — будь-де.',
+  },
+  stand_break: {
+    title: 'Встаньте й порухайтеся 1 хвилину',
+    description: 'Перервіть сидіння — розворушіть ноги.',
+  },
+  breaths_5: {
+    title: 'Зробіть 5 глибоких вдихів',
+    description: 'Перезавантажте нервову систему за хвилину.',
+  },
+  gratitude_3: {
+    title: 'Назвіть 3 речі, за які ви вдячні',
+    description: 'Коротка вдячність змінює день.',
+  },
+  screen_break_5: {
+    title: 'Зробіть 5-хвилинну паузу від екрана',
+    description: 'Дайте очам відпочити — подивіться вдалину.',
+  },
+  mindfulness_2min: {
+    title: '2 хвилини усвідомленості',
+    description: 'Сядьте, зверніть увагу на дихання, поверніться.',
+  },
+  fresh_air: {
+    title: 'Вийдіть на свіже повітря',
+    description: 'Коротка мить надворі повертає фокус.',
+  },
+  kind_message: {
+    title: 'Надішліть комусь добре повідомлення',
+    description: 'Маленька записка другові важить багато.',
+  },
+};
+
+function localizeChallenge(
+  def: ChallengeDefinition,
+  lang: Lang,
+): Pick<ChallengeDefinition, 'title' | 'description'> {
+  if (lang === 'uk' && CATALOG_UK[def.id]) return CATALOG_UK[def.id];
+  return { title: def.title, description: def.description };
+}
 
 @Injectable()
 export class ChallengesService {
@@ -40,9 +176,13 @@ export class ChallengesService {
   ) {}
 
   /** Returns today's challenge for a user with completion state attached. */
-  async getDailyChallenge(userId: string, now: Date = new Date()) {
+  async getDailyChallenge(
+    userId: string,
+    now: Date = new Date(),
+    lang: Lang = 'en',
+  ) {
     const today = startOfDay(now);
-    return this.findForDay(userId, today);
+    return this.findForDay(userId, today, lang);
   }
 
   /**
@@ -50,13 +190,18 @@ export class ChallengesService {
    * this to populate the body of the locally-scheduled push notification
    * so the user sees the real challenge text on the notification.
    */
-  async getTomorrowChallenge(userId: string, now: Date = new Date()) {
+  async getTomorrowChallenge(
+    userId: string,
+    now: Date = new Date(),
+    lang: Lang = 'en',
+  ) {
     const tomorrow = startOfDay(new Date(now.getTime() + 86400000));
     const pick = pickDailyForUser(userId, tomorrow);
+    const localized = localizeChallenge(pick, lang);
     return {
       id: pick.id,
-      title: pick.title,
-      description: pick.description,
+      title: localized.title,
+      description: localized.description,
       icon: pick.icon,
       category: pick.category,
       completed: false,
@@ -99,8 +244,9 @@ export class ChallengesService {
     return this.findForDay(userId, today);
   }
 
-  private async findForDay(userId: string, day: Date) {
+  private async findForDay(userId: string, day: Date, lang: Lang = 'en') {
     const pick = pickDailyForUser(userId, day);
+    const localized = localizeChallenge(pick, lang);
     const completion = await this.prisma.dailyChallengeCompletion.findUnique({
       where: {
         user_id_challenge_id_date: {
@@ -113,8 +259,8 @@ export class ChallengesService {
     });
     return {
       id: pick.id,
-      title: pick.title,
-      description: pick.description,
+      title: localized.title,
+      description: localized.description,
       icon: pick.icon,
       category: pick.category,
       completed: completion !== null,
@@ -153,7 +299,7 @@ function hashString(s: string): number {
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return function () {
-    a = (a + 0x6D2B79F5) >>> 0;
+    a = (a + 0x6d2b79f5) >>> 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);

@@ -15,6 +15,8 @@
  *      failure is user-visible (Coach chat).
  */
 
+import { t, type Lang } from './i18n';
+
 type MaybeError = unknown;
 
 interface RecognizedError {
@@ -127,22 +129,25 @@ export function summarizeAiError(feature: string, err: MaybeError): string {
  * so it can just show the raw string. Always returns a complete
  * sentence ending in a period.
  */
-export function userFacingAiErrorMessage(err: MaybeError): string {
+export function userFacingAiErrorMessage(
+  err: MaybeError,
+  lang: Lang = 'en',
+): string {
   if (isRateLimitError(err)) {
-    return 'Coach is at capacity right now. Give it a few seconds and try again.';
+    return t(lang, 'coach.error.rate_limit');
   }
   if (isTimeoutError(err)) {
-    return 'Coach took too long to respond. Try sending that again.';
+    return t(lang, 'coach.error.timeout');
   }
   if (isContentFilterError(err)) {
-    return "I can't respond to that message. Try rephrasing.";
+    return t(lang, 'coach.error.content_filter');
   }
   if (isAuthError(err)) {
-    return 'Coach is misconfigured server-side. Please report this.';
+    return t(lang, 'coach.error.auth');
   }
   const r = recognize(err);
   if (r.status && r.status >= 500) {
-    return 'Coach is having trouble talking to the AI. Try again in a moment.';
+    return t(lang, 'coach.error.upstream');
   }
-  return 'Something went wrong with the AI. Try again in a moment.';
+  return t(lang, 'coach.error.generic');
 }

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AiUsageService } from '../analytics/ai-usage.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { summarizeAiError } from '../common/ai-error';
+import { languageInstruction, resolveLang, type Lang } from '../common/i18n';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -76,11 +77,14 @@ export class CommunityAiService {
     const hasData = metrics.length > 0 || myCtx.sessionsPerWeek > 0;
     if (hasData) {
       try {
+        // Viewer's persisted language — `me` is already fetched above,
+        // so localizing the analysis costs no extra query.
         analysis = await this.generateAnalysis(
           currentUserId,
           metrics,
           myCtx,
           theirCtx,
+          resolveLang(undefined, me?.language ?? null),
         );
       } catch (error) {
         console.warn(summarizeAiError('community_comparison', error));
@@ -261,6 +265,7 @@ export class CommunityAiService {
     metrics: Metric[],
     me: UserContext,
     them: UserContext,
+    lang: Lang = 'en',
   ) {
     const model = this.configService.get('OPENAI_MODEL') ?? 'gpt-4o';
 
@@ -283,7 +288,7 @@ export class CommunityAiService {
 - "yourEdge": 1 sentence on where the viewer is ahead.
 - "theirEdge": 1 sentence on where the other lifter is ahead.
 - "takeaway": 1-2 sentences of actionable advice for the viewer.
-Keep it punchy and encouraging, no markdown.`;
+Keep it punchy and encouraging, no markdown.${languageInstruction(lang)}`;
 
     const userPrompt = `Shared metrics (head-to-head):\n${metricLines}\n\nYou: ${profile(me)}\nThem (${them.fullName}): ${profile(them)}`;
 

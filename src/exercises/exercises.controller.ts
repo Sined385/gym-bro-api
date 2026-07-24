@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -43,6 +44,17 @@ export class ExercisesController {
     return this.exercisesService.createExercise(req.user!.id, dto);
   }
 
+  // MUST stay above the ':id' routes — otherwise 'translations' would
+  // be swallowed as an exercise id.
+  @Get('translations')
+  @HttpCode(HttpStatus.OK)
+  // The map only changes on catalog re-seeds; an hour of client/proxy
+  // caching keeps the ~750-entry payload off the hot path.
+  @Header('Cache-Control', 'public, max-age=3600')
+  async getTranslations(@Query('lang') lang?: string) {
+    return this.exercisesService.getTranslations(lang ?? 'uk');
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   async getExercise(@Param('id') exerciseId: string, @Req() req: Request) {
@@ -57,10 +69,7 @@ export class ExercisesController {
 
   @Post(':id/favorite')
   @HttpCode(HttpStatus.OK)
-  async favoriteExercise(
-    @Param('id') exerciseId: string,
-    @Req() req: Request,
-  ) {
+  async favoriteExercise(@Param('id') exerciseId: string, @Req() req: Request) {
     return this.exercisesService.favoriteExercise(req.user!.id, exerciseId);
   }
 
